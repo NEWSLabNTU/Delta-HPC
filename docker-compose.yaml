@@ -1,0 +1,22 @@
+services:
+  vllm-server:
+    image: vllm/vllm-gh200-openai:latest
+    runtime: nvidia
+    ipc: host
+    ports:
+      - "${HOST_PORT}:8000"
+    environment:
+      - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+      - MIG_UUID=${MIG_UUID} # Ensure this is set in your shell or an .env file
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - /tmp/nvidia-mps-${MIG_UUID}:/tmp/nvidia-mps
+      - ./configs:/vllm-workspace/configs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${MIG_UUID}"]
+              capabilities: [gpu]
+    command: --no-enable-prefix-caching --config /vllm-workspace/configs/${MODEL_ID}.yaml
