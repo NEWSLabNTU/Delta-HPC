@@ -1,7 +1,10 @@
 #!/bin/bash
 
+MODEL_ID="Qwen/Qwen2.5-Coder-14B-Instruct"
+PORT=8014
+
 vllm bench serve \
---model Qwen/Qwen2.5-Coder-14B-Instruct \
+--model ${MODEL_ID} \
 --dataset-name random \
 --random-input-len 1024 \
 --random-output-len 1 \
@@ -9,5 +12,5 @@ vllm bench serve \
 --num-prompts 1000 \
 --request-rate 0.4 \
 --save-result --save-detailed \
---label "profile_prefill_time_1024" \
---port 8014
+--label "profile_prefill_${MODEL_ID}" \
+--port ${PORT}
