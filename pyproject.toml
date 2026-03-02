@@ -5,15 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "torch==2.9.1",
-    "einops",
-    "numpy",
-    "pillow",
-    "torchvision",
-    "evaluate",
-    "transformers==4.57.3",
-    "huggingface_hub==0.34.0",
-    "datasets==4.4.2",
+    "datasets>=4.4.2",
+    "httpx>=0.28.1",
+    "matplotlib>=3.10.8",
 ]
 
 [tool.uv.sources]
