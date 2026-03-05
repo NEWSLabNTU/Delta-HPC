@@ -1,0 +1,4 @@
+model: "Qwen/Qwen2.5-Coder-3B"
+max_model_len: 32767
+max_num_batched_tokens: 8192
+gpu_memory_utilization: 0.9
