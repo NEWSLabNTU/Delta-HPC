@@ -78,7 +78,8 @@ async def main():
     # 1. Parse Arguments
     parser = argparse.ArgumentParser(description="Serve prompts from Ling-Coder-SFT to a vLLM server concurrently.")
     parser.add_argument("--port", type=int, required=True, help="Port where the vLLM server is hosted.")
-    parser.add_argument("--model", type=str, default="llm", help="Model name as registered in vLLM.")
+    parser.add_argument("--model", type=str, required=True, help="Model name as registered in vLLM.")
+    parser.add_argument("--dataset-dir", type=str, required=True, help="Path to the dataset.")
     parser.add_argument("--output", type=str, required=True, help="Path to the output .jsonl file.")
     args = parser.parse_args()
 
@@ -89,7 +90,7 @@ async def main():
 
     vllm_url = f"http://localhost:{args.port}/v1/chat/completions"
     print(f"Connecting to vLLM at: {vllm_url}")
-    dataset = load_from_disk("./assets/processed_code_feedback")
+    dataset = load_from_disk(args.dataset_dir)
     total_rows = len(dataset)
     print(f"Loading dataset with {total_rows} samples...")
 
