@@ -5,14 +5,15 @@ Usage:
 $ python src/profiling/coder-generator.py \
 --port [port] \
 --model [model name] \
---output [output file path]
+--dataset-dir [HF dataset directory] \
+--output-dir [output directory]
 """
 
 import argparse
 import json
 import httpx
 import asyncio
-import os
+from pathlib import Path
 from datasets import load_from_disk
 from typing import Dict, Optional, List, Any
 
@@ -80,17 +81,17 @@ async def main():
     parser.add_argument("--port", type=int, required=True, help="Port where the vLLM server is hosted.")
     parser.add_argument("--model", type=str, required=True, help="Model name as registered in vLLM.")
     parser.add_argument("--dataset-dir", type=str, required=True, help="Path to the dataset.")
-    parser.add_argument("--output", type=str, required=True, help="Path to the output .jsonl file.")
+    parser.add_argument("--output-dir", type=str, required=True, help="Path to the directory that stores the output .jsonl file.")
     args = parser.parse_args()
 
-    # Create directories if they don't exist
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_dir = Path(args.dataset_dir)
+    output_path = output_dir / f"{args.model.lower()}-{dataset_dir.name}-generated.jsonl"
 
     vllm_url = f"http://localhost:{args.port}/v1/chat/completions"
     print(f"Connecting to vLLM at: {vllm_url}")
-    dataset = load_from_disk(args.dataset_dir)
+    dataset = load_from_disk(dataset_dir)
     total_rows = len(dataset)
     print(f"Loading dataset with {total_rows} samples...")
 
@@ -99,7 +100,7 @@ async def main():
 
     # 3. Process Rows concurrently
     async with httpx.AsyncClient() as client:
-        with open(args.output, "w", encoding="utf-8") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             tasks = []
             for row in dataset:
                 mid = row.get("id", "unknown")
@@ -143,7 +144,7 @@ async def main():
                     f.write(json.dumps(result_entry, ensure_ascii=False) + "\n")
                     f.flush()
         
-    print(f"\nProcessing complete. {total_rows} tasks handled. Results saved to {args.output}")
+    print(f"\nProcessing complete. {total_rows} tasks handled. Results saved to {output_path}")
 
 if __name__ == "__main__":
     asyncio.run(main())

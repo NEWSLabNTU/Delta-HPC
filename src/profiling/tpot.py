@@ -1,5 +1,6 @@
+import re
 import json
-import os
+from pathlib import Path
 import argparse
 import numpy as np
 import matplotlib
@@ -9,32 +10,30 @@ import matplotlib.pyplot as plt
 
 def main():
     parser = argparse.ArgumentParser(description="Extract vLLM TPOT parameters c and d from sweep results.")
-    parser.add_argument("--results-dir", type=str, required=True,
+    parser.add_argument("--input-dir", type=str, required=True,
                         help="Directory containing the benchmark result JSON files")
-    parser.add_argument("--output-param", type=str, required=True, 
-                        help="Output path for parameter JSON")
-    parser.add_argument("--output-plot", type=str, required=True,
-                        help="Output path for the fit plot")
+    parser.add_argument("--output-dir", type=str, required=True, help="Output directory")
     args = parser.parse_args()
+
+    input_dir_path = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
+    if not input_dir_path.is_dir():
+        print(f"Error: {input_dir_path} is not a directory.")
+        return -1
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # We will store the mean ITL of each request matched with its concurrency
     all_concurrency = []
     all_request_mean_itls = []
 
     # 1. Check directory and find JSON files
-    if not os.path.isdir(args.results_dir):
-        print(f"Error: {args.results_dir} is not a valid directory.")
+    json_files = list(input_dir_path.glob("*.json"))
+    if not json_files:
+        print(f"No JSON files found in directory: {input_dir_path}")
         return
+    print(f"Found {len(json_files)} result files in {input_dir_path}.")
 
-    files = [os.path.join(args.results_dir, f) for f in os.listdir(args.results_dir) if f.endswith('.json')]
-    
-    if not files:
-        print(f"No JSON files found in directory: {args.results_dir}")
-        return
-
-    print(f"Found {len(files)} result files in {args.results_dir}. Parsing request-level ITLs...")
-
-    for file_path in files:
+    for file_path in json_files:
         try:
             with open(file_path, 'r') as f:
                 data = json.load(f)
@@ -50,13 +49,12 @@ def main():
             if n_val is not None and nested_itls:
                 for request_itls in nested_itls:
                     if request_itls:  # Ensure the list isn't empty
-                        # Compute the mean ITL for THIS specific request (already in seconds)
                         req_mean_s = sum(request_itls) / len(request_itls)
                         
                         all_concurrency.append(n_val)
                         all_request_mean_itls.append(req_mean_s)
             else:
-                print(f"Warning: Skipping {os.path.basename(file_path)} - Missing 'max_concurrency' or 'itls'.")
+                print(f"Warning: Skipping {file_path} - Missing 'max_concurrency' or 'itls'.")
                 
         except Exception as e:
             print(f"Skipping {file_path} due to error: {e}")
@@ -94,9 +92,11 @@ def main():
         "model_formula": "ITL = c + d * N",
         "description": "c is the base memory-wall time, d is the incremental cost per concurrent request."
     }
-    with open(args.output_param, 'w') as f:
+    no_concur_filename = re.sub(r"concurrency-\d+", "", json_files[0].stem)
+    param_save_path = output_dir / (no_concur_filename + "-param.json")
+    with open(param_save_path, 'w') as f:
         json.dump(output_data, f, indent=4)
-    print(f"Parameters saved to: {args.output_param}")
+    print(f"Parameters saved to: {param_save_path}")
 
     # 4. Generate and Save Plot
     plt.figure(figsize=(12, 7))
@@ -120,8 +120,9 @@ def main():
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
     
-    plt.savefig(args.output_plot)
-    print(f"Fit figure saved to: {args.output_plot}")
+    plot_save_path = output_dir / (no_concur_filename + "-plot.png")
+    plt.savefig(plot_save_path)
+    print(f"Fit figure saved to: {plot_save_path}")
     plt.close()
 
 if __name__ == "__main__":

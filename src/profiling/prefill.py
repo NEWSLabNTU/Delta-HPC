@@ -1,4 +1,5 @@
 import json
+from  pathlib import Path
 import argparse
 import numpy as np
 import matplotlib
@@ -9,13 +10,22 @@ import matplotlib.pyplot as plt
 def main():
     parser = argparse.ArgumentParser(description="Extract vLLM prefill parameters alpha and beta.")
     parser.add_argument("--input", type=str, required=True, help="Path to the benchmark_detailed_results.json file")
-    parser.add_argument("--output-param", type=str, required=True, help="Output path for parameter JSON")
-    parser.add_argument("--output-plot", type=str, required=True, help="Output path for the fit plot")
+    parser.add_argument("--output-dir", type=str, required=True, help="Output directory")
     args = parser.parse_args()
 
+    input_path = Path(args.input)
+    output_dir = Path(args.output_dir)
+    if not input_path.exists():
+        print(f"Error: {input_path} does not exist.")
+        return -1
+    if input_path.suffix != ".json":
+        print(f"Error: {input_path} suffix is not json.")
+        return -1
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     # 1. Load and Parse the benchmark file
-    with open(args.input, 'r') as f:
-            data = json.load(f)
+    with open(input_path, 'r') as f:
+        data = json.load(f)
 
     x_tokens = data["input_lens"]
     y_latency = data["ttfts"]
@@ -47,9 +57,10 @@ def main():
             "unit_alpha": "seconds",
             "unit_beta": "seconds_per_token"
         }
-        with open(args.output_param, 'w') as f:
+        param_save_path = output_dir / (input_path.stem + "-param.json")
+        with open(param_save_path, 'w') as f:
             json.dump(output_data, f, indent=4)
-        print(f"Parameters saved to: {args.output_param}")
+        print(f"Parameters saved to: {param_save_path}")
 
         # 4. Generate and Save Plot
         plt.figure(figsize=(10, 6))
@@ -66,8 +77,9 @@ def main():
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.7)
         
-        plt.savefig(args.output_plot)
-        print(f"Fit figure saved to: {args.output_plot}")
+        plot_save_path = output_dir / (input_path.stem + "-plot.png")
+        plt.savefig(plot_save_path)
+        print(f"Fit figure saved to: {plot_save_path}")
         plt.close()
 
     else:
