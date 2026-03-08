@@ -1,23 +1,46 @@
 #!/bin/bash
-# [Usage] ./script/bench_serve_prefill.sh [MODEL_NAME] [MIG_NAME] [PORT] 
+# [Usage] ./script/bench_serve_prefill.sh [MODEL_NAME] [MIG_NAME] [PORT] [MODE]
 
 MODEL_ORG="Qwen"
 MODEL_NAME=$1   # e.g. "Qwen2.5-Coder-14B-Instruct"
 MODEL_ID="${MODEL_ORG}/${MODEL_NAME}"
 MIG_NAME=$2     # e.g. "MIG-7g-40gb"
 PORT=$3         # e.g. 8014
+MODE=$4         # rag | coder
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+
+INPUT_LEN=1024
+NUM_PROMPT=1000
+REQ_RATE=0.4
+case $MODE in
+    "rag")
+        INPUT_LEN=5120
+        NUM_PROMPT=5000
+        REQ_RATE=0.2
+    ;;
+
+    "coder")
+        INPUT_LEN=1024
+        NUM_PROMPT=1000
+        REQ_RATE=0.4
+    ;;
+
+    *)
+        echo "Unknown MODE"
+        exit 1
+    ;;
+esac
 
 vllm bench serve \
 --model ${MODEL_ID} \
 --dataset-name random \
---random-input-len 1024 \
+--random-input-len ${INPUT_LEN} \
 --random-output-len 1 \
 --random-range-ratio 0.9 \
---num-prompts 1000 \
---request-rate 0.4 \
+--num-prompts ${NUM_PROMPT} \
+--request-rate ${REQ_RATE} \
 --port ${PORT} \
 --save-result \
 --save-detailed \
---result-dir "profiling_results/prefill/coder/${MIG_NAME}/bench_details" \
+--result-dir "profiling_results/prefill/${MODE}/${MIG_NAME}/bench_details" \
 --result-filename "prefill-${MODEL_NAME}-${MIG_NAME}-${TIMESTAMP}.json"
