@@ -3,6 +3,7 @@ import argparse
 from datasets import load_dataset, Dataset, concatenate_datasets
 from tqdm import tqdm
 
+
 def convert_dataset(local_hf_path):
     """
     Loads both train and test splits of neural-bridge/rag-dataset-12000,
@@ -12,9 +13,11 @@ def convert_dataset(local_hf_path):
     try:
         # Load both splits
         dataset_dict = load_dataset("neural-bridge/rag-dataset-12000")
-        
+
         # Combine the splits into one single dataset object
-        combined_dataset = concatenate_datasets([dataset_dict["train"], dataset_dict["test"]])
+        combined_dataset = concatenate_datasets(
+            [dataset_dict["train"], dataset_dict["test"]]
+        )
         print(f"Total rows to process: {len(combined_dataset)}")
     except Exception as e:
         print(f"Error loading dataset splits: {e}")
@@ -37,8 +40,8 @@ def convert_dataset(local_hf_path):
             "id": mid,
             "messages": [
                 {"role": "human", "value": prompt},
-                {"role": "gpt", "value": row.get("answer", "")}
-            ]
+                {"role": "gpt", "value": row.get("answer", "")},
+            ],
         }
         sharegpt_list.append(conversation)
 
@@ -54,14 +57,17 @@ def convert_dataset(local_hf_path):
 
     print("Successfully processed and saved both splits.")
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert RAG dataset (train+test) to ShareGPT format.")
+    parser = argparse.ArgumentParser(
+        description="Convert RAG dataset (train+test) to ShareGPT format."
+    )
     parser.add_argument(
-        "--hf-path", 
+        "--hf-path",
         type=str,
         required=True,
-        help="Local directory path to save the Hugging Face dataset format."
+        help="Local directory path to save the Hugging Face dataset format.",
     )
-    
+
     args = parser.parse_args()
     convert_dataset(args.hf_path)
