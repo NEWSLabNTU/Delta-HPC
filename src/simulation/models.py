@@ -50,3 +50,23 @@ class Request:
     @property
     def prefill_completed(self) -> bool:
         return self.prefilled_tokens >= self.prompt_tokens
+
+
+@dataclass(order=True)
+class SimulationEvent:
+    time: float
+    event_type: EventType = field(compare=False)
+    payload: dict = field(compare=False, repr=False)
+
+
+@dataclass
+class RunningRequests:
+    prefill_requests: List[Request] = field(default_factory=list)
+    decoding_requests: List[Request] = field(default_factory=list)
+
+    def __len__(self):
+        return len(self.decoding_requests) + len(self.prefill_requests)
+
+    @property
+    def all_requests(self) -> List[Request]:
+        return self.decoding_requests + self.prefill_requests

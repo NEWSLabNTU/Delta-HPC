@@ -1,27 +1,14 @@
 import heapq
+import random
+import math
 from typing import List, Optional, Tuple, Dict
-from dataclasses import dataclass, field
-from src.simulation.models import Request, RequestState, EventType
-
-
-@dataclass(order=True)
-class SimulationEvent:
-    time: float
-    event_type: EventType = field(compare=False)
-    payload: dict = field(compare=False, repr=False)
-
-
-@dataclass
-class RunningRequests:
-    prefill_requests: List[Request] = field(default_factory=list)
-    decoding_requests: List[Request] = field(default_factory=list)
-
-    def __len__(self):
-        return len(self.decoding_requests) + len(self.prefill_requests)
-
-    @property
-    def all_requests(self) -> List[Request]:
-        return self.decoding_requests + self.prefill_requests
+from src.simulation.models import (
+    Request,
+    RequestState,
+    EventType,
+    SimulationEvent,
+    RunningRequests,
+)
 
 
 class LLMEngine:
@@ -42,8 +29,10 @@ class LLMEngine:
         # Regression params
         self.prefill_alpha = prefill_params.get("alpha", 0.0)
         self.prefill_beta = prefill_params.get("beta", 0.0)
+        self.prefill_sigma = prefill_params.get("sigma", 0.0)
         self.tpot_alpha = tpot_params.get("alpha", 0.0)
         self.tpot_beta = tpot_params.get("beta", 0.0)
+        self.tpot_sigma = tpot_params.get("sigma", 0.0)
 
         # Queues
         self.waiting_queue: List[Request] = []
@@ -57,12 +46,14 @@ class LLMEngine:
         self.completed_requests: List[Request] = []
 
     def get_tpot(self, concurrent_requests: int) -> float:
-        """Calculate Time Per Output Token using linear regression params"""
-        return self.tpot_alpha + self.tpot_beta * concurrent_requests
+        """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
+        mu = self.tpot_alpha + self.tpot_beta * concurrent_requests
+        return max(0.0, random.gauss(mu, self.tpot_sigma))
 
     def get_prefill_time(self, num_tokens: int) -> float:
-        """Calculate prefill time using polynomial regression params"""
-        return self.prefill_alpha + self.prefill_beta * num_tokens
+        """Calculate prefill time using polynomial regression params with Gaussian noise"""
+        mu = self.prefill_alpha + self.prefill_beta * num_tokens
+        return max(0.0, random.gauss(mu, self.prefill_sigma))
 
     def add_request(self, request: Request, current_time: float):
         self.waiting_queue.append(request)
@@ -126,11 +117,10 @@ class LLMEngine:
                 step_duration = self.get_prefill_time(tokens_to_prefill_total)
 
                 duration = step_duration
-                current_steps_taken = 1
                 for req in self.running_queue.prefill_requests:
                     req.prefilled_tokens += step_prefill_tokens.get(req.id, 0)
                 for r in self.running_queue.decoding_requests:
-                    r.generated_tokens += current_steps_taken
+                    r.generated_tokens += 1
                     if r.first_token_time is None:
                         r.first_token_time = self.current_time + step_duration
 
@@ -146,31 +136,16 @@ class LLMEngine:
 
             else:
                 concurrent_decodes = len(self.running_queue.decoding_requests)
-                tpot = self.get_tpot(concurrent_decodes)
-
-                min_remaining = min(
-                    req.completion_tokens - req.generated_tokens
-                    for req in self.running_queue.all_requests
-                )
-
-                if next_arrival_time is not None:
-                    max_steps = max(
-                        1, int((next_arrival_time - self.current_time) // tpot)
-                    )
-                    current_steps_taken = min(min_remaining, max_steps)
-                else:
-                    current_steps_taken = min_remaining
-
-                duration = current_steps_taken * tpot
+                duration = self.get_tpot(concurrent_decodes)
 
                 for r in self.running_queue.decoding_requests:
-                    r.generated_tokens += current_steps_taken
+                    r.generated_tokens += 1
                     if r.first_token_time is None:
-                        r.first_token_time = self.current_time + tpot
+                        r.first_token_time = self.current_time + duration
 
             # Advance Time
             self.current_time += duration
-            steps_taken += current_steps_taken
+            steps_taken += 1
 
         # Once loop is broken, move finished out
         finished = [r for r in self.running_queue.all_requests if r.is_finished]

@@ -1,10 +1,10 @@
 #!/bin/bash
-# Usage: ./launch.sh <MIG_UUID> <MODEL_ID> <PORT> <up|down>
+# Usage: ./launch.sh <MIG_UUID> <MODEL_ID> <PORT> <up|down|logs>
 
 set -e
 
 if [ "$#" -ne 4 ]; then
-  echo "Usage: $0 <MIG_UUID> <MODEL_ID> <PORT> <up|down>"
+  echo "Usage: $0 <MIG_UUID> <MODEL_ID> <PORT> <up|down|logs>"
   exit 1
 fi
 
@@ -29,9 +29,6 @@ case "$ACTION" in
     ;;
   logs)
     docker compose -p "$PROJECT_NAME" logs -f -t --no-log-prefix -n 30
-    ;;
-  restart)
-    docker compose -p "$PROJECT_NAME" restart
     ;;
   *)
     echo "Invalid action: $ACTION"

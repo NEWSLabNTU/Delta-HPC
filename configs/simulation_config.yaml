@@ -3,7 +3,6 @@ agents:
     dataset: assets/processed_code_feedback
   rag:
     dataset: assets/rag-dataset-sharegpt
-
 generated:
   coding:
     Qwen/Qwen2.5-Coder-14B-Instruct: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
@@ -13,7 +12,6 @@ generated:
     Qwen/Qwen2.5-14B-Instruct: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     Qwen/Qwen2.5-7B-Instruct: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
     Qwen/Qwen2.5-3B-Instruct: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
-
 vllm_config:
   Qwen/Qwen2.5-Coder-14B-Instruct: configs/qwen2_5-coder-14b-instruct.yaml
   Qwen/Qwen2.5-Coder-7B-Instruct: configs/qwen2_5-coder-7b-instruct.yaml
@@ -21,89 +19,103 @@ vllm_config:
   Qwen/Qwen2.5-14B-Instruct: configs/qwen2_5-14b-instruct.yaml
   Qwen/Qwen2.5-7B-Instruct: configs/qwen2_5-7b-instruct.yaml
   Qwen/Qwen2.5-3B-Instruct: configs/qwen2_5-3b-instruct.yaml
-
 regression_params:
   prefill:
     Qwen/Qwen2.5-Coder-14B-Instruct:
       7g.40gb:
         alpha: 0.04467752846225546
         beta: 0.0001567611320677325
+        sigma: 0.041453782190451524
     Qwen/Qwen2.5-Coder-7B-Instruct:
       4g.20gb:
         alpha: 0.030755387104644764
         beta: 0.00012035211589763551
+        sigma: 0.032212861891891376
     Qwen/Qwen2.5-Coder-3B-Instruct:
       1g.10gb:
         alpha: 0.041886878858170405
         beta: 0.0001918367154235788
+        sigma: 0.051540916023329796
       2g.10gb:
         alpha: 0.030826559662746153
         beta: 0.0001106896327485302
+        sigma: 0.02959039207608835
     Qwen/Qwen2.5-14B-Instruct:
       7g.40gb:
         alpha: 0.08484241566946397
         beta: 0.00018067091749251983
+        sigma: 0.3599043059283
     Qwen/Qwen2.5-7B-Instruct:
       4g.20gb:
         alpha: 0.04625770123545487
         beta: 0.00014168889304229506
+        sigma: 0.25072646682723565
     Qwen/Qwen2.5-3B-Instruct:
       1g.10gb:
         alpha: 0.09841746086253653
         beta: 0.0002601741340428641
+        sigma: 0.6324197956172724
       2g.10gb:
         alpha: 0.025562770663901113
         beta: 0.00013580601345646354
+        sigma: 0.2357460285061797
   tpot:
     Qwen/Qwen2.5-Coder-14B-Instruct:
       7g.40gb:
         alpha: 0.02470393784396388
         beta: 0.00015838581990416145
+        sigma: 0.0003913334668886469
     Qwen/Qwen2.5-Coder-7B-Instruct:
       4g.20gb:
         alpha: 0.023214700836224657
         beta: 0.0001696803150584133
+        sigma: 0.0004502867542284373
     Qwen/Qwen2.5-Coder-3B-Instruct:
       1g.10gb:
         alpha: 0.021666322541341685
         beta: 0.0003938269894160768
+        sigma: 0.0011141595232364713
       2g.10gb:
         alpha: 0.021960184285835436
         beta: 0.00021357639181569246
+        sigma: 0.0005937982119924863
     Qwen/Qwen2.5-14B-Instruct:
       7g.40gb:
         alpha: 0.024763871292589484
         beta: 0.00015613310131934138
+        sigma: 0.00039039936865724014
     Qwen/Qwen2.5-7B-Instruct:
       4g.20gb:
         alpha: 0.023281234872177783
         beta: 0.0001654388688334183
+        sigma: 0.00043171032667850063
     Qwen/Qwen2.5-3B-Instruct:
       1g.10gb:
         alpha: 0.02159920960406169
         beta: 0.0003942842328066259
+        sigma: 0.0011120023672045723
       2g.10gb:
         alpha: 0.021863952266532646
         beta: 0.000217881320487576
-
+        sigma: 0.0006084495107671828
 engines:
-  - id: coding_engine_7b
-    model: Qwen/Qwen2.5-Coder-7B-Instruct
-    mig: 4g.20gb
-    agent: coding
-    size: 7B
-  - id: coding_engine_3b_1
-    model: Qwen/Qwen2.5-Coder-3B-Instruct
-    mig: 2g.10gb
-    agent: coding
-    size: 3B
-  - id: coding_engine_3b_2
-    model: Qwen/Qwen2.5-Coder-3B-Instruct
-    mig: 1g.10gb
-    agent: coding
-    size: 3B
-  - id: rag_engine_14b
-    model: Qwen/Qwen2.5-14B-Instruct
-    mig: 7g.40gb
-    agent: rag
-    size: 14B
+- id: coding_engine_7b
+  model: Qwen/Qwen2.5-Coder-7B-Instruct
+  mig: 4g.20gb
+  agent: coding
+  size: 7B
+- id: coding_engine_3b_1
+  model: Qwen/Qwen2.5-Coder-3B-Instruct
+  mig: 2g.10gb
+  agent: coding
+  size: 3B
+- id: coding_engine_3b_2
+  model: Qwen/Qwen2.5-Coder-3B-Instruct
+  mig: 1g.10gb
+  agent: coding
+  size: 3B
+- id: rag_engine_14b
+  model: Qwen/Qwen2.5-14B-Instruct
+  mig: 7g.40gb
+  agent: rag
+  size: 14B

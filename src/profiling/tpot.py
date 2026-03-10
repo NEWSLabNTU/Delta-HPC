@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract vLLM TPOT parameters alpha and beta from sweep results."
+        description="Extract vLLM TPOT parameters alpha, beta, and gaussian noise sigma from sweep results."
     )
     parser.add_argument(
         "--input-dir",
@@ -52,8 +52,6 @@ def main():
             n_val = data.get("max_concurrency")
 
             # 2. Get the list of lists of ITLs (one list per request)
-            # Structure: [[itl1, itl2...], [itl1, itl2...]]
-            # Note: itls are already in seconds.
             nested_itls = data.get("itls", [])
 
             if n_val is not None and nested_itls:
@@ -84,42 +82,60 @@ def main():
     # alpha = intercept (memory wall), beta = slope (scaling cost)
     beta, alpha = np.polyfit(X, Y, 1)
 
+    # 3. Calculate Noise (Sigma)
+    # Predicted Y values based on the linear model
+    Y_pred = beta * X + alpha
+
+    # Residuals represent the 'noise' in the real data
+    residuals = Y - Y_pred
+
+    # Sigma is the standard deviation of the residuals
+    sigma = np.std(residuals)
+
     # Calculate R-squared
     correlation_matrix = np.corrcoef(X, Y)
     r_squared = correlation_matrix[0, 1] ** 2
 
     print("-" * 45)
-    print("TPOT (DECODING) PROFILE RESULTS")
+    print("TPOT (DECODING) PROFILE RESULTS (Linear + Noise)")
     print("-" * 45)
-    print(f"Total Request Samples:       {len(Y)}")
+    print(f"Total Request Samples:           {len(Y)}")
     print(f"Intercept (alpha - Memory Wall): {alpha:.6f} s")
     print(f"Slope (beta - Scaling Cost):    {beta:.6e} s/request")
-    print(f"R-squared:                   {r_squared:.4f}")
+    print(f"Sigma (Noise StdDev):           {sigma:.6f} s")
+    print(f"R-squared:                       {r_squared:.4f}")
     print("-" * 45)
 
-    # 3. Save Parameters to JSON
+    # 4. Save Parameters to JSON
     output_data = {
         "alpha": alpha,
         "beta": beta,
+        "sigma": sigma,
         "r_squared": r_squared,
         "sample_size_requests": len(Y),
+        "unit_alpha": "seconds",
+        "unit_beta": "seconds_per_request",
+        "model_formula": "ITL = alpha + beta * N + N(0, sigma^2)",
     }
-    no_concur_filename = re.sub(r"concurrency-\d+", "", json_files[0].stem)
-    param_save_path = output_dir / (no_concur_filename + "-param.json")
-    with open(param_save_path, "w") as f:
-        json.dump(output_data, f, indent=4)
-    print(f"Parameters saved to: {param_save_path}")
 
-    # 4. Generate and Save Plot
+    # Clean up filename for output
+    if json_files:
+        no_concur_filename = re.sub(r"concurrency-\d+", "", json_files[0].stem)
+        param_save_path = output_dir / (no_concur_filename + "-param.json")
+        with open(param_save_path, "w") as f:
+            json.dump(output_data, f, indent=4)
+        print(f"Parameters saved to: {param_save_path}")
+
+    # 5. Generate and Save Plot
     plt.figure(figsize=(12, 7))
 
     # Scatter the request-level means (converted to ms for plot readability)
     plt.scatter(
-        X, Y * 1000, alpha=0.2, label="Request Mean ITL Samples", color="blue", s=15
+        X, Y * 1000, alpha=0.15, label="Request Mean ITL Samples", color="blue", s=15
     )
 
     # Calculate global means per N for trend clarity
-    unique_n = np.unique(X)
+    unique_n = np.sort(np.unique(X))
     global_means_y = [np.mean(Y[X == n]) * 1000 for n in unique_n]
     plt.scatter(
         unique_n,
@@ -132,27 +148,40 @@ def main():
     )
 
     # Plot regression line (converted to ms)
-    line_x = np.array([min(X), max(X)])
-    line_y = (beta * line_x + alpha) * 1000
+    line_x = np.linspace(min(X), max(X), 100)
+    line_y_s = beta * line_x + alpha
+    line_y_ms = line_y_s * 1000
+
     plt.plot(
         line_x,
-        line_y,
+        line_y_ms,
         color="red",
         linewidth=2,
-        label=f"Fit: y = {beta*1000:.4f}N + {alpha*1000:.2f}ms",
+        label=f"Fit: $y = {beta*1000:.4f}N + {alpha*1000:.2f}$ms",
         zorder=4,
+    )
+
+    # Visualize Noise Range (1 Sigma) in ms
+    sigma_ms = sigma * 1000
+    plt.fill_between(
+        line_x,
+        line_y_ms - sigma_ms,
+        line_y_ms + sigma_ms,
+        color="red",
+        alpha=0.15,
+        label=rf"Noise Margin ($\pm 1\sigma$: {sigma_ms:.2f}ms)",
     )
 
     plt.xlabel("Concurrent Requests (N)")
     plt.ylabel("Mean Inter-Token Latency per Request (ms)")
     plt.title(
-        "vLLM Decoding Profiling: $y = alpha + beta * N$ (Request-Level Analysis)"
+        "vLLM Decoding Profiling: $y = \\alpha + \\beta N + \\epsilon$ (Request-Level Analysis)"
     )
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.7)
 
     plot_save_path = output_dir / (no_concur_filename + "-plot.png")
-    plt.savefig(plot_save_path)
+    plt.savefig(plot_save_path, dpi=150)
     print(f"Fit figure saved to: {plot_save_path}")
     plt.close()
 
