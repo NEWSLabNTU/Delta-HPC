@@ -17,14 +17,14 @@ class LLMEngine:
         engine_id: str,
         model_name: str,
         mig_profile: str,
-        max_num_batched_tokens: int,
+        max_batched_tokens: int,
         prefill_params: dict,
         tpot_params: dict,
     ):
         self.engine_id = engine_id
         self.model_name = model_name
         self.mig_profile = mig_profile
-        self.max_num_batched_tokens = max_num_batched_tokens
+        self.max_batched_tokens = max_batched_tokens
 
         # Regression params
         self.prefill_alpha = prefill_params.get("alpha", 0.0)
@@ -79,19 +79,17 @@ class LLMEngine:
                 break
 
             # Compute budget for prefill
-            budget = self.max_num_batched_tokens - len(
-                self.running_queue.decoding_requests
-            )
-            tokens_to_prefill_total = 0
-            step_prefill_tokens = {}
+            budget = self.max_batched_tokens - len(self.running_queue.decoding_requests)
+            total_prefill_tokens = 0
+            req_prefill_tokens = {}
 
             # 3a. Schedule existing prefill requests (the chunked one from previous step, if any)
             for req in list(self.running_queue.prefill_requests):
                 if budget <= 0:
                     break
                 tokens = min(req.remaining_prefill_tokens, budget)
-                step_prefill_tokens[req.id] = tokens
-                tokens_to_prefill_total += tokens
+                req_prefill_tokens[req.id] = tokens
+                total_prefill_tokens += tokens
                 budget -= tokens
 
             # 3b. Pull from waiting_queue if we still have budget
@@ -103,8 +101,8 @@ class LLMEngine:
                 self.running_queue.prefill_requests.append(req)
 
                 tokens = min(req.remaining_prefill_tokens, budget)
-                step_prefill_tokens[req.id] = tokens
-                tokens_to_prefill_total += tokens
+                req_prefill_tokens[req.id] = tokens
+                total_prefill_tokens += tokens
                 budget -= tokens
 
             if len(self.running_queue) == 0:
@@ -113,12 +111,12 @@ class LLMEngine:
             self.is_busy = True
 
             # Determine steps and durations
-            if tokens_to_prefill_total > 0:
-                step_duration = self.get_prefill_time(tokens_to_prefill_total)
+            if total_prefill_tokens > 0:
+                step_duration = self.get_prefill_time(total_prefill_tokens)
 
                 duration = step_duration
                 for req in self.running_queue.prefill_requests:
-                    req.prefilled_tokens += step_prefill_tokens.get(req.id, 0)
+                    req.prefilled_tokens += req_prefill_tokens.get(req.id, 0)
                 for r in self.running_queue.decoding_requests:
                     r.generated_tokens += 1
                     if r.first_token_time is None:
@@ -135,8 +133,8 @@ class LLMEngine:
                 self.running_queue.prefill_requests = new_prefill
 
             else:
-                concurrent_decodes = len(self.running_queue.decoding_requests)
-                duration = self.get_tpot(concurrent_decodes)
+                num_decodes = len(self.running_queue.decoding_requests)
+                duration = self.get_tpot(num_decodes)
 
                 for r in self.running_queue.decoding_requests:
                     r.generated_tokens += 1

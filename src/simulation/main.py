@@ -97,7 +97,7 @@ def load_regression_params(config: dict, base_dir: Path) -> dict:
 
 
 def main():
-    base_dir = Path("/home/yclo/hpc")
+    base_dir = Path(".")
     profiling_dir = base_dir / "profiling_results"
     configs_dir = base_dir / "configs"
 
@@ -136,7 +136,7 @@ def main():
             engine_id=eid,
             model_name=mname,
             mig_profile=mig,
-            max_num_batched_tokens=max_batch,
+            max_batched_tokens=max_batch,
             prefill_params=prefill,
             tpot_params=tpot,
         )
