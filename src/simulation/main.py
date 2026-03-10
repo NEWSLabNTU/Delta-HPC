@@ -84,25 +84,17 @@ def load_max_batched_tokens(config: dict, base_dir: Path) -> dict:
         filepath = base_dir / path_str
         with open(filepath, "r") as f:
             data = yaml.safe_load(f)
-            if "max_num_batched_tokens" in data:
-                mapping[model_name] = data["max_num_batched_tokens"]
+            if "max_num_batched_tokens" not in data:
+                raise ValueError(
+                    f"Missing 'max_num_batched_tokens' in {filepath} for model {model_name}"
+                )
+            mapping[model_name] = data["max_num_batched_tokens"]
     return mapping
 
 
 def load_regression_params(config: dict, base_dir: Path) -> dict:
-    """Read the param.json files into memory. Keyed by (action(prefill/tpot), model_name, mig_profile)"""
-    params = {"prefill": {}, "tpot": {}}
-
-    for action, models in config["regression_params"].items():
-        for model_name, migs in models.items():
-            if model_name not in params[action]:
-                params[action][model_name] = {}
-            for mig_profile, path_str in migs.items():
-                filepath = base_dir / path_str
-                with open(filepath, "r") as f:
-                    params[action][model_name][mig_profile] = json.loads(f.read())
-
-    return params
+    """Read inline regression parameters keyed by action, model, and mig."""
+    return config["regression_params"]
 
 
 def main():
@@ -137,9 +129,9 @@ def main():
         mname = eng_conf["model"]
         mig = eng_conf["mig"]
         size = eng_conf["size"]
-        prefill = params["prefill"].get(mname, {}).get(mig, {})
-        tpot = params["tpot"].get(mname, {}).get(mig, {})
-        max_batch = batched_tokens_map.get(mname, 4096)
+        prefill = params["prefill"][mname][mig]
+        tpot = params["tpot"][mname][mig]
+        max_batch = batched_tokens_map[mname]
 
         eng = LLMEngine(
             engine_id=eid,

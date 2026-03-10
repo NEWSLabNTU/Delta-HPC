@@ -42,8 +42,8 @@ class LLMEngine:
         # Regression params
         self.prefill_alpha = prefill_params.get("alpha", 0.0)
         self.prefill_beta = prefill_params.get("beta", 0.0)
-        self.tpot_c = tpot_params.get("c_intercept_s", 0.0)
-        self.tpot_d = tpot_params.get("d_slope_s", 0.0)
+        self.tpot_alpha = tpot_params.get("alpha", 0.0)
+        self.tpot_beta = tpot_params.get("beta", 0.0)
 
         # Queues
         self.waiting_queue: List[Request] = []
@@ -58,7 +58,7 @@ class LLMEngine:
 
     def get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params"""
-        return self.tpot_c + self.tpot_d * concurrent_requests
+        return self.tpot_alpha + self.tpot_beta * concurrent_requests
 
     def get_prefill_time(self, num_tokens: int) -> float:
         """Calculate prefill time using polynomial regression params"""

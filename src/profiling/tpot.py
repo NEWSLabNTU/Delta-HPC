@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract vLLM TPOT parameters c and d from sweep results."
+        description="Extract vLLM TPOT parameters alpha and beta from sweep results."
     )
     parser.add_argument(
         "--input-dir",
@@ -80,9 +80,9 @@ def main():
     X = np.array(all_concurrency)
     Y = np.array(all_request_mean_itls)
 
-    # 2. Perform Linear Regression: y = d*N + c
-    # d = slope (scaling cost), c = intercept (memory wall)
-    d, c = np.polyfit(X, Y, 1)
+    # 2. Perform Linear Regression: y = alpha + beta * N
+    # alpha = intercept (memory wall), beta = slope (scaling cost)
+    beta, alpha = np.polyfit(X, Y, 1)
 
     # Calculate R-squared
     correlation_matrix = np.corrcoef(X, Y)
@@ -92,19 +92,17 @@ def main():
     print("TPOT (DECODING) PROFILE RESULTS")
     print("-" * 45)
     print(f"Total Request Samples:       {len(Y)}")
-    print(f"Intercept (c - Memory Wall): {c:.6f} s")
-    print(f"Slope (d - Scaling Cost):    {d:.6e} s/request")
+    print(f"Intercept (alpha - Memory Wall): {alpha:.6f} s")
+    print(f"Slope (beta - Scaling Cost):    {beta:.6e} s/request")
     print(f"R-squared:                   {r_squared:.4f}")
     print("-" * 45)
 
     # 3. Save Parameters to JSON
     output_data = {
-        "c_intercept_s": c,
-        "d_slope_s": d,
+        "alpha": alpha,
+        "beta": beta,
         "r_squared": r_squared,
         "sample_size_requests": len(Y),
-        "model_formula": "ITL = c + d * N",
-        "description": "c is the base memory-wall time, d is the incremental cost per concurrent request.",
     }
     no_concur_filename = re.sub(r"concurrency-\d+", "", json_files[0].stem)
     param_save_path = output_dir / (no_concur_filename + "-param.json")
@@ -135,19 +133,21 @@ def main():
 
     # Plot regression line (converted to ms)
     line_x = np.array([min(X), max(X)])
-    line_y = (d * line_x + c) * 1000
+    line_y = (beta * line_x + alpha) * 1000
     plt.plot(
         line_x,
         line_y,
         color="red",
         linewidth=2,
-        label=f"Fit: y = {d*1000:.4f}N + {c*1000:.2f}ms",
+        label=f"Fit: y = {beta*1000:.4f}N + {alpha*1000:.2f}ms",
         zorder=4,
     )
 
     plt.xlabel("Concurrent Requests (N)")
     plt.ylabel("Mean Inter-Token Latency per Request (ms)")
-    plt.title("vLLM Decoding Profiling: $y = c + dN$ (Request-Level Analysis)")
+    plt.title(
+        "vLLM Decoding Profiling: $y = alpha + beta * N$ (Request-Level Analysis)"
+    )
     plt.legend()
     plt.grid(True, linestyle="--", alpha=0.7)
 

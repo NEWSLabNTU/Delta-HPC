@@ -1,77 +1,109 @@
 agents:
   coding:
-    dataset: "assets/processed_code_feedback"
+    dataset: assets/processed_code_feedback
   rag:
-    dataset: "assets/rag-dataset-sharegpt"
+    dataset: assets/rag-dataset-sharegpt
 
 generated:
   coding:
-    "Qwen/Qwen2.5-Coder-14B-Instruct": "profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl"
-    "Qwen/Qwen2.5-Coder-7B-Instruct": "profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl"
-    "Qwen/Qwen2.5-Coder-3B-Instruct": "profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl"
+    Qwen/Qwen2.5-Coder-14B-Instruct: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
+    Qwen/Qwen2.5-Coder-7B-Instruct: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
+    Qwen/Qwen2.5-Coder-3B-Instruct: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
   rag:
-    "Qwen/Qwen2.5-14B-Instruct": "profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl"
-    "Qwen/Qwen2.5-7B-Instruct": "profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl"
-    "Qwen/Qwen2.5-3B-Instruct": "profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl"
+    Qwen/Qwen2.5-14B-Instruct: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    Qwen/Qwen2.5-7B-Instruct: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
+    Qwen/Qwen2.5-3B-Instruct: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
 
 vllm_config:
-  "Qwen/Qwen2.5-Coder-14B-Instruct": "configs/qwen2_5-coder-14b-instruct.yaml"
-  "Qwen/Qwen2.5-Coder-7B-Instruct": "configs/qwen2_5-coder-7b-instruct.yaml"
-  "Qwen/Qwen2.5-Coder-3B-Instruct": "configs/qwen2_5-coder-3b-instruct.yaml"
-  "Qwen/Qwen2.5-14B-Instruct": "configs/qwen2_5-14b-instruct.yaml"
-  "Qwen/Qwen2.5-7B-Instruct": "configs/qwen2_5-7b-instruct.yaml"
-  "Qwen/Qwen2.5-3B-Instruct": "configs/qwen2_5-3b-instruct.yaml"
+  Qwen/Qwen2.5-Coder-14B-Instruct: configs/qwen2_5-coder-14b-instruct.yaml
+  Qwen/Qwen2.5-Coder-7B-Instruct: configs/qwen2_5-coder-7b-instruct.yaml
+  Qwen/Qwen2.5-Coder-3B-Instruct: configs/qwen2_5-coder-3b-instruct.yaml
+  Qwen/Qwen2.5-14B-Instruct: configs/qwen2_5-14b-instruct.yaml
+  Qwen/Qwen2.5-7B-Instruct: configs/qwen2_5-7b-instruct.yaml
+  Qwen/Qwen2.5-3B-Instruct: configs/qwen2_5-3b-instruct.yaml
 
 regression_params:
   prefill:
-    "Qwen/Qwen2.5-Coder-14B-Instruct":
-      "7g.40gb": "profiling_results/prefill/coder/MIG-7g-40gb/polyfit/prefill-Qwen2.5-Coder-14B-Instruct-MIG-7g-40gb-20260306-015512-param.json"
-    "Qwen/Qwen2.5-Coder-7B-Instruct":
-      "4g.20gb": "profiling_results/prefill/coder/MIG-4g-20gb/polyfit/prefill-Qwen2.5-Coder-7B-Instruct-MIG-4g-20gb-20260306-015704-param.json"
-    "Qwen/Qwen2.5-Coder-3B-Instruct":
-      "1g.10gb": "profiling_results/prefill/coder/MIG-1g-10gb/polyfit/prefill-Qwen2.5-Coder-3B-Instruct-MIG-1g-10gb-20260306-015809-param.json"
-      "2g.10gb": "profiling_results/prefill/coder/MIG-2g-10gb/polyfit/prefill-Qwen2.5-Coder-3B-Instruct-MIG-2g-10gb-20260306-015740-param.json"
-    "Qwen/Qwen2.5-14B-Instruct":
-      "7g.40gb": "profiling_results/prefill/rag/MIG-7g-40gb/polyfit/prefill-Qwen2.5-14B-Instruct-MIG-7g-40gb-20260308-012744-param.json"
-    "Qwen/Qwen2.5-7B-Instruct":
-      "4g.20gb": "profiling_results/prefill/rag/MIG-4g-20gb/polyfit/prefill-Qwen2.5-7B-Instruct-MIG-4g-20gb-20260308-012727-param.json"
-    "Qwen/Qwen2.5-3B-Instruct":
-      "1g.10gb": "profiling_results/prefill/rag/MIG-1g-10gb/polyfit/prefill-Qwen2.5-3B-Instruct-MIG-1g-10gb-20260308-012806-param.json"
-      "2g.10gb": "profiling_results/prefill/rag/MIG-2g-10gb/polyfit/prefill-Qwen2.5-3B-Instruct-MIG-2g-10gb-20260308-012704-param.json"
+    Qwen/Qwen2.5-Coder-14B-Instruct:
+      7g.40gb:
+        alpha: 0.04467752846225546
+        beta: 0.0001567611320677325
+    Qwen/Qwen2.5-Coder-7B-Instruct:
+      4g.20gb:
+        alpha: 0.030755387104644764
+        beta: 0.00012035211589763551
+    Qwen/Qwen2.5-Coder-3B-Instruct:
+      1g.10gb:
+        alpha: 0.041886878858170405
+        beta: 0.0001918367154235788
+      2g.10gb:
+        alpha: 0.030826559662746153
+        beta: 0.0001106896327485302
+    Qwen/Qwen2.5-14B-Instruct:
+      7g.40gb:
+        alpha: 0.08484241566946397
+        beta: 0.00018067091749251983
+    Qwen/Qwen2.5-7B-Instruct:
+      4g.20gb:
+        alpha: 0.04625770123545487
+        beta: 0.00014168889304229506
+    Qwen/Qwen2.5-3B-Instruct:
+      1g.10gb:
+        alpha: 0.09841746086253653
+        beta: 0.0002601741340428641
+      2g.10gb:
+        alpha: 0.025562770663901113
+        beta: 0.00013580601345646354
   tpot:
-    "Qwen/Qwen2.5-Coder-14B-Instruct":
-      "7g.40gb": "profiling_results/tpot/coder/MIG-7g-40gb/polyfit/tpot-Qwen2.5-Coder-14B-Instruct--20260306-142311-param.json"
-    "Qwen/Qwen2.5-Coder-7B-Instruct":
-      "4g.20gb": "profiling_results/tpot/coder/MIG-4g-20gb/polyfit/tpot-Qwen2.5-Coder-7B-Instruct--20260306-142421-param.json"
-    "Qwen/Qwen2.5-Coder-3B-Instruct":
-      "1g.10gb": "profiling_results/tpot/coder/MIG-1g-10gb/polyfit/tpot-Qwen2.5-Coder-3B-Instruct--20260306-142639-param.json"
-      "2g.10gb": "profiling_results/tpot/coder/MIG-2g-10gb/polyfit/tpot-Qwen2.5-Coder-3B-Instruct--20260306-142617-param.json"
-    "Qwen/Qwen2.5-14B-Instruct":
-      "7g.40gb": "profiling_results/tpot/rag/MIG-7g-40gb/polyfit/tpot-Qwen2.5-14B-Instruct--20260308-120247-param.json"
-    "Qwen/Qwen2.5-7B-Instruct":
-      "4g.20gb": "profiling_results/tpot/rag/MIG-4g-20gb/polyfit/tpot-Qwen2.5-7B-Instruct--20260308-120226-param.json"
-    "Qwen/Qwen2.5-3B-Instruct":
-      "1g.10gb": "profiling_results/tpot/rag/MIG-1g-10gb/polyfit/tpot-Qwen2.5-3B-Instruct--20260308-120305-param.json"
-      "2g.10gb": "profiling_results/tpot/rag/MIG-2g-10gb/polyfit/tpot-Qwen2.5-3B-Instruct--20260308-120140-param.json"
+    Qwen/Qwen2.5-Coder-14B-Instruct:
+      7g.40gb:
+        alpha: 0.02470393784396388
+        beta: 0.00015838581990416145
+    Qwen/Qwen2.5-Coder-7B-Instruct:
+      4g.20gb:
+        alpha: 0.023214700836224657
+        beta: 0.0001696803150584133
+    Qwen/Qwen2.5-Coder-3B-Instruct:
+      1g.10gb:
+        alpha: 0.021666322541341685
+        beta: 0.0003938269894160768
+      2g.10gb:
+        alpha: 0.021960184285835436
+        beta: 0.00021357639181569246
+    Qwen/Qwen2.5-14B-Instruct:
+      7g.40gb:
+        alpha: 0.024763871292589484
+        beta: 0.00015613310131934138
+    Qwen/Qwen2.5-7B-Instruct:
+      4g.20gb:
+        alpha: 0.023281234872177783
+        beta: 0.0001654388688334183
+    Qwen/Qwen2.5-3B-Instruct:
+      1g.10gb:
+        alpha: 0.02159920960406169
+        beta: 0.0003942842328066259
+      2g.10gb:
+        alpha: 0.021863952266532646
+        beta: 0.000217881320487576
 
 engines:
-  - id: "coding_engine_7b"
-    model: "Qwen/Qwen2.5-Coder-7B-Instruct"
-    mig: "4g.20gb"
-    agent: "coding"
-    size: "7B"
-  - id: "coding_engine_3b_1"
-    model: "Qwen/Qwen2.5-Coder-3B-Instruct"
-    mig: "2g.10gb"
-    agent: "coding"
-    size: "3B"
-  - id: "coding_engine_3b_2"
-    model: "Qwen/Qwen2.5-Coder-3B-Instruct"
-    mig: "1g.10gb"
-    agent: "coding"
-    size: "3B"
-  - id: "rag_engine_14b"
-    model: "Qwen/Qwen2.5-14B-Instruct"
-    mig: "7g.40gb"
-    agent: "rag"
-    size: "14B"
+  - id: coding_engine_7b
+    model: Qwen/Qwen2.5-Coder-7B-Instruct
+    mig: 4g.20gb
+    agent: coding
+    size: 7B
+  - id: coding_engine_3b_1
+    model: Qwen/Qwen2.5-Coder-3B-Instruct
+    mig: 2g.10gb
+    agent: coding
+    size: 3B
+  - id: coding_engine_3b_2
+    model: Qwen/Qwen2.5-Coder-3B-Instruct
+    mig: 1g.10gb
+    agent: coding
+    size: 3B
+  - id: rag_engine_14b
+    model: Qwen/Qwen2.5-14B-Instruct
+    mig: 7g.40gb
+    agent: rag
+    size: 14B
