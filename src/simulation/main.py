@@ -5,6 +5,7 @@ from agent import Agent
 from simulator import Simulator
 import global_vars as g
 from typing import Dict, List
+import argparse
 
 
 def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
@@ -15,17 +16,62 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
     requests: List[Request] = []
 
     for agent_id in AgentId:
-        # Use the first model's token counts as the canonical prompt_tokens source
         first_model = next(iter(g.TOKENS_MAP[agent_id]))
         req_map = g.TOKENS_MAP[agent_id][first_model]
 
-        for rid, (prompt_tokens, _) in req_map.items():
-            req = Request(
-                id=rid,
-                agent_id=agent_id,
-                prompt_tokens=prompt_tokens,
-            )
-            requests.append(req)
+        if agent_id == AgentId.CODING:
+            # Pick 25,000 requests
+            selected = random.sample(list(req_map.items()), 25000)
+            for rid, (prompt_tokens, _) in selected:
+                requests.append(
+                    Request(
+                        id=rid,
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+        elif agent_id == AgentId.RAG:
+            all_items = list(req_map.items())
+            rag_requests: List[Request] = []
+
+            # Duplicate each row
+            for rid, (prompt_tokens, _) in all_items:
+                rag_requests.append(
+                    Request(
+                        id=f"{rid}_dup1",
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+            for rid, (prompt_tokens, _) in all_items:
+                rag_requests.append(
+                    Request(
+                        id=f"{rid}_dup2",
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+
+            # Fill to 25,000
+            needed = 25000 - len(rag_requests)
+            if needed > 0:
+                extra = random.sample(all_items, needed)
+                for i, (rid, (prompt_tokens, _)) in enumerate(extra):
+                    rag_requests.append(
+                        Request(
+                            id=f"{rid}_extra_{i}",
+                            agent_id=agent_id,
+                            prompt_tokens=prompt_tokens,
+                            original_id=rid,
+                        )
+                    )
+            elif needed < 0:
+                rag_requests = rag_requests[:25000]
+
+            requests.extend(rag_requests)
 
     random.seed(42)
     random.shuffle(requests)
@@ -37,6 +83,9 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run simulation")
+    parser.add_argument("--no-log", action="store_true", help="Disable logging")
+    args = parser.parse_args()
 
     print("Loading config and datasets...")
 
@@ -75,6 +124,7 @@ def main():
     sim = Simulator(
         agents={AgentId.CODING: coding_agent, AgentId.RAG: rag_agent},
         engines=engines,
+        no_log=args.no_log,
     )
 
     print("Feeding events...")

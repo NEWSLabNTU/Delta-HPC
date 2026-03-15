@@ -35,7 +35,8 @@ class Agent:
 
         # Resolve completion_tokens based on the engine's current model
         model_req_map = g.TOKENS_MAP[self.agent_id][best_engine.model_name]
-        _, completion_tokens = model_req_map[request.id]
+        lookup_id = request.original_id if request.original_id else request.id
+        _, completion_tokens = model_req_map[lookup_id]
         request.completion_tokens = completion_tokens
 
         best_engine.add_request(request, current_time)

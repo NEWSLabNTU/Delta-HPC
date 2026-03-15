@@ -5,12 +5,13 @@ from engine import LLMEngine, SimulationEvent
 from agent import Agent
 import global_vars as g
 import random
+from logger import SimulationLogger
 
 
 class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
-        self.trigger_interval = 1800.0
+        self.trigger_interval = 180000.0
         self.engine_owners: Dict[str, AgentId] = {}
         self.engine_targets: Dict[str, AgentId] = {}
         self.agent_completed: Dict[AgentId, List[Request]] = {
@@ -49,20 +50,20 @@ class ResourceManager:
 
         giver, receiver = random.choice(candidates_to_give)
         engine_to_shift = random.choice(giver.engines)
+        self.simulator.logger.log_reallocation(
+            current_time, giver.agent_id, receiver.agent_id, engine_to_shift.mig_profile
+        )
 
         giver.engines.remove(engine_to_shift)
         self.engine_targets[engine_to_shift.engine_id] = receiver.agent_id
 
-        print(
-            f"[{current_time:.1f}s] Reallocating {engine_to_shift.engine_id} from {giver.agent_id.value} to {receiver.agent_id.value}"
-        )
         evt = engine_to_shift.trigger_reallocation(current_time)
         if evt:
             heapq.heappush(self.simulator.events, evt)
 
     def finish_reallocation(self, engine_id: str, current_time: float):
         receiver_id = self.engine_targets.pop(engine_id)
-        self.engine_owners[engine_id] = receiver_id
+        self._attribute_completed(engine_id)
 
         sim = self.simulator
         engine = sim.engines[engine_id]
@@ -78,13 +79,7 @@ class ResourceManager:
             restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
-        # Attribute any completed requests to the old owner before transferring
-        self._attribute_completed(engine_id)
-
         sim.agents[receiver_id].add_engine(engine)
-        print(
-            f"[{current_time:.1f}s] Engine {engine_id} finished restarting! Now serving {receiver_id.value} with model {new_model}."
-        )
         self.engine_owners[engine_id] = receiver_id
 
 
@@ -93,12 +88,14 @@ class Simulator:
         self,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
+        no_log: bool = False,
     ):
         self.agents = agents
         self.engines = engines
         self.events: List[SimulationEvent] = []
         self.current_time: float = 0.0
         self.resource_manager = ResourceManager(self)
+        self.logger = SimulationLogger(enabled=not no_log)
 
         for aid, ag in agents.items():
             for eg in ag.engines:
@@ -179,10 +176,18 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
-                    engine.finish_restart(self.current_time)
+
+                    giver_id = self.resource_manager.engine_owners[engine_id]
+                    receiver_id = self.resource_manager.engine_targets[engine_id]
+
+                    self.logger.log_engine_restart_complete(
+                        self.current_time, engine_id, giver_id, receiver_id
+                    )
+
                     self.resource_manager.finish_reallocation(
                         engine_id, self.current_time
                     )
+                    engine.finish_restart(self.current_time)
 
                 case EventType.REQUEST_ARRIVAL:
                     assert "request" in current_event.payload
@@ -194,6 +199,12 @@ class Simulator:
 
                     agent = self.agents[agent_id]
                     assigned_engine = agent.dispatch(req, self.current_time)
+                    self.logger.log_request_arrival(
+                        self.current_time,
+                        req.id,
+                        agent_id,
+                        assigned_engine,
+                    )
 
                     if (
                         assigned_engine and not assigned_engine.is_busy
@@ -210,6 +221,7 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
+                    self.logger.log_engine_step(self.current_time, self.agents)
 
                     # Immediate re-schedule
                     next_arrival = self._peek_next_arrival_time()
@@ -218,6 +230,7 @@ class Simulator:
                         heapq.heappush(self.events, evt)
 
         self.resource_manager.finalize_accounting()
+        self.logger.flush()
 
     def _peek_next_arrival_time(self) -> float | None:
         """Find the time of the next arrival event for fast-forwarding."""
