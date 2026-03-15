@@ -50,8 +50,6 @@ class LLMEngine:
 
     def get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
-        if concurrent_requests > 30:
-            print(f"concurrent_requests: {concurrent_requests}")
         mu = self.tpot_alpha + self.tpot_beta * concurrent_requests
         return max(0.0, random.gauss(mu, self.tpot_sigma))
 

@@ -15,7 +15,6 @@ simulation:
 
   configs:
     CodingAgent:
-      dataset: assets/processed_code_feedback
       mig:
         7g.40gb:
           model: Qwen/Qwen2.5-Coder-14B-Instruct
@@ -79,7 +78,6 @@ simulation:
               sigma: 0.0011141595232364713
 
     RAGAgent:
-      dataset: assets/rag-dataset-sharegpt
       mig:
         7g.40gb:
           model: Qwen/Qwen2.5-14B-Instruct
@@ -144,20 +142,20 @@ simulation:
 
 model:
   Qwen/Qwen2.5-Coder-14B-Instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl.
+    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-14b-instruct.yaml
   Qwen/Qwen2.5-Coder-7B-Instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl.
+    generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-7b-instruct.yaml
   Qwen/Qwen2.5-Coder-3B-Instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl.
+    generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-3b-instruct.yaml
   Qwen/Qwen2.5-14B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-14b-instruct.yaml
   Qwen/Qwen2.5-7B-Instruct:
-    generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-7b-instruct.yaml
   Qwen/Qwen2.5-3B-Instruct:
-    generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-3b-instruct.yaml
