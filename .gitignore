@@ -10,7 +10,7 @@ wheels/
 .venv
 
 vllm/
-test.*
+test*
 assets/*
 results/
 profiling_results

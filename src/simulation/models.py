@@ -13,6 +13,12 @@ class RequestState(Enum):
     COMPLETED = "COMPLETED"
 
 
+class EngineStatus(Enum):
+    ACTIVE = "ACTIVE"
+    DRAINING = "DRAINING"
+    RESTARTING = "RESTARTING"
+
+
 class AgentId(Enum):
     CODING = "CodingAgent"
     RAG = "RAGAgent"
@@ -21,6 +27,8 @@ class AgentId(Enum):
 class EventType(Enum):
     REQUEST_ARRIVAL = "REQUEST_ARRIVAL"
     ENGINE_STEP_COMPLETE = "ENGINE_STEP_COMPLETE"
+    REALLOCATION_TRIGGER = "REALLOCATION_TRIGGER"
+    ENGINE_RESTART_COMPLETE = "ENGINE_RESTART_COMPLETE"
 
 
 @dataclass

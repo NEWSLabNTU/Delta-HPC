@@ -1,159 +1,163 @@
-mig_model_map:
-  CodingAgent:
-    7g.40gb: Qwen/Qwen2.5-Coder-14B-Instruct
-    4g.20gb: Qwen/Qwen2.5-Coder-7B-Instruct
-    3g.20gb: Qwen/Qwen2.5-Coder-7B-Instruct
-    2g.10gb: Qwen/Qwen2.5-Coder-3B-Instruct
-    1g.10gb: Qwen/Qwen2.5-Coder-3B-Instruct
-  RAGAgent:
-    7g.40gb: Qwen/Qwen2.5-14B-Instruct
-    4g.20gb: Qwen/Qwen2.5-7B-Instruct
-    3g.20gb: Qwen/Qwen2.5-7B-Instruct
-    2g.10gb: Qwen/Qwen2.5-3B-Instruct
-    1g.10gb: Qwen/Qwen2.5-3B-Instruct
+simulation:
+  initial_state:
+    - id: 0
+      mig: 4g.20gb
+      agent: CodingAgent
+    - id: 1
+      mig: 2g.10gb
+      agent: CodingAgent
+    - id: 2
+      mig: 1g.10gb
+      agent: CodingAgent
+    - id: 3
+      mig: 7g.40gb
+      agent: RAGAgent
 
-agents:
-  CodingAgent:
-    dataset: assets/processed_code_feedback
-  RAGAgent:
-    dataset: assets/rag-dataset-sharegpt
+  configs:
+    CodingAgent:
+      dataset: assets/processed_code_feedback
+      mig:
+        7g.40gb:
+          model: Qwen/Qwen2.5-Coder-14B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.04467752846225546
+              beta: 0.0001567611320677325
+              sigma: 0.041453782190451524
+            tpot:
+              alpha: 0.02470393784396388
+              beta: 0.00015838581990416145
+              sigma: 0.0003913334668886469
+        4g.20gb:
+          model: Qwen/Qwen2.5-Coder-7B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.030755387104644764
+              beta: 0.00012035211589763551
+              sigma: 0.032212861891891376
+            tpot:
+              alpha: 0.023214700836224657
+              beta: 0.0001696803150584133
+              sigma: 0.0004502867542284373
+        3g.20gb:
+          model: Qwen/Qwen2.5-Coder-7B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.051558955438592846
+              beta: 0.0001555728566948415
+              sigma: 0.04937598194749731
+            tpot:
+              alpha: 0.02340360040717273
+              beta: 0.000205660104311333
+              sigma: 0.0005542026973441775
+        2g.10gb:
+          model: Qwen/Qwen2.5-Coder-3B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.030826559662746153
+              beta: 0.0001106896327485302
+              sigma: 0.02959039207608835
+            tpot:
+              alpha: 0.021960184285835436
+              beta: 0.00021357639181569246
+              sigma: 0.0005937982119924863
+        1g.10gb:
+          model: Qwen/Qwen2.5-Coder-3B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.041886878858170405
+              beta: 0.0001918367154235788
+              sigma: 0.051540916023329796
+            tpot:
+              alpha: 0.021666322541341685
+              beta: 0.0003938269894160768
+              sigma: 0.0011141595232364713
 
-generated:
-  CodingAgent:
-    Qwen/Qwen2.5-Coder-14B-Instruct: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
-    Qwen/Qwen2.5-Coder-7B-Instruct: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
-    Qwen/Qwen2.5-Coder-3B-Instruct: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
-  RAGAgent:
-    Qwen/Qwen2.5-14B-Instruct: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
-    Qwen/Qwen2.5-7B-Instruct: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
-    Qwen/Qwen2.5-3B-Instruct: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
+    RAGAgent:
+      dataset: assets/rag-dataset-sharegpt
+      mig:
+        7g.40gb:
+          model: Qwen/Qwen2.5-14B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.045291878638524366
+              beta: 0.00015694526100495866
+              sigma: 0.042782964822820416
+            tpot:
+              alpha: 0.024763871292589484
+              beta: 0.00015613310131934138
+              sigma: 0.00039039936865724014
+        4g.20gb:
+          model: Qwen/Qwen2.5-7B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.030131679064210343
+              beta: 0.00012045879032405954
+              sigma: 0.031631261808311543
+            tpot:
+              alpha: 0.023281234872177783
+              beta: 0.0001654388688334183
+              sigma: 0.00043171032667850063
+        3g.20gb:
+          model: Qwen/Qwen2.5-7B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.051270775707020814
+              beta: 0.0001557474601161097
+              sigma: 0.050605126072537074
+            tpot:
+              alpha: 0.023352265970280714
+              beta: 0.0002088799262357157
+              sigma: 0.0005527448870265582
+        2g.10gb:
+          model: Qwen/Qwen2.5-3B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.028287213630630248
+              beta: 0.00011177368304287283
+              sigma: 0.029058523863657818
+            tpot:
+              alpha: 0.021863952266532646
+              beta: 0.000217881320487576
+              sigma: 0.0006084495107671828
+        1g.10gb:
+          model: Qwen/Qwen2.5-3B-Instruct
+          restart_time: 60
+          param:
+            prefill:
+              alpha: 0.041907479380461986
+              beta: 0.0001921051575137213
+              sigma: 0.05546227584072508
+            tpot:
+              alpha: 0.02159920960406169
+              beta: 0.0003942842328066259
+              sigma: 0.0011120023672045723
 
-vllm_config:
-  Qwen/Qwen2.5-Coder-14B-Instruct: configs/qwen2_5-coder-14b-instruct.yaml
-  Qwen/Qwen2.5-Coder-7B-Instruct: configs/qwen2_5-coder-7b-instruct.yaml
-  Qwen/Qwen2.5-Coder-3B-Instruct: configs/qwen2_5-coder-3b-instruct.yaml
-  Qwen/Qwen2.5-14B-Instruct: configs/qwen2_5-14b-instruct.yaml
-  Qwen/Qwen2.5-7B-Instruct: configs/qwen2_5-7b-instruct.yaml
-  Qwen/Qwen2.5-3B-Instruct: configs/qwen2_5-3b-instruct.yaml
-
-regression_params:
-  prefill:
-    Qwen/Qwen2.5-Coder-14B-Instruct:
-      7g.40gb:
-        alpha: 0.04467752846225546
-        beta: 0.0001567611320677325
-        sigma: 0.041453782190451524
-    Qwen/Qwen2.5-Coder-7B-Instruct:
-      4g.20gb:
-        alpha: 0.030755387104644764
-        beta: 0.00012035211589763551
-        sigma: 0.032212861891891376
-      3g.20gb:
-        alpha: 0.051558955438592846
-        beta: 0.0001555728566948415
-        sigma: 0.04937598194749731
-    Qwen/Qwen2.5-Coder-3B-Instruct:
-      1g.10gb:
-        alpha: 0.041886878858170405
-        beta: 0.0001918367154235788
-        sigma: 0.051540916023329796
-      2g.10gb:
-        alpha: 0.030826559662746153
-        beta: 0.0001106896327485302
-        sigma: 0.02959039207608835
-    Qwen/Qwen2.5-14B-Instruct:
-      7g.40gb:
-        alpha: 0.045291878638524366
-        beta: 0.00015694526100495866
-        sigma: 0.042782964822820416
-    Qwen/Qwen2.5-7B-Instruct:
-      4g.20gb:
-        alpha: 0.030131679064210343
-        beta: 0.00012045879032405954
-        sigma: 0.031631261808311543
-      3g.20gb:
-        alpha: 0.051270775707020814
-        beta: 0.0001557474601161097
-        sigma: 0.050605126072537074
-    Qwen/Qwen2.5-3B-Instruct:
-      1g.10gb:
-        alpha: 0.041907479380461986
-        beta: 0.0001921051575137213
-        sigma: 0.05546227584072508
-      2g.10gb:
-        alpha: 0.028287213630630248
-        beta: 0.00011177368304287283
-        sigma: 0.029058523863657818
-  tpot:
-    Qwen/Qwen2.5-Coder-14B-Instruct:
-      7g.40gb:
-        alpha: 0.02470393784396388
-        beta: 0.00015838581990416145
-        sigma: 0.0003913334668886469
-    Qwen/Qwen2.5-Coder-7B-Instruct:
-      4g.20gb:
-        alpha: 0.023214700836224657
-        beta: 0.0001696803150584133
-        sigma: 0.0004502867542284373
-      3g.20gb:
-        alpha: 0.02340360040717273
-        beta: 0.000205660104311333
-        sigma: 0.0005542026973441775
-    Qwen/Qwen2.5-Coder-3B-Instruct:
-      1g.10gb:
-        alpha: 0.021666322541341685
-        beta: 0.0003938269894160768
-        sigma: 0.0011141595232364713
-      2g.10gb:
-        alpha: 0.021960184285835436
-        beta: 0.00021357639181569246
-        sigma: 0.0005937982119924863
-    Qwen/Qwen2.5-14B-Instruct:
-      7g.40gb:
-        alpha: 0.024763871292589484
-        beta: 0.00015613310131934138
-        sigma: 0.00039039936865724014
-    Qwen/Qwen2.5-7B-Instruct:
-      4g.20gb:
-        alpha: 0.023281234872177783
-        beta: 0.0001654388688334183
-        sigma: 0.00043171032667850063
-      3g.20gb:
-        alpha: 0.023352265970280714
-        beta: 0.0002088799262357157
-        sigma: 0.0005527448870265582
-    Qwen/Qwen2.5-3B-Instruct:
-      1g.10gb:
-        alpha: 0.02159920960406169
-        beta: 0.0003942842328066259
-        sigma: 0.0011120023672045723
-      2g.10gb:
-        alpha: 0.021863952266532646
-        beta: 0.000217881320487576
-        sigma: 0.0006084495107671828
-initial_state:
-- id: 0
-  mig: 4g.20gb
-  agent: CodingAgent
-- id: 1
-  mig: 2g.10gb
-  agent: CodingAgent
-- id: 2
-  mig: 1g.10gb
-  agent: CodingAgent
-- id: 3
-  mig: 7g.40gb
-  agent: RAGAgent
-restart_time:
-  CodingAgent:
-    1g.10gb: 60
-    2g.10gb: 60
-    3g.10gb: 60
-    4g.20gb: 60
-    7g.40gb: 60
-  RAGAgent:
-    1g.10gb: 60
-    2g.10gb: 60
-    3g.10gb: 60
-    4g.20gb: 60
-    7g.40gb: 60
+model:
+  Qwen/Qwen2.5-Coder-14B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl.
+    vllm_config: configs/qwen2_5-coder-14b-instruct.yaml
+  Qwen/Qwen2.5-Coder-7B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl.
+    vllm_config: configs/qwen2_5-coder-7b-instruct.yaml
+  Qwen/Qwen2.5-Coder-3B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl.
+    vllm_config: configs/qwen2_5-coder-3b-instruct.yaml
+  Qwen/Qwen2.5-14B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    vllm_config: configs/qwen2_5-14b-instruct.yaml
+  Qwen/Qwen2.5-7B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    vllm_config: configs/qwen2_5-7b-instruct.yaml
+  Qwen/Qwen2.5-3B-Instruct:
+    generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
+    vllm_config: configs/qwen2_5-3b-instruct.yaml

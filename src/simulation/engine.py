@@ -2,12 +2,14 @@ import heapq
 import random
 import math
 from typing import List, Optional, Tuple, Dict
-from src.simulation.models import (
+from models import (
     Request,
     RequestState,
     EventType,
     SimulationEvent,
     RunningRequests,
+    EngineStatus,
+    AgentId,
 )
 
 
@@ -20,6 +22,7 @@ class LLMEngine:
         max_batched_tokens: int,
         prefill_params: dict,
         tpot_params: dict,
+        restart_time: float,
     ):
         self.engine_id = engine_id
         self.model_name = model_name
@@ -41,12 +44,16 @@ class LLMEngine:
         # State
         self.current_time: float = 0.0
         self.is_busy: bool = False
+        self.status: EngineStatus = EngineStatus.ACTIVE
+        self.restart_time = restart_time
 
         # Output collection
         self.completed_requests: List[Request] = []
 
     def get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
+        if concurrent_requests > 30:
+            print(f"concurrent_requests: {concurrent_requests}")
         mu = self.tpot_alpha + self.tpot_beta * concurrent_requests
         return max(0.0, random.gauss(mu, self.tpot_sigma))
 
@@ -55,8 +62,51 @@ class LLMEngine:
         mu = self.prefill_alpha + self.prefill_beta * num_tokens
         return max(0.0, random.gauss(mu, self.prefill_sigma))
 
+    def update_model(
+        self,
+        model_name: str,
+        max_batched_tokens: int,
+        prefill_params: dict,
+        tpot_params: dict,
+        restart_time: int
+    ):
+        self.model_name = model_name
+        self.max_batched_tokens = max_batched_tokens
+        self.prefill_alpha = prefill_params["alpha"]
+        self.prefill_beta = prefill_params["beta"]
+        self.prefill_sigma = prefill_params["sigma"]
+        self.tpot_alpha = tpot_params["alpha"]
+        self.tpot_beta = tpot_params["beta"]
+        self.tpot_sigma = tpot_params["sigma"]
+        self.restart_time = restart_time
+
     def add_request(self, request: Request, current_time: float):
+        assert (
+            self.status == EngineStatus.ACTIVE
+        ), f"Cannot add request to {self.engine_id} while {self.status}"
         self.waiting_queue.append(request)
+        self.current_time = max(self.current_time, current_time)
+
+    def trigger_reallocation(self, current_time: float) -> Optional[SimulationEvent]:
+        self.status = EngineStatus.DRAINING
+        self.current_time = max(self.current_time, current_time)
+
+        if len(self.running_queue) == 0 and not self.waiting_queue:
+            return self._start_restart()
+        return None
+
+    def _start_restart(self) -> SimulationEvent:
+        self.status = EngineStatus.RESTARTING
+        self.is_busy = True
+        return SimulationEvent(
+            time=self.current_time + self.restart_time,
+            event_type=EventType.ENGINE_RESTART_COMPLETE,
+            payload={"engine_id": self.engine_id},
+        )
+
+    def finish_restart(self, current_time: float):
+        self.status = EngineStatus.ACTIVE
+        self.is_busy = False
         self.current_time = max(self.current_time, current_time)
 
     def step(
@@ -158,6 +208,8 @@ class LLMEngine:
                 self.running_queue.decoding_requests.remove(r)
 
         if len(self.running_queue) == 0 and not self.waiting_queue:
+            if self.status == EngineStatus.DRAINING:
+                return self._start_restart()
             self.is_busy = False
 
         if steps_taken > 0 or finished:

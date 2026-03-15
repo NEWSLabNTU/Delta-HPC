@@ -11,24 +11,6 @@ TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
 INPUT_LEN=1024
 NUM_PROMPT=1000
 REQ_RATE=0.4
-case $MODE in
-    "rag")
-        INPUT_LEN=5120
-        NUM_PROMPT=5000
-        REQ_RATE=0.2
-    ;;
-
-    "coder")
-        INPUT_LEN=1024
-        NUM_PROMPT=1000
-        REQ_RATE=0.4
-    ;;
-
-    *)
-        echo "Unknown MODE"
-        exit 1
-    ;;
-esac
 
 vllm bench serve \
     --model ${MODEL_ID} \
