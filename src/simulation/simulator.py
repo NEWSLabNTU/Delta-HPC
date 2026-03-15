@@ -1,5 +1,5 @@
 import heapq
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Set
 from models import Request, EventType, AgentId
 from engine import LLMEngine, SimulationEvent
 from agent import Agent
@@ -13,19 +13,17 @@ class ResourceManager:
         self.trigger_interval = 1800.0
         self.engine_owners: Dict[str, AgentId] = {}
         self.engine_targets: Dict[str, AgentId] = {}
-        self.agent_completed: Dict[AgentId, List] = {
+        self.agent_completed: Dict[AgentId, List[Request]] = {
             AgentId.CODING: [],
             AgentId.RAG: [],
         }
         # Track which requests have already been attributed
-        self._attributed: set = set()
+        self._attributed: Set[str] = set()
 
     def _attribute_completed(self, engine_id: str):
         """Attribute all newly completed requests from an engine to its current owner."""
         engine = self.simulator.engines[engine_id]
-        owner = self.engine_owners.get(engine_id)
-        if owner is None:
-            return
+        owner = self.engine_owners[engine_id]
         for req in engine.completed_requests:
             if req.id not in self._attributed:
                 self._attributed.add(req.id)
@@ -177,6 +175,8 @@ class Simulator:
                     )
 
                 case EventType.ENGINE_RESTART_COMPLETE:
+                    assert "engine_id" in current_event.payload
+
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
                     engine.finish_restart(self.current_time)
@@ -185,6 +185,9 @@ class Simulator:
                     )
 
                 case EventType.REQUEST_ARRIVAL:
+                    assert "request" in current_event.payload
+                    assert "target_agent" in current_event.payload
+
                     payload = current_event.payload
                     req: Request = payload["request"]
                     agent_id = payload["target_agent"]
@@ -203,6 +206,8 @@ class Simulator:
                             heapq.heappush(self.events, evt)
 
                 case EventType.ENGINE_STEP_COMPLETE:
+                    assert "engine_id" in current_event.payload
+
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
 
@@ -214,7 +219,7 @@ class Simulator:
 
         self.resource_manager.finalize_accounting()
 
-    def _peek_next_arrival_time(self) -> float:
+    def _peek_next_arrival_time(self) -> float | None:
         """Find the time of the next arrival event for fast-forwarding."""
         for evt in self.events:
             if evt.event_type == EventType.REQUEST_ARRIVAL:

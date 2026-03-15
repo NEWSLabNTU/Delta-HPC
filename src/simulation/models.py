@@ -1,9 +1,10 @@
-import os
-import json
-import yaml
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List, Optional, Literal, Dict, Union
+from typing import TypedDict
 from enum import Enum
+
+
+type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
 
 class RequestState(Enum):
@@ -60,17 +61,10 @@ class Request:
         return self.prefilled_tokens >= self.prompt_tokens
 
 
-@dataclass(order=True)
-class SimulationEvent:
-    time: float
-    event_type: EventType = field(compare=False)
-    payload: dict = field(compare=False, repr=False)
-
-
 @dataclass
 class RunningRequests:
-    prefill_requests: List[Request] = field(default_factory=list)
-    decoding_requests: List[Request] = field(default_factory=list)
+    prefill_requests: List[Request] = field(default_factory=list[Request])
+    decoding_requests: List[Request] = field(default_factory=list[Request])
 
     def __len__(self):
         return len(self.decoding_requests) + len(self.prefill_requests)
@@ -78,3 +72,42 @@ class RunningRequests:
     @property
     def all_requests(self) -> List[Request]:
         return self.decoding_requests + self.prefill_requests
+
+
+class EmptyPayload(TypedDict):
+    """Payload for REALLOCATION_TRIGGER events (no data)."""
+
+
+class EnginePayload(TypedDict):
+    """Payload for ENGINE_RESTART_COMPLETE events."""
+
+    engine_id: str
+
+
+class EngineStepPayload(TypedDict):
+    """Payload for ENGINE_STEP_COMPLETE events."""
+
+    engine_id: str
+    steps_taken: int
+
+
+class RequestArrivalPayload(TypedDict):
+    """Payload for REQUEST_ARRIVAL events."""
+
+    request: Request
+    target_agent: AgentId
+
+
+type PayloadType = Union[
+    EmptyPayload,
+    EnginePayload,
+    EngineStepPayload,
+    RequestArrivalPayload,
+]
+
+
+@dataclass(order=True)
+class SimulationEvent:
+    time: float
+    event_type: EventType = field(compare=False)
+    payload: PayloadType = field(compare=False, repr=False)

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List
 from pathlib import Path
 import yaml
-from models import AgentId
+from models import AgentId, ParamDict
 
 
 @dataclass
@@ -14,7 +14,7 @@ class SimulationConfig:
     # model: { model_name -> { generate_path, vllm_config } }
     model: Dict[str, Any]
     # Populated after loading vllm config files
-    max_batched_tokens: Dict[str, int] = field(default_factory=dict)
+    max_batched_tokens: Dict[str, int] = field(default_factory=dict[str, int])
 
     @classmethod
     def load(cls, config_path: Path) -> "SimulationConfig":
@@ -39,13 +39,13 @@ class SimulationConfig:
         """Return the restart time for a given agent + MIG profile."""
         return self.simulation_configs[agent.value]["mig"][mig_profile]["restart_time"]
 
-    def get_prefill_params(self, agent: AgentId, mig_profile: str) -> Dict[str, float]:
+    def get_prefill_params(self, agent: AgentId, mig_profile: str) -> ParamDict:
         """Return prefill regression params for a given agent + MIG profile."""
         return self.simulation_configs[agent.value]["mig"][mig_profile]["param"][
             "prefill"
         ]
 
-    def get_tpot_params(self, agent: AgentId, mig_profile: str) -> Dict[str, float]:
+    def get_tpot_params(self, agent: AgentId, mig_profile: str) -> ParamDict:
         """Return tpot regression params for a given agent + MIG profile."""
         return self.simulation_configs[agent.value]["mig"][mig_profile]["param"]["tpot"]
 

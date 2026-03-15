@@ -1,10 +1,10 @@
 import random
-from pathlib import Path
 from models import Request, AgentId
 from engine import LLMEngine
 from agent import Agent
 from simulator import Simulator
 import global_vars as g
+from typing import Dict, List
 
 
 def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
@@ -12,7 +12,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
     Loads arriving Requests from the token map. Only prompt_tokens is set here;
     completion_tokens is determined at dispatch time based on the assigned engine's model.
     """
-    requests = []
+    requests: List[Request] = []
 
     for agent_id in AgentId:
         # Use the first model's token counts as the canonical prompt_tokens source
@@ -37,10 +37,8 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
 
 
 def main():
-    base_dir = Path(".")
 
     print("Loading config and datasets...")
-    g.init(base_dir)
 
     requests = load_requests()
     print(f"Loaded {len(requests)} requests.")
@@ -50,7 +48,7 @@ def main():
     coding_agent = Agent(AgentId.CODING)
     rag_agent = Agent(AgentId.RAG)
 
-    engines = {}
+    engines: Dict[str, LLMEngine] = {}
     for eng_conf in g.SIM_CONFIG.initial_state:
         eid = str(eng_conf["id"])
         mig = eng_conf["mig"]
@@ -93,7 +91,11 @@ def main():
         reqs = sim.resource_manager.agent_completed[agent_id]
         print(f"\nAgent {agent_id.value}: {len(reqs)} requests completed.")
         if reqs:
-            avg_latency = sum(r.finish_time - r.arrival_time for r in reqs) / len(reqs)
+            avg_latency = sum(
+                r.finish_time - r.arrival_time
+                for r in reqs
+                if r.finish_time is not None
+            ) / len(reqs)
             valid_ttfts = [
                 r.first_token_time - r.arrival_time
                 for r in reqs

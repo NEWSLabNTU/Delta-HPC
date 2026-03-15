@@ -2,45 +2,36 @@ from __future__ import annotations
 import json
 import yaml
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Dict, Tuple, Set
+from models import AgentId
+from config import SimulationConfig
 
-if TYPE_CHECKING:
-    from config import SimulationConfig
-
-# Global singleton config. Initialised once via init() before anything else runs.
-SIM_CONFIG: "SimulationConfig" = None
-
-# Global token map: { AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
-TOKENS_MAP: dict = {}
+type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
+type TokensMapType = Dict[AgentId, ModelsMapType]
 
 
-def init(base_dir: Path) -> None:
-    """Initialise all global singletons. Must be called once at the start of main()."""
-    global SIM_CONFIG, TOKENS_MAP
-
-    from config import SimulationConfig
-    from models import AgentId
-
-    # --- SIM_CONFIG ---
-    SIM_CONFIG = SimulationConfig.load(base_dir / "configs" / "simulation_config.yaml")
-
+def init_config(base_dir: Path) -> SimulationConfig:
+    sim_config = SimulationConfig.load(base_dir / "configs" / "simulation_config.yaml")
     # Load max_num_batched_tokens from each model's vllm config file
-    for model_name in SIM_CONFIG.model:
-        filepath = base_dir / SIM_CONFIG.get_vllm_config_path(model_name)
+    for model_name in sim_config.model:
+        filepath = base_dir / sim_config.get_vllm_config_path(model_name)
         with open(filepath, "r") as f:
             data = yaml.safe_load(f)
             if "max_num_batched_tokens" not in data:
                 raise ValueError(
                     f"Missing 'max_num_batched_tokens' in {filepath} for model {model_name}"
                 )
-            SIM_CONFIG.max_batched_tokens[model_name] = data["max_num_batched_tokens"]
+            sim_config.max_batched_tokens[model_name] = data["max_num_batched_tokens"]
+    return sim_config
 
+
+def init_tokens_map(base_dir: Path) -> TokensMapType:
     # --- TOKENS_MAP ---
-    tokens_map: dict = {}
+    tokens_map: TokensMapType = {}
     for agent_id in AgentId:
-        model_map: dict = {}
+        model_map: ModelsMapType = {}
         agent_cfg = SIM_CONFIG.simulation_configs[agent_id.value]
-        seen_models: set = set()
+        seen_models: Set[str] = set()
         for mig_cfg in agent_cfg["mig"].values():
             model_name = mig_cfg["model"]
             if model_name in seen_models:
@@ -69,4 +60,11 @@ def init(base_dir: Path) -> None:
                 f"Requests not present in all req_maps for agent {agent_id}"
             )
 
-    TOKENS_MAP = tokens_map
+    return tokens_map
+
+
+base_dir = Path(".")
+SIM_CONFIG: SimulationConfig = init_config(base_dir)
+
+# Global token map: { AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
+TOKENS_MAP: TokensMapType = init_tokens_map(base_dir)

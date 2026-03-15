@@ -1,7 +1,5 @@
-import heapq
 import random
-import math
-from typing import List, Optional, Tuple, Dict
+from typing import List, Dict, Optional
 from models import (
     Request,
     RequestState,
@@ -9,7 +7,7 @@ from models import (
     SimulationEvent,
     RunningRequests,
     EngineStatus,
-    AgentId,
+    ParamDict,
 )
 
 
@@ -20,8 +18,8 @@ class LLMEngine:
         model_name: str,
         mig_profile: str,
         max_batched_tokens: int,
-        prefill_params: dict,
-        tpot_params: dict,
+        prefill_params: ParamDict,
+        tpot_params: ParamDict,
         restart_time: float,
     ):
         self.engine_id = engine_id
@@ -30,12 +28,12 @@ class LLMEngine:
         self.max_batched_tokens = max_batched_tokens
 
         # Regression params
-        self.prefill_alpha = prefill_params.get("alpha", 0.0)
-        self.prefill_beta = prefill_params.get("beta", 0.0)
-        self.prefill_sigma = prefill_params.get("sigma", 0.0)
-        self.tpot_alpha = tpot_params.get("alpha", 0.0)
-        self.tpot_beta = tpot_params.get("beta", 0.0)
-        self.tpot_sigma = tpot_params.get("sigma", 0.0)
+        self.prefill_alpha = prefill_params["alpha"]
+        self.prefill_beta = prefill_params["beta"]
+        self.prefill_sigma = prefill_params["sigma"]
+        self.tpot_alpha = tpot_params["alpha"]
+        self.tpot_beta = tpot_params["beta"]
+        self.tpot_sigma = tpot_params["sigma"]
 
         # Queues
         self.waiting_queue: List[Request] = []
@@ -66,9 +64,9 @@ class LLMEngine:
         self,
         model_name: str,
         max_batched_tokens: int,
-        prefill_params: dict,
-        tpot_params: dict,
-        restart_time: int
+        prefill_params: ParamDict,
+        tpot_params: ParamDict,
+        restart_time: float,
     ):
         self.model_name = model_name
         self.max_batched_tokens = max_batched_tokens
@@ -131,7 +129,7 @@ class LLMEngine:
             # Compute budget for prefill
             budget = self.max_batched_tokens - len(self.running_queue.decoding_requests)
             total_prefill_tokens = 0
-            req_prefill_tokens = {}
+            req_prefill_tokens: Dict[str, int] = {}
 
             # 3a. Schedule existing prefill requests (the chunked one from previous step, if any)
             for req in list(self.running_queue.prefill_requests):
@@ -173,7 +171,7 @@ class LLMEngine:
                         r.first_token_time = self.current_time + step_duration
 
                 # Cleanup prefill_requests
-                new_prefill = []
+                new_prefill: List[Request] = []
                 for req in self.running_queue.prefill_requests:
                     if req.prefill_completed:
                         req.state = RequestState.DECODING
