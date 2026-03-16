@@ -55,7 +55,7 @@ class SimulationLogger:
             f"Stepping: {owner_id.value}-{stepping_engine.mig_profile} | "
             f"Next Arrival: {next_arrival_time}"
         ]
-        for aid, agent in agents.items():
+        for aid in agents.keys():
             lines.append(f"  Agent: {aid.value}")
             owned_eids = [eid for eid, oid in engine_owners.items() if oid == aid]
             for eid in owned_eids:

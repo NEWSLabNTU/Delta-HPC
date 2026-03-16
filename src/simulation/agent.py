@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 from models import Request, AgentId, EngineStatus
 from engine import LLMEngine
 import global_vars as g

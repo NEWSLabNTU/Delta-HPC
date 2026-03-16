@@ -117,7 +117,7 @@ class Simulator:
 
     def add_arrival_events(self, requests: List[Request]):
         self.total_requests = len(requests)
-        temp_reqs = {aid: [] for aid in self.agents}
+        temp_reqs: Dict[AgentId, List[Request]] = {aid: [] for aid in self.agents}
 
         for req in requests:
             event = SimulationEvent(
