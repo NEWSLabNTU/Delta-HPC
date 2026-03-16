@@ -3,6 +3,7 @@ import json
 import yaml
 from pathlib import Path
 from typing import Dict, Tuple, Set
+
 from models import AgentId
 from config import SimulationConfig
 

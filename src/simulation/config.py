@@ -1,7 +1,8 @@
+import yaml
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, List
-from pathlib import Path
-import yaml
+
 from models import AgentId, ParamDict
 
 

@@ -1,7 +1,6 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Literal, Dict, Union
-from typing import TypedDict
 from enum import Enum
+from dataclasses import dataclass, field
+from typing import List, Optional, Literal, Dict, Union, TypedDict
 
 
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]

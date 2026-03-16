@@ -1,11 +1,12 @@
 import random
-from models import Request, AgentId
-from engine import LLMEngine
-from agent import Agent
-from simulator import Simulator
-import global_vars as g
-from typing import Dict, List
 import argparse
+from typing import Dict, List
+
+import global_vars as g
+from agent import Agent
+from engine import LLMEngine
+from simulator import Simulator
+from models import Request, AgentId
 
 
 def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:

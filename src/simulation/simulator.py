@@ -1,12 +1,13 @@
 import heapq
-from typing import List, Dict, Tuple
-from models import EngineStatus, Request, EventType, AgentId
-from engine import LLMEngine, SimulationEvent
-from collections import deque
-from agent import Agent
-import global_vars as g
 import random
+from collections import deque
+from typing import List, Dict, Tuple
+
+import global_vars as g
+from agent import Agent
 from logger import SimulationLogger
+from engine import LLMEngine, SimulationEvent
+from models import EngineStatus, Request, EventType, AgentId
 
 
 class ResourceManager:
