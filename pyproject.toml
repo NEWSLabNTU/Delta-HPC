@@ -10,6 +10,7 @@ dependencies = [
     "httpx>=0.28.1",
     "matplotlib>=3.10.8",
     "pyyaml>=6.0.3",
+    "tqdm>=4.67.3",
 ]
 
 [tool.uv.sources]

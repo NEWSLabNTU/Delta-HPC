@@ -41,7 +41,6 @@ class LLMEngine:
 
         # State
         self.current_time: float = 0.0
-        self.is_busy: bool = False
         self.status: EngineStatus = EngineStatus.ACTIVE
         self.restart_time = restart_time
 
@@ -93,7 +92,6 @@ class LLMEngine:
 
     def _start_restart(self) -> SimulationEvent:
         self.status = EngineStatus.RESTARTING
-        self.is_busy = True
         return SimulationEvent(
             time=self.current_time + self.restart_time,
             event_type=EventType.ENGINE_RESTART_COMPLETE,
@@ -102,7 +100,6 @@ class LLMEngine:
 
     def finish_restart(self, current_time: float):
         self.status = EngineStatus.ACTIVE
-        self.is_busy = False
         self.current_time = max(self.current_time, current_time)
 
     def step(
@@ -154,8 +151,6 @@ class LLMEngine:
             if len(self.running_queue) == 0:
                 break
 
-            self.is_busy = True
-
             # Determine steps and durations
             if total_prefill_tokens > 0:
                 duration = self.get_prefill_time(total_prefill_tokens)
@@ -206,7 +201,6 @@ class LLMEngine:
         if len(self.running_queue) == 0 and not self.waiting_queue:
             if self.status == EngineStatus.DRAINING:
                 return self._start_restart()
-            self.is_busy = False
 
         if steps_taken > 0 or finished:
             return SimulationEvent(
@@ -215,5 +209,4 @@ class LLMEngine:
                 payload={"engine_id": self.engine_id, "steps_taken": steps_taken},
             )
         else:
-            self.is_busy = False
             return None

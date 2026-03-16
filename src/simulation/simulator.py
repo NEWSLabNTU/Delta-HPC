@@ -2,6 +2,7 @@ import heapq
 from typing import List, Dict, Tuple, Set
 from models import Request, EventType, AgentId
 from engine import LLMEngine, SimulationEvent
+from collections import deque
 from agent import Agent
 import global_vars as g
 import random
@@ -11,7 +12,7 @@ from logger import SimulationLogger
 class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
-        self.trigger_interval = 180000.0
+        self.trigger_interval = 1800.0
         self.engine_owners: Dict[str, AgentId] = {}
         self.engine_targets: Dict[str, AgentId] = {}
         self.agent_completed: Dict[AgentId, List[Request]] = {
@@ -96,6 +97,10 @@ class Simulator:
         self.current_time: float = 0.0
         self.resource_manager = ResourceManager(self)
         self.logger = SimulationLogger(enabled=not no_log)
+        self.total_requests = 0
+        self.agent_requests: Dict[AgentId, deque[Request]] = {
+            aid: deque() for aid in agents
+        }
 
         for aid, ag in agents.items():
             for eg in ag.engines:
@@ -111,6 +116,9 @@ class Simulator:
         )
 
     def add_arrival_events(self, requests: List[Request]):
+        self.total_requests = len(requests)
+        temp_reqs = {aid: [] for aid in self.agents}
+
         for req in requests:
             event = SimulationEvent(
                 time=req.arrival_time,
@@ -121,6 +129,11 @@ class Simulator:
                 },
             )
             heapq.heappush(self.events, event)
+            temp_reqs[req.agent_id].append(req)
+
+        for aid, req_list in temp_reqs.items():
+            req_list.sort(key=lambda x: x.arrival_time)
+            self.agent_requests[aid] = deque(req_list)
 
     def has_active_work(self) -> bool:
         if any(e.event_type != EventType.REALLOCATION_TRIGGER for e in self.events):
@@ -134,18 +147,20 @@ class Simulator:
 
     def run(self):
         """Main event loop."""
+        from tqdm import tqdm
+
+        pbar = tqdm(total=self.total_requests, desc="Simulation Progress")
+        last_completed = 0
 
         while self.has_active_work():
 
             # Step any idle engines that have pending requests
             if not self.events:
                 for engine in self.engines.values():
-                    if not engine.is_busy and (
-                        engine.waiting_queue or engine.running_queue
-                    ):
-                        next_arrival = self._peek_next_arrival_time()
+                    if engine.waiting_queue or engine.running_queue:
                         evt = engine.step(
-                            self.current_time, next_arrival_time=next_arrival
+                            self.current_time,
+                            next_arrival_time=self._peek_next_arrival_time(engine),
                         )
                         if evt:
                             heapq.heappush(self.events, evt)
@@ -196,6 +211,7 @@ class Simulator:
                     payload = current_event.payload
                     req: Request = payload["request"]
                     agent_id = payload["target_agent"]
+                    self.agent_requests[agent_id].popleft()
 
                     agent = self.agents[agent_id]
                     assigned_engine = agent.dispatch(req, self.current_time)
@@ -206,12 +222,12 @@ class Simulator:
                         assigned_engine,
                     )
 
-                    if (
-                        assigned_engine and not assigned_engine.is_busy
-                    ):  # Engine was idle, kickstart it
-                        next_arrival = self._peek_next_arrival_time(agent_id)
+                    if len(assigned_engine.running_queue) == 0:
                         evt = assigned_engine.step(
-                            self.current_time, next_arrival_time=next_arrival
+                            self.current_time,
+                            next_arrival_time=self._peek_next_arrival_time(
+                                assigned_engine
+                            ),
                         )
                         if evt:
                             heapq.heappush(self.events, evt)
@@ -222,28 +238,40 @@ class Simulator:
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
                     owner_id = self.resource_manager.engine_owners[engine_id]
+                    next_arrival_time = self._peek_next_arrival_time(engine)
                     self.logger.log_engine_step(
-                        self.current_time, self.agents, engine, owner_id
+                        self.current_time,
+                        self.agents,
+                        self.engines,
+                        self.resource_manager.engine_owners,
+                        engine,
+                        owner_id,
+                        next_arrival_time,
                     )
 
                     # Immediate re-schedule
-                    next_arrival = self._peek_next_arrival_time(
-                        self.resource_manager.engine_owners[engine_id]
+                    evt = engine.step(
+                        self.current_time,
+                        next_arrival_time=next_arrival_time,
                     )
-                    evt = engine.step(self.current_time, next_arrival_time=next_arrival)
                     if evt:
                         heapq.heappush(self.events, evt)
+            # Update progress bar
+            completed_now = sum(
+                len(e.completed_requests) for e in self.engines.values()
+            )
+            if completed_now > last_completed:
+                pbar.update(completed_now - last_completed)
+                last_completed = completed_now
 
+        pbar.close()
         self.resource_manager.finalize_accounting()
         self.logger.flush()
 
-    def _peek_next_arrival_time(self, agent_id: AgentId) -> float | None:
+    def _peek_next_arrival_time(self, engine: LLMEngine) -> float | None:
         """Find the time of the next arrival event for fast-forwarding."""
-        for evt in self.events:
-            if (
-                evt.time > self.current_time
-                and evt.event_type == EventType.REQUEST_ARRIVAL
-                and evt.payload["target_agent"] == agent_id
-            ):
-                return evt.time
+        agent_id = self.resource_manager.engine_owners[engine.engine_id]
+        q = self.agent_requests[agent_id]
+        if q:
+            return q[0].arrival_time
         return None

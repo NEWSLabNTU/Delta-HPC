@@ -12,25 +12,22 @@ class Agent:
     def add_engine(self, engine: LLMEngine):
         self.engines.append(engine)
 
-    def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngine]:
+    def dispatch(self, request: Request, current_time: float) -> LLMEngine:
         """
         Dispatches an incoming request to the best engine based on simple work-balance.
         Finds engines matching the requested model size, and picks the one with the smallest queue length.
         Sets completion_tokens based on the chosen engine's model before queuing the request.
         """
-        if not self.engines:
-            print(f"[{self.agent_id}] Processing Failed: No engines allocated")
-            return None
-
         active_engines = [e for e in self.engines if e.status == EngineStatus.ACTIVE]
-
         if not active_engines:
-            return None
+            raise RuntimeError(
+                f"[{self.agent_id}] No active engines to dispatch request {request.id}"
+            )
 
-        # Simple work-balance: Pick the active engine with the fewest running requests
+        # Simple work-balance: Pick the active engine with the fewest requests
         best_engine = min(
             active_engines,
-            key=lambda e: len(e.running_queue),
+            key=lambda e: len(e.running_queue) + len(e.waiting_queue),
         )
 
         # Resolve completion_tokens based on the engine's current model
