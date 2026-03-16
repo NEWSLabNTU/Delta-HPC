@@ -175,11 +175,18 @@ def main():
             )
 
             # Throughput: token per sec
+            throughput_time = sum(
+                r.finish_time - r.start_time
+                for r in reqs
+                if r.finish_time is not None and r.start_time is not None
+            )
+            avg_throughput = sum(r.completion_tokens for r in reqs) / throughput_time
 
-            print(f"  Avg latency: {avg_latency:.4f}s")
-            print(f"  Avg Queue:   {avg_queueing:.4f}s")
-            print(f"  Avg TTFT:    {avg_ttft:.4f}s")
-            print(f"  Avg TPOT:    {avg_tpot:.4f}s")
+            print(f"  Avg latency:        {avg_latency:.4f}s")
+            print(f"  Avg TTFT:           {avg_ttft:.4f}s")
+            print(f"  Avg Queuing Time:   {avg_queueing:.4f}s")
+            print(f"  Avg TPOT:           {avg_tpot:.4f}s")
+            print(f"  Avg Throughput:     {avg_throughput:.4f} tok/s")
 
 
 if __name__ == "__main__":
