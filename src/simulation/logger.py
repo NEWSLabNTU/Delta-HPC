@@ -41,25 +41,28 @@ class SimulationLogger:
         self,
         current_time: float,
         agents: Dict[AgentId, Agent],
-        all_engines: Dict[str, LLMEngine],
-        engine_owners: Dict[str, AgentId],
         stepping_engine: LLMEngine,
-        owner_id: AgentId,
         next_arrival_time: Optional[float],
     ):
         """Logs the state of all engines for each agent with detailed progress."""
         if not self.enabled:
             return
+
+        owner_id = None
+        for aid, agent in agents.items():
+            if stepping_engine in agent.engines:
+                owner_id = aid
+                break
+        assert owner_id is not None
+
         lines = [
             f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
             f"Stepping: {owner_id.value}-{stepping_engine.mig_profile} | "
             f"Next Arrival: {next_arrival_time}"
         ]
-        for aid in agents.keys():
+        for aid, agent in agents.items():
             lines.append(f"  Agent: {aid.value}")
-            owned_eids = [eid for eid, oid in engine_owners.items() if oid == aid]
-            for eid in owned_eids:
-                engine = all_engines[eid]
+            for engine in agent.engines:
                 # Log Owner + MIG
                 is_stepping = " [STEPPING]" if engine is stepping_engine else ""
                 lines.append(

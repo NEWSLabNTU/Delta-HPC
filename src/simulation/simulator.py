@@ -15,10 +15,6 @@ class ResourceManager:
         self.trigger_interval = 1800.0
         self.engine_owners: Dict[str, AgentId] = {}
         self.engine_targets: Dict[str, AgentId] = {}
-        self.agent_completed: Dict[AgentId, List[Request]] = {
-            AgentId.CODING: [],
-            AgentId.RAG: [],
-        }
         # Track which requests have already been attributed
         self._attributed: Set[str] = set()
 
@@ -29,7 +25,7 @@ class ResourceManager:
         for req in engine.completed_requests:
             if req.id not in self._attributed:
                 self._attributed.add(req.id)
-                self.agent_completed[owner].append(req)
+                self.simulator.agents[owner].completed_requests.append(req)
 
     def finalize_accounting(self):
         """Attribute all remaining completed requests at simulation end."""
@@ -55,7 +51,6 @@ class ResourceManager:
             current_time, giver.agent_id, receiver.agent_id, engine_to_shift.mig_profile
         )
 
-        giver.engines.remove(engine_to_shift)
         self.engine_targets[engine_to_shift.engine_id] = receiver.agent_id
 
         evt = engine_to_shift.trigger_reallocation(current_time)
@@ -80,6 +75,8 @@ class ResourceManager:
             restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
+        giver_id = self.engine_owners[engine_id]
+        sim.agents[giver_id].engines.remove(engine)
         sim.agents[receiver_id].add_engine(engine)
         self.engine_owners[engine_id] = receiver_id
 
@@ -237,15 +234,11 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
-                    owner_id = self.resource_manager.engine_owners[engine_id]
                     next_arrival_time = self._peek_next_arrival_time(engine)
                     self.logger.log_engine_step(
                         self.current_time,
                         self.agents,
-                        self.engines,
-                        self.resource_manager.engine_owners,
                         engine,
-                        owner_id,
                         next_arrival_time,
                     )
 

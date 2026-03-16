@@ -8,6 +8,7 @@ class Agent:
     def __init__(self, agent_id: AgentId):
         self.agent_id = agent_id
         self.engines: List[LLMEngine] = []
+        self.completed_requests: List[Request] = []
 
     def add_engine(self, engine: LLMEngine):
         self.engines.append(engine)

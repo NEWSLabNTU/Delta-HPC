@@ -138,7 +138,7 @@ def main():
     print(f"Total simulated time: {sim.current_time:.2f} seconds")
 
     for agent_id in AgentId:
-        reqs = sim.resource_manager.agent_completed[agent_id]
+        reqs = sim.agents[agent_id].completed_requests
         print(f"\nAgent {agent_id.value}: {len(reqs)} requests completed.")
         if reqs:
             avg_latency = sum(
