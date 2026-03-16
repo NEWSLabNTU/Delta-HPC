@@ -37,33 +37,49 @@ class SimulationLogger:
                 f.write(line + "\n")
         self.buffer.clear()
 
-    def log_engine_step(self, current_time: float, agents: Dict[AgentId, Agent]):
+    def log_engine_step(
+        self,
+        current_time: float,
+        agents: Dict[AgentId, Agent],
+        stepping_engine: LLMEngine,
+        owner_id: AgentId,
+    ):
         """Logs the state of all engines for each agent with detailed progress."""
         if not self.enabled:
             return
-        lines = [f"[{current_time:.4f}] EVENT: ENGINE_STEP"]
+        lines = [
+            f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
+            f"Stepping: {owner_id.value}-{stepping_engine.mig_profile} | "
+            f"Busy: {stepping_engine.is_busy}"
+        ]
         for aid, agent in agents.items():
             lines.append(f"  Agent: {aid.value}")
             for engine in agent.engines:
                 # Log Owner + MIG
                 lines.append(f"    Engine: {aid.value}-{engine.mig_profile}")
-                # Log Waiting requests count
-                lines.append(f"      Waiting Requests: {len(engine.waiting_queue)}")
+                # Log Waiting requests list
+                if engine.waiting_queue:
+                    req_ids = ", ".join([r.id for r in engine.waiting_queue])
+                    lines.append(f"      Waiting Requests: {len(engine.waiting_queue)} ({req_ids})")
+                else:
+                    lines.append(f"      Waiting Requests: 0")
 
                 # Prefilling requests
                 prefill = engine.running_queue.prefill_requests
                 if prefill:
                     for req in prefill:
+                        ftt_str = f"{req.first_token_time:.4f}" if req.first_token_time is not None else "None"
                         lines.append(
-                            f"      Prefill: {req.id} | Progress: {req.prefilled_tokens}/{req.prompt_tokens}"
+                            f"      Prefill: {req.id} | Progress: {req.prefilled_tokens}/{req.prompt_tokens} | FirstTokenTime: {ftt_str}"
                         )
 
                 # Decoding requests
                 decoding = engine.running_queue.decoding_requests
                 if decoding:
                     for req in decoding:
+                        ftt_str = f"{req.first_token_time:.4f}" if req.first_token_time is not None else "None"
                         lines.append(
-                            f"      Decode: {req.id} | Gen: {req.generated_tokens}/{req.completion_tokens}"
+                            f"      Decode: {req.id} | Gen: {req.generated_tokens}/{req.completion_tokens} | FirstTokenTime: {ftt_str}"
                         )
 
                 if not prefill and not decoding:

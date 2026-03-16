@@ -152,8 +152,25 @@ def main():
                 if r.first_token_time is not None
             ]
             avg_ttft = sum(valid_ttfts) / len(valid_ttfts) if valid_ttfts else 0.0
+
+            valid_tpots = [
+                r.decode_time / r.generated_tokens
+                for r in reqs
+                if r.generated_tokens > 0
+            ]
+            avg_tpot = sum(valid_tpots) / len(valid_tpots) if valid_tpots else 0.0
+
+            valid_queueing = [
+                r.start_time - r.arrival_time
+                for r in reqs
+                if r.start_time is not None
+            ]
+            avg_queueing = sum(valid_queueing) / len(valid_queueing) if valid_queueing else 0.0
+
             print(f"  Avg latency: {avg_latency:.4f}s")
+            print(f"  Avg Queue:   {avg_queueing:.4f}s")
             print(f"  Avg TTFT:    {avg_ttft:.4f}s")
+            print(f"  Avg TPOT:    {avg_tpot:.4f}s")
 
 
 if __name__ == "__main__":

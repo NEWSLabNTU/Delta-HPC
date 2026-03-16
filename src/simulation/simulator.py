@@ -209,7 +209,7 @@ class Simulator:
                     if (
                         assigned_engine and not assigned_engine.is_busy
                     ):  # Engine was idle, kickstart it
-                        next_arrival = self._peek_next_arrival_time()
+                        next_arrival = self._peek_next_arrival_time(agent_id)
                         evt = assigned_engine.step(
                             self.current_time, next_arrival_time=next_arrival
                         )
@@ -221,10 +221,15 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
-                    self.logger.log_engine_step(self.current_time, self.agents)
+                    owner_id = self.resource_manager.engine_owners[engine_id]
+                    self.logger.log_engine_step(
+                        self.current_time, self.agents, engine, owner_id
+                    )
 
                     # Immediate re-schedule
-                    next_arrival = self._peek_next_arrival_time()
+                    next_arrival = self._peek_next_arrival_time(
+                        self.resource_manager.engine_owners[engine_id]
+                    )
                     evt = engine.step(self.current_time, next_arrival_time=next_arrival)
                     if evt:
                         heapq.heappush(self.events, evt)
@@ -232,9 +237,13 @@ class Simulator:
         self.resource_manager.finalize_accounting()
         self.logger.flush()
 
-    def _peek_next_arrival_time(self) -> float | None:
+    def _peek_next_arrival_time(self, agent_id: AgentId) -> float | None:
         """Find the time of the next arrival event for fast-forwarding."""
         for evt in self.events:
-            if evt.event_type == EventType.REQUEST_ARRIVAL:
+            if (
+                evt.time > self.current_time
+                and evt.event_type == EventType.REQUEST_ARRIVAL
+                and evt.payload["target_agent"] == agent_id
+            ):
                 return evt.time
         return None

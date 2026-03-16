@@ -158,15 +158,14 @@ class LLMEngine:
 
             # Determine steps and durations
             if total_prefill_tokens > 0:
-                step_duration = self.get_prefill_time(total_prefill_tokens)
-
-                duration = step_duration
+                duration = self.get_prefill_time(total_prefill_tokens)
                 for req in self.running_queue.prefill_requests:
                     req.prefilled_tokens += req_prefill_tokens.get(req.id, 0)
                 for r in self.running_queue.decoding_requests:
                     r.generated_tokens += 1
+                    r.decode_time += duration
                     if r.first_token_time is None:
-                        r.first_token_time = self.current_time + step_duration
+                        r.first_token_time = self.current_time + duration
 
                 # Cleanup prefill_requests
                 new_prefill: List[Request] = []
@@ -184,6 +183,7 @@ class LLMEngine:
 
                 for r in self.running_queue.decoding_requests:
                     r.generated_tokens += 1
+                    r.decode_time += duration
                     if r.first_token_time is None:
                         r.first_token_time = self.current_time + duration
 

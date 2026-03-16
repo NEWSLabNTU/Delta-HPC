@@ -40,6 +40,7 @@ class Request:
     completion_tokens: int = 0
     arrival_time: float = 0.0
     original_id: str = ""  # For lookup when ID is modified
+    decode_time: float = 0.0
 
     # Simulation state
     state: RequestState = RequestState.PENDING
