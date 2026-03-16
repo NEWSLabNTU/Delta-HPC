@@ -1,6 +1,6 @@
 import heapq
 from typing import List, Dict, Tuple, Set
-from models import Request, EventType, AgentId
+from models import EngineStatus, Request, EventType, AgentId
 from engine import LLMEngine, SimulationEvent
 from collections import deque
 from agent import Agent
@@ -151,9 +151,7 @@ class Simulator:
                     if engine.waiting_queue or engine.running_queue:
                         evt = engine.step(
                             self.current_time,
-                            next_arrival_time=self._peek_next_arrival_time(
-                                engine.owner_id
-                            ),
+                            next_arrival_time=None,
                         )
                         if evt:
                             heapq.heappush(self.events, evt)
@@ -226,7 +224,11 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
-                    next_arrival_time = self._peek_next_arrival_time(engine.owner_id)
+                    next_arrival_time = (
+                        self._peek_next_arrival_time(engine.owner_id)
+                        if engine.status == EngineStatus.ACTIVE
+                        else None
+                    )
                     self.logger.log_engine_step(
                         self.current_time,
                         self.agents,
