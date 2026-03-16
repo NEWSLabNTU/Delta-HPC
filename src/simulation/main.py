@@ -105,6 +105,7 @@ def main():
         mname = g.SIM_CONFIG.get_model(agent_id, mig)
         eng = LLMEngine(
             engine_id=eid,
+            owner_id=agent_id,
             model_name=mname,
             mig_profile=mig,
             max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
@@ -161,11 +162,11 @@ def main():
             avg_tpot = sum(valid_tpots) / len(valid_tpots) if valid_tpots else 0.0
 
             valid_queueing = [
-                r.start_time - r.arrival_time
-                for r in reqs
-                if r.start_time is not None
+                r.start_time - r.arrival_time for r in reqs if r.start_time is not None
             ]
-            avg_queueing = sum(valid_queueing) / len(valid_queueing) if valid_queueing else 0.0
+            avg_queueing = (
+                sum(valid_queueing) / len(valid_queueing) if valid_queueing else 0.0
+            )
 
             print(f"  Avg latency: {avg_latency:.4f}s")
             print(f"  Avg Queue:   {avg_queueing:.4f}s")

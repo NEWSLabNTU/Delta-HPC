@@ -8,6 +8,7 @@ from models import (
     RunningRequests,
     EngineStatus,
     ParamDict,
+    AgentId,
 )
 
 
@@ -15,6 +16,7 @@ class LLMEngine:
     def __init__(
         self,
         engine_id: str,
+        owner_id: AgentId,
         model_name: str,
         mig_profile: str,
         max_batched_tokens: int,
@@ -26,6 +28,7 @@ class LLMEngine:
         self.model_name = model_name
         self.mig_profile = mig_profile
         self.max_batched_tokens = max_batched_tokens
+        self.owner_id: AgentId = owner_id
 
         # Regression params
         self.prefill_alpha = prefill_params["alpha"]

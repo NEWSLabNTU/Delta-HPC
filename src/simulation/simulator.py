@@ -13,7 +13,6 @@ class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
         self.trigger_interval = 1800.0
-        self.engine_owners: Dict[str, AgentId] = {}
         self.engine_targets: Dict[str, AgentId] = {}
         # Track which requests have already been attributed
         self._attributed: Set[str] = set()
@@ -21,11 +20,10 @@ class ResourceManager:
     def _attribute_completed(self, engine_id: str):
         """Attribute all newly completed requests from an engine to its current owner."""
         engine = self.simulator.engines[engine_id]
-        owner = self.engine_owners[engine_id]
         for req in engine.completed_requests:
             if req.id not in self._attributed:
                 self._attributed.add(req.id)
-                self.simulator.agents[owner].completed_requests.append(req)
+                self.simulator.agents[engine.owner_id].completed_requests.append(req)
 
     def finalize_accounting(self):
         """Attribute all remaining completed requests at simulation end."""
@@ -57,7 +55,7 @@ class ResourceManager:
         if evt:
             heapq.heappush(self.simulator.events, evt)
 
-    def finish_reallocation(self, engine_id: str, current_time: float):
+    def finish_reallocation(self, engine_id: str):
         receiver_id = self.engine_targets.pop(engine_id)
         self._attribute_completed(engine_id)
 
@@ -75,10 +73,10 @@ class ResourceManager:
             restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
-        giver_id = self.engine_owners[engine_id]
+        giver_id = engine.owner_id
         sim.agents[giver_id].engines.remove(engine)
         sim.agents[receiver_id].add_engine(engine)
-        self.engine_owners[engine_id] = receiver_id
+        engine.owner_id = receiver_id
 
 
 class Simulator:
@@ -98,10 +96,6 @@ class Simulator:
         self.agent_requests: Dict[AgentId, deque[Request]] = {
             aid: deque() for aid in agents
         }
-
-        for aid, ag in agents.items():
-            for eg in ag.engines:
-                self.resource_manager.engine_owners[eg.engine_id] = aid
 
         heapq.heappush(
             self.events,
@@ -157,7 +151,9 @@ class Simulator:
                     if engine.waiting_queue or engine.running_queue:
                         evt = engine.step(
                             self.current_time,
-                            next_arrival_time=self._peek_next_arrival_time(engine),
+                            next_arrival_time=self._peek_next_arrival_time(
+                                engine.owner_id
+                            ),
                         )
                         if evt:
                             heapq.heappush(self.events, evt)
@@ -189,16 +185,14 @@ class Simulator:
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
 
-                    giver_id = self.resource_manager.engine_owners[engine_id]
+                    giver_id = engine.owner_id
                     receiver_id = self.resource_manager.engine_targets[engine_id]
 
                     self.logger.log_engine_restart_complete(
                         self.current_time, engine_id, giver_id, receiver_id
                     )
 
-                    self.resource_manager.finish_reallocation(
-                        engine_id, self.current_time
-                    )
+                    self.resource_manager.finish_reallocation(engine_id)
                     engine.finish_restart(self.current_time)
 
                 case EventType.REQUEST_ARRIVAL:
@@ -211,20 +205,18 @@ class Simulator:
                     self.agent_requests[agent_id].popleft()
 
                     agent = self.agents[agent_id]
-                    assigned_engine = agent.dispatch(req, self.current_time)
+                    engine = agent.dispatch(req, self.current_time)
                     self.logger.log_request_arrival(
                         self.current_time,
                         req.id,
                         agent_id,
-                        assigned_engine,
+                        engine,
                     )
 
-                    if len(assigned_engine.running_queue) == 0:
-                        evt = assigned_engine.step(
+                    if len(engine.running_queue) == 0 and len(engine.waiting_queue) > 0:
+                        evt = engine.step(
                             self.current_time,
-                            next_arrival_time=self._peek_next_arrival_time(
-                                assigned_engine
-                            ),
+                            next_arrival_time=self._peek_next_arrival_time(agent_id),
                         )
                         if evt:
                             heapq.heappush(self.events, evt)
@@ -234,7 +226,7 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
-                    next_arrival_time = self._peek_next_arrival_time(engine)
+                    next_arrival_time = self._peek_next_arrival_time(engine.owner_id)
                     self.logger.log_engine_step(
                         self.current_time,
                         self.agents,
@@ -261,9 +253,8 @@ class Simulator:
         self.resource_manager.finalize_accounting()
         self.logger.flush()
 
-    def _peek_next_arrival_time(self, engine: LLMEngine) -> float | None:
+    def _peek_next_arrival_time(self, agent_id: AgentId) -> float | None:
         """Find the time of the next arrival event for fast-forwarding."""
-        agent_id = self.resource_manager.engine_owners[engine.engine_id]
         q = self.agent_requests[agent_id]
         if q:
             return q[0].arrival_time
