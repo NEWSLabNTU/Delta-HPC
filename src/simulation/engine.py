@@ -48,7 +48,7 @@ class LLMEngine:
         self.restart_time = restart_time
 
         # Output collection
-        self.completed_requests: List[Request] = []
+        self.temp_completed_requests: List[Request] = []
 
     def get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
@@ -194,7 +194,7 @@ class LLMEngine:
         for r in finished:
             r.state = RequestState.COMPLETED
             r.finish_time = self.current_time
-            self.completed_requests.append(r)
+            self.temp_completed_requests.append(r)
 
             if r in self.running_queue.prefill_requests:
                 self.running_queue.prefill_requests.remove(r)

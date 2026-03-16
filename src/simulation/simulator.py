@@ -1,5 +1,5 @@
 import heapq
-from typing import List, Dict, Tuple, Set
+from typing import List, Dict, Tuple
 from models import EngineStatus, Request, EventType, AgentId
 from engine import LLMEngine, SimulationEvent
 from collections import deque
@@ -14,19 +14,17 @@ class ResourceManager:
         self.simulator = simulator
         self.trigger_interval = 1800.0
         self.engine_targets: Dict[str, AgentId] = {}
-        # Track which requests have already been attributed
-        self._attributed: Set[str] = set()
 
     def _attribute_completed(self, engine_id: str):
         """Attribute all newly completed requests from an engine to its current owner."""
         engine = self.simulator.engines[engine_id]
-        for req in engine.completed_requests:
-            if req.id not in self._attributed:
-                self._attributed.add(req.id)
-                self.simulator.agents[engine.owner_id].completed_requests.append(req)
+        self.simulator.agents[engine.owner_id].completed_requests.extend(
+            engine.temp_completed_requests
+        )
+        engine.temp_completed_requests.clear()
 
-    def finalize_accounting(self):
-        """Attribute all remaining completed requests at simulation end."""
+    def attribute_completed(self):
+        """Attribute current completed requests of engines to agents"""
         for engine_id in self.simulator.engines:
             self._attribute_completed(engine_id)
 
@@ -56,12 +54,10 @@ class ResourceManager:
             heapq.heappush(self.simulator.events, evt)
 
     def finish_reallocation(self, engine_id: str):
-        receiver_id = self.engine_targets.pop(engine_id)
-        self._attribute_completed(engine_id)
-
         sim = self.simulator
         engine = sim.engines[engine_id]
 
+        receiver_id = self.engine_targets.pop(engine_id)
         new_model = g.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
         engine.update_model(
             model_name=new_model,
@@ -224,6 +220,8 @@ class Simulator:
 
                     engine_id = current_event.payload["engine_id"]
                     engine = self.engines[engine_id]
+                    self.resource_manager.attribute_completed()
+
                     next_arrival_time = (
                         self._peek_next_arrival_time(engine.owner_id)
                         if engine.status == EngineStatus.ACTIVE
@@ -243,16 +241,16 @@ class Simulator:
                     )
                     if evt:
                         heapq.heappush(self.events, evt)
+
             # Update progress bar
             completed_now = sum(
-                len(e.completed_requests) for e in self.engines.values()
+                len(ag.completed_requests) for ag in self.agents.values()
             )
             if completed_now > last_completed:
                 pbar.update(completed_now - last_completed)
                 last_completed = completed_now
 
         pbar.close()
-        self.resource_manager.finalize_accounting()
         self.logger.flush()
 
     def _peek_next_arrival_time(self, agent_id: AgentId) -> float | None:

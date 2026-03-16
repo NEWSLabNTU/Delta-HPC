@@ -142,11 +142,14 @@ def main():
         reqs = sim.agents[agent_id].completed_requests
         print(f"\nAgent {agent_id.value}: {len(reqs)} requests completed.")
         if reqs:
+            # Latency
             avg_latency = sum(
                 r.finish_time - r.arrival_time
                 for r in reqs
                 if r.finish_time is not None
             ) / len(reqs)
+
+            # TTFT
             valid_ttfts = [
                 r.first_token_time - r.arrival_time
                 for r in reqs
@@ -154,6 +157,7 @@ def main():
             ]
             avg_ttft = sum(valid_ttfts) / len(valid_ttfts) if valid_ttfts else 0.0
 
+            # TPOT
             valid_tpots = [
                 r.decode_time / r.generated_tokens
                 for r in reqs
@@ -161,12 +165,15 @@ def main():
             ]
             avg_tpot = sum(valid_tpots) / len(valid_tpots) if valid_tpots else 0.0
 
+            # Queuing Time
             valid_queueing = [
                 r.start_time - r.arrival_time for r in reqs if r.start_time is not None
             ]
             avg_queueing = (
                 sum(valid_queueing) / len(valid_queueing) if valid_queueing else 0.0
             )
+
+            # Throughput: token per sec
 
             print(f"  Avg latency: {avg_latency:.4f}s")
             print(f"  Avg Queue:   {avg_queueing:.4f}s")
