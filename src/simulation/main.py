@@ -3,18 +3,23 @@ import argparse
 from typing import Dict, List
 
 import global_vars as g
-from agent import Agent
-from engine import LLMEngine
+from objects import Agent, LLMEngine
 from simulator import Simulator
-from models import Request, AgentId
+from models import (
+    AgentId,
+    Agent as AgentI,
+    LLMEngine as LLMEngineI,
+    Request as RequestI,
+)
+from request import Request
 
 
-def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
+def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
     """
     Loads arriving Requests from the token map. Only prompt_tokens is set here;
     completion_tokens is determined at dispatch time based on the assigned engine's model.
     """
-    requests: List[Request] = []
+    requests: List[RequestI] = []
 
     for agent_id in AgentId:
         first_model = next(iter(g.TOKENS_MAP[agent_id]))
@@ -34,7 +39,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[Request]:
                 )
         elif agent_id == AgentId.RAG:
             all_items = list(req_map.items())
-            rag_requests: List[Request] = []
+            rag_requests: List[RequestI] = []
 
             # Duplicate each row
             for rid, (prompt_tokens, _) in all_items:
@@ -93,50 +98,43 @@ def main():
     requests = load_requests()
     print(f"Loaded {len(requests)} requests.")
 
-    print("Initializing System Architecture...")
+    agents: Dict[AgentId, AgentI] = {}
+    engines: Dict[str, LLMEngineI] = {}
+    for aid in AgentId:
+        agents[aid] = Agent(aid)
 
-    coding_agent = Agent(AgentId.CODING)
-    rag_agent = Agent(AgentId.RAG)
-
-    engines: Dict[str, LLMEngine] = {}
     for eng_conf in g.SIM_CONFIG.initial_state:
         eid = str(eng_conf["id"])
         mig = eng_conf["mig"]
-        agent_id = AgentId(eng_conf["agent"])
-        mname = g.SIM_CONFIG.get_model(agent_id, mig)
+        agent = agents[AgentId(eng_conf["agent"])]
+        mname = g.SIM_CONFIG.get_model(agent.agent_id, mig)
         eng = LLMEngine(
             engine_id=eid,
-            owner_id=agent_id,
+            owner=agent,
             model_name=mname,
             mig_profile=mig,
             max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
-            prefill_params=g.SIM_CONFIG.get_prefill_params(agent_id, mig),
-            tpot_params=g.SIM_CONFIG.get_tpot_params(agent_id, mig),
-            restart_time=g.SIM_CONFIG.get_restart_time(agent_id, mig),
+            prefill_params=g.SIM_CONFIG.get_prefill_params(agent.agent_id, mig),
+            tpot_params=g.SIM_CONFIG.get_tpot_params(agent.agent_id, mig),
+            restart_time=g.SIM_CONFIG.get_restart_time(agent.agent_id, mig),
         )
 
-        if agent_id == AgentId.CODING:
-            coding_agent.add_engine(eng)
-        else:
-            rag_agent.add_engine(eng)
-
+        agent.add_engine(eng)
         engines[eid] = eng
 
-    print("Initializing Simulator...")
     sim = Simulator(
-        agents={AgentId.CODING: coding_agent, AgentId.RAG: rag_agent},
+        agents=agents,
         engines=engines,
         no_log=args.no_log,
     )
 
-    print("Feeding events...")
     # For a quicker test we limit requests
     sim.add_arrival_events(requests[:50000])
 
     print("Running simulation...")
     sim.run()
 
-    print("\nSimulation Finished!")
+    print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")
 
     for agent_id in AgentId:

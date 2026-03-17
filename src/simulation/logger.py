@@ -2,15 +2,13 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from agent import Agent
-from models import AgentId
-from engine import LLMEngine
+from models import Agent, LLMEngine, AgentId, SimulationLogger as SimulationLoggerI
 
 type LogMessage = str
 type LogBuffer = List[LogMessage]
 
 
-class SimulationLogger:
+class SimulationLogger(SimulationLoggerI):
     def __init__(self, log_dir: str = "./logs", enabled: bool = True):
         self.log_dir = Path(log_dir)
         self.enabled = enabled
