@@ -3,7 +3,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, List
 
-from models import AgentId, ParamDict
+from models import AgentId, ParamDict, MIGProfile
 
 
 @dataclass
@@ -23,32 +23,36 @@ class SimulationConfig:
             data = yaml.safe_load(f)
 
         return cls(
-            initial_state=data["simulation"]["initial_state"],
+            initial_state=data["simulation"]["initial_state"]["engines"],
             simulation_configs=data["simulation"]["configs"],
             model=data["model"],
         )
 
-    def get_model(self, agent: AgentId, mig_profile: str) -> str:
+    def get_model(self, agent: AgentId, mig_profile: MIGProfile) -> str:
         """Return the model name for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile]["model"]
+        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["model"]
 
     def get_dataset(self, agent: AgentId) -> str:
         """Return the dataset path for a given agent."""
         return self.simulation_configs[agent.value]["dataset"]
 
-    def get_restart_time(self, agent: AgentId, mig_profile: str) -> float:
+    def get_restart_time(self, agent: AgentId, mig_profile: MIGProfile) -> float:
         """Return the restart time for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile]["restart_time"]
+        return self.simulation_configs[agent.value]["mig"][mig_profile.value][
+            "restart_time"
+        ]
 
-    def get_prefill_params(self, agent: AgentId, mig_profile: str) -> ParamDict:
+    def get_prefill_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
         """Return prefill regression params for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile]["param"][
+        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["param"][
             "prefill"
         ]
 
-    def get_tpot_params(self, agent: AgentId, mig_profile: str) -> ParamDict:
+    def get_tpot_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
         """Return tpot regression params for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile]["param"]["tpot"]
+        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["param"][
+            "tpot"
+        ]
 
     def get_generate_path(self, model_name: str) -> str:
         """Return the generated JSONL path for a given model."""

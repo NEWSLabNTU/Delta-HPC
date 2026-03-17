@@ -7,11 +7,16 @@ from objects import Agent, LLMEngine
 from simulator import Simulator
 from models import (
     AgentId,
+    MIGProfile,
     Agent as AgentI,
     LLMEngine as LLMEngineI,
     Request as RequestI,
 )
 from request import Request
+
+
+def get_mig_profile(profile_str: str) -> MIGProfile:
+    return MIGProfile(profile_str)
 
 
 def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
@@ -104,11 +109,13 @@ def main():
         agents[aid] = Agent(aid)
 
     for eng_conf in g.SIM_CONFIG.initial_state:
-        eid = str(eng_conf["id"])
-        mig = eng_conf["mig"]
+        mig = get_mig_profile(eng_conf["mig"])
+        gpu = int(eng_conf["gpu"])
+        eid = f"GPU_{gpu}_{mig.value}"
         agent = agents[AgentId(eng_conf["agent"])]
         mname = g.SIM_CONFIG.get_model(agent.agent_id, mig)
         eng = LLMEngine(
+            gpu=gpu,
             engine_id=eid,
             owner=agent,
             model_name=mname,

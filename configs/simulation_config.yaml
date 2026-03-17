@@ -1,17 +1,18 @@
 simulation:
   initial_state:
-    - id: 0
-      mig: 4g.20gb
-      agent: CodingAgent
-    - id: 1
-      mig: 2g.10gb
-      agent: CodingAgent
-    - id: 2
-      mig: 1g.10gb
-      agent: CodingAgent
-    - id: 3
-      mig: 7g.40gb
-      agent: RAGAgent
+    engines:
+      - gpu: 0
+        mig: 4g.20gb
+        agent: CodingAgent
+      - gpu: 0
+        mig: 2g.10gb
+        agent: CodingAgent
+      - gpu: 0
+        mig: 1g.10gb
+        agent: CodingAgent
+      - gpu: 1
+        mig: 7g.40gb
+        agent: RAGAgent
 
   configs:
     CodingAgent:

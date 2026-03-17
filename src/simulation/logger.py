@@ -56,7 +56,7 @@ class SimulationLogger(SimulationLoggerI):
 
         lines = [
             f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
-            f"Stepping: {owner_id.value}-{stepping_engine.mig_profile} | "
+            f"Stepping: {owner_id.value}-{stepping_engine.engine_id} | "
             f"Next Arrival: {next_arrival_time}"
         ]
         for aid, agent in agents.items():
@@ -65,7 +65,7 @@ class SimulationLogger(SimulationLoggerI):
                 # Log Owner + MIG
                 is_stepping = " [STEPPING]" if engine is stepping_engine else ""
                 lines.append(
-                    f"    Engine: {aid.value}-{engine.mig_profile} (Time: {engine.current_time:.4f}) [Status: {engine.status.value}]{is_stepping}"
+                    f"    Engine: {aid.value}-{engine.engine_id} (Time: {engine.current_time:.4f}) [Status: {engine.status.value}]{is_stepping}"
                 )
                 # Log Waiting requests list
                 if engine.waiting_queue:
@@ -117,7 +117,7 @@ class SimulationLogger(SimulationLoggerI):
         if not self.enabled:
             return
         eng_str = (
-            f"{target_agent.value}-{assigned_engine.mig_profile}"
+            f"{target_agent.value}-{assigned_engine.engine_id}"
             if assigned_engine
             else "None"
         )
@@ -132,7 +132,7 @@ class SimulationLogger(SimulationLoggerI):
         current_time: float,
         giver_id: AgentId,
         receiver_id: AgentId,
-        mig_profile: str,
+        engine_id: str,
     ):
         """Logs a reallocation event."""
         if not self.enabled:
@@ -140,7 +140,7 @@ class SimulationLogger(SimulationLoggerI):
         msg = (
             f"[{current_time:.4f}] EVENT: REALLOCATION | "
             f"Giver: {giver_id.value} | Receiver: {receiver_id.value} | "
-            f"Engine: {giver_id.value}-{mig_profile}"
+            f"Engine: {engine_id}"
         )
         self.log(msg)
 

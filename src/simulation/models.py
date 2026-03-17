@@ -16,6 +16,14 @@ from abc import ABC, abstractmethod
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
 
+class MIGProfile(Enum):
+    MIG_7G_40GB = "7g.40gb"
+    MIG_4G_20GB = "4g.20gb"
+    MIG_3G_20GB = "3g.20gb"
+    MIG_2G_10GB = "2g.10gb"
+    MIG_1G_10GB = "1g.10gb"
+
+
 class RequestState(Enum):
     PENDING = "PENDING"
     PREFILLING = "PREFILLING"
@@ -283,8 +291,11 @@ class LLMEngine(ABC):
 
     @property
     @abstractmethod
-    def owner(self) -> Agent: ...
+    def gpu(self) -> int: ...
 
+    @property
+    @abstractmethod
+    def owner(self) -> Agent: ...
     @owner.setter
     @abstractmethod
     def owner(self, value: Agent) -> None: ...
@@ -295,7 +306,7 @@ class LLMEngine(ABC):
 
     @property
     @abstractmethod
-    def mig_profile(self) -> str: ...
+    def mig_profile(self) -> MIGProfile: ...
 
     @property
     @abstractmethod

@@ -39,7 +39,7 @@ class ResourceManager:
         giver, receiver = random.choice(candidates_to_give)
         engine_to_shift = random.choice(giver.engines)
         self.simulator.logger.log_reallocation(
-            current_time, giver.agent_id, receiver.agent_id, engine_to_shift.mig_profile
+            current_time, giver.agent_id, receiver.agent_id, engine_to_shift.engine_id
         )
 
         self.engine_targets[engine_to_shift.engine_id] = receiver.agent_id

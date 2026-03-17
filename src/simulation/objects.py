@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 
 from models import (
     AgentId,
+    MIGProfile,
     RequestState,
     EventType,
     SimulationEvent,
@@ -70,15 +71,17 @@ class Agent(AgentI):
 class LLMEngine(LLMEngineI):
     def __init__(
         self,
+        gpu: int,
         engine_id: str,
         owner: AgentI,
         model_name: str,
-        mig_profile: str,
+        mig_profile: MIGProfile,
         max_batched_tokens: int,
         prefill_params: ParamDict,
         tpot_params: ParamDict,
         restart_time: float,
     ):
+        self._gpu = gpu
         self._engine_id = engine_id
         self._owner = owner
         self._model_name = model_name
@@ -103,6 +106,10 @@ class LLMEngine(LLMEngineI):
         self._status: EngineStatus = EngineStatus.ACTIVE
 
     @property
+    def gpu(self) -> int:
+        return self._gpu
+
+    @property
     def engine_id(self) -> str:
         return self._engine_id
 
@@ -119,7 +126,7 @@ class LLMEngine(LLMEngineI):
         return self._model_name
 
     @property
-    def mig_profile(self) -> str:
+    def mig_profile(self) -> MIGProfile:
         return self._mig_profile
 
     @property
