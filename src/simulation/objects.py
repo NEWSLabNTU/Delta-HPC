@@ -3,30 +3,14 @@ import global_vars as g
 import random
 from typing import List, Dict, Optional
 
-from models import (
-    AgentId,
-    MIGProfile,
-    RequestState,
-    EventType,
-    SimulationEvent,
-    EngineStatus,
-    ParamDict,
-    Agent as AgentI,
-    LLMEngine as LLMEngineI,
-    Request,
-    RunningRequests as RunningRequestsI,
-    ShutdownPayload,
-    BootPayload,
-    BootPlainPayload,
-)
-from request import RunningRequests
+from models import *
+from request import RunningRequestsImpl
 
 
-
-class Agent(AgentI):
+class AgentImpl(Agent):
     def __init__(self, agent_id: AgentId):
         self._agent_id = agent_id
-        self._engines: List[LLMEngineI] = []
+        self._engines: List[LLMEngine] = []
         self._completed_requests: List[Request] = []
         self._dispatch_queue: List[Request] = []
 
@@ -35,7 +19,7 @@ class Agent(AgentI):
         return self._agent_id
 
     @property
-    def engines(self) -> List[LLMEngineI]:
+    def engines(self) -> List[LLMEngine]:
         return self._engines
 
     @property
@@ -46,10 +30,10 @@ class Agent(AgentI):
     def dispatch_queue(self) -> List[Request]:
         return self._dispatch_queue
 
-    def add_engine(self, engine: LLMEngineI):
+    def add_engine(self, engine: LLMEngine):
         self._engines.append(engine)
 
-    def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngineI]:
+    def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngine]:
         """
         Dispatches an incoming request to the best engine based on simple work-balance.
         Finds engines matching the requested model size, and picks the one with the smallest queue length.
@@ -76,9 +60,8 @@ class Agent(AgentI):
         best_engine.add_request(request, current_time)
         return best_engine
 
-    def process_waiting_queue(self, current_time: float) -> List[SimulationEvent]:
+    def process_waiting_queue(self, current_time: float) -> None:
         """Process queued requests if there are active engines."""
-        events = []
         while self._dispatch_queue:
             active_engines = [
                 e for e in self.engines if e.status == EngineStatus.ACTIVE
@@ -86,22 +69,21 @@ class Agent(AgentI):
             if not active_engines:
                 break
             req = self._dispatch_queue.pop(0)
-            engine = self.dispatch(req, current_time)
-        return events
+            self.dispatch(req, current_time)
 
 
-class LLMEngine(LLMEngineI):
+class LLMEngineImpl(LLMEngine):
     @staticmethod
     def create(
         gpu: int,
         engine_id: str,
-        owner: AgentI,
+        owner: Agent,
         mig_profile: MIGProfile,
         current_time: float,
-    ) -> "LLMEngine":
+    ) -> "LLMEngineImpl":
         """Factory: create an LLMEngine with configuration loaded from SIM_CONFIG."""
         mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
-        return LLMEngine(
+        return LLMEngineImpl(
             gpu=gpu,
             engine_id=engine_id,
             owner=owner,
@@ -118,7 +100,7 @@ class LLMEngine(LLMEngineI):
         self,
         gpu: int,
         engine_id: str,
-        owner: AgentI,
+        owner: Agent,
         model_name: str,
         mig_profile: MIGProfile,
         max_batched_tokens: int,
@@ -145,7 +127,7 @@ class LLMEngine(LLMEngineI):
 
         # Queues
         self._waiting_queue: List[Request] = []
-        self._running_queue = RunningRequests()
+        self._running_queue = RunningRequestsImpl()
 
         # State
         self._current_time: float = current_time
@@ -161,11 +143,11 @@ class LLMEngine(LLMEngineI):
         return self._engine_id
 
     @property
-    def owner(self) -> AgentI:
+    def owner(self) -> Agent:
         return self._owner
 
     @owner.setter
-    def owner(self, value: AgentI):
+    def owner(self, value: Agent):
         self._owner = value
 
     @property
@@ -189,7 +171,7 @@ class LLMEngine(LLMEngineI):
         return self._waiting_queue
 
     @property
-    def running_queue(self) -> RunningRequestsI:
+    def running_queue(self) -> RunningRequests:
         return self._running_queue
 
     def get_tpot(self, concurrent_requests: int) -> float:

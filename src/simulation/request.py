@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from models import (
-    AgentId,
-    RequestState,
-    Request as RequestI,
-    RunningRequests as RunningRequestsI,
-)
+from models import *
 
 
-class Request(RequestI):
+class RequestImpl(Request):
     def __init__(
         self,
         id: str,
@@ -138,25 +133,25 @@ class Request(RequestI):
         self._finish_time = value
 
 
-class RunningRequests(RunningRequestsI):
+class RunningRequestsImpl(RunningRequests):
     def __init__(self):
-        self._prefill_requests: List[RequestI] = []
-        self._decoding_requests: List[RequestI] = []
+        self._prefill_requests: List[Request] = []
+        self._decoding_requests: List[Request] = []
 
     @property
-    def prefill_requests(self) -> List[RequestI]:
+    def prefill_requests(self) -> List[Request]:
         return self._prefill_requests
 
     @prefill_requests.setter
-    def prefill_requests(self, value: List[RequestI]):
+    def prefill_requests(self, value: List[Request]):
         self._prefill_requests = value
 
     @property
-    def decoding_requests(self) -> List[RequestI]:
+    def decoding_requests(self) -> List[Request]:
         return self._decoding_requests
 
     @property
-    def all_requests(self) -> List[RequestI]:
+    def all_requests(self) -> List[Request]:
         return self._prefill_requests + self._decoding_requests
 
     def __len__(self) -> int:

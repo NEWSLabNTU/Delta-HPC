@@ -1,33 +1,16 @@
 import random
-from typing import List, Dict, Tuple, cast
 from tqdm import tqdm
 from sortedcontainers import SortedList
+from typing import Any, List, Dict, Tuple, cast
 
+from models import *
 import global_vars as g
-from logger import SimulationLogger
-from models import (
-    EngineStatus,
-    EventType,
-    AgentId,
-    SimulationEvent,
-    Agent,
-    LLMEngine,
-    Simulator as SimulatorI,
-    Request,
-    OperationPurpose,
-    RequestArrivalPayload,
-    ShutdownReallocatePayload,
-    ShutdownMergePayload,
-    ShutdownSplitPayload,
-    BootPlainPayload,
-    BootReallocatePayload,
-    BootSplitPayload,
-)
-from objects import LLMEngine as LLMEngineImpl
+from objects import LLMEngineImpl
+from logger import SimulationLoggerImpl
 
 
 class ResourceManager:
-    def __init__(self, simulator: "SimulatorI"):
+    def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
         self.trigger_interval = 3600.0
 
@@ -83,7 +66,7 @@ class ResourceManager:
                     grouped_engines[key] = []
                 grouped_engines[key].append(engine)
 
-        candidates = []  # List of (type, data)
+        candidates: List[Tuple[str, Any]] = []  # List of (type, data)
 
         for (agent_id, gpu), engines in grouped_engines.items():
             # 1. Look for Merges using bidict
@@ -170,7 +153,7 @@ class ResourceManager:
             sim.logger.log_mig_split_trigger(current_time, e.engine_id, data["gpu"])
 
 
-class Simulator(SimulatorI):
+class SimulatorImpl(Simulator):
     def __init__(
         self,
         agents: Dict[AgentId, Agent],
@@ -182,7 +165,7 @@ class Simulator(SimulatorI):
         self._events: SortedList[SimulationEvent] = SortedList()
         self._current_time: float = 0.0
         self.resource_manager = ResourceManager(self)
-        self._logger = SimulationLogger(enabled=not no_log)
+        self._logger = SimulationLoggerImpl(enabled=not no_log)
         self.total_requests = 0
 
         # Schedule Reallocation at 3600.0
@@ -317,12 +300,8 @@ class Simulator(SimulatorI):
             prefill_params=g.SIM_CONFIG.get_prefill_params(
                 receiver_id, engine.mig_profile
             ),
-            tpot_params=g.SIM_CONFIG.get_tpot_params(
-                receiver_id, engine.mig_profile
-            ),
-            restart_time=g.SIM_CONFIG.get_restart_time(
-                receiver_id, engine.mig_profile
-            ),
+            tpot_params=g.SIM_CONFIG.get_tpot_params(receiver_id, engine.mig_profile),
+            restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
         giver = engine.owner
@@ -355,7 +334,9 @@ class Simulator(SimulatorI):
                     agent.engines.remove(e)
 
             new_profile = payload["new_profile"]
-            new_eid = f"GPU_{payload['gpu']}_{new_profile.string}_{int(self._current_time)}"
+            new_eid = (
+                f"GPU_{payload['gpu']}_{new_profile.string}_{int(self._current_time)}"
+            )
             new_eng = LLMEngineImpl.create(
                 payload["gpu"], new_eid, agent, new_profile, self._current_time
             )
@@ -401,24 +382,33 @@ class Simulator(SimulatorI):
             agent.add_engine(new_eng)
         self._logger.log_mig_split_complete(self._current_time, engine_id)
 
-    def _handle_shutdown_complete(self, event: SimulationEvent):
-        payload = event.payload
+    def _handle_shutdown_complete(
+        self,
+        payload: ShutdownPayload,
+    ):
         purpose = payload["purpose"]
         match purpose:
             case OperationPurpose.REALLOCATE:
-                self._handle_shutdown_complete_reallocate(payload)
+                self._handle_shutdown_complete_reallocate(
+                    cast(ShutdownReallocatePayload, payload)
+                )
             case OperationPurpose.MERGE:
-                self._handle_shutdown_complete_merge(payload)
+                self._handle_shutdown_complete_merge(
+                    cast(ShutdownMergePayload, payload)
+                )
             case OperationPurpose.SPLIT:
-                self._handle_shutdown_complete_split(payload)
+                self._handle_shutdown_complete_split(
+                    cast(ShutdownSplitPayload, payload)
+                )
+            case _:
+                raise ValueError(f"Unexpected shutdown purpose {purpose}")
 
-    def _handle_boot_complete(self, event: SimulationEvent) -> None:
+    def _handle_boot_complete(self, payload: BootPayload) -> None:
         """Handle ENGINE_BOOT_COMPLETE.
 
         Activates the engine and processes the agent's waiting queue.
         Returns early if sibling engines from a split are still booting.
         """
-        payload = event.payload
         engine_id = payload["engine_id"]
 
         engine = self._engines[engine_id]
@@ -463,9 +453,8 @@ class Simulator(SimulatorI):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_request_arrival(self, event: SimulationEvent):
-        payload = cast(RequestArrivalPayload, event.payload)
-        req: Request = payload["request"]
+    def _handle_request_arrival(self, payload: RequestArrivalPayload):
+        req = payload["request"]
         agent_id = payload["target_agent"]
 
         agent = self._agents[agent_id]
@@ -486,8 +475,8 @@ class Simulator(SimulatorI):
             if evt:
                 self._events.add(evt)
 
-    def _handle_engine_step_complete(self, event: SimulationEvent):
-        engine_id = event.payload["engine_id"]
+    def _handle_engine_step_complete(self, payload: EngineStepPayload):
+        engine_id = payload["engine_id"]
         engine = self._engines[engine_id]
 
         next_arrival_time = self._peak_next_stopping_evt(engine.owner.agent_id)
@@ -523,13 +512,19 @@ class Simulator(SimulatorI):
                 case EventType.MIG_TRIGGER:
                     self._handle_mig_trigger()
                 case EventType.ENGINE_SHUTDOWN_COMPLETE:
-                    self._handle_shutdown_complete(current_event)
+                    self._handle_shutdown_complete(
+                        cast(ShutdownPayload, current_event.payload)
+                    )
                 case EventType.ENGINE_BOOT_COMPLETE:
-                    self._handle_boot_complete(current_event)
+                    self._handle_boot_complete(cast(BootPayload, current_event.payload))
                 case EventType.REQUEST_ARRIVAL:
-                    self._handle_request_arrival(current_event)
+                    self._handle_request_arrival(
+                        cast(RequestArrivalPayload, current_event.payload)
+                    )
                 case EventType.ENGINE_STEP_COMPLETE:
-                    self._handle_engine_step_complete(current_event)
+                    self._handle_engine_step_complete(
+                        cast(EngineStepPayload, current_event.payload)
+                    )
 
             completed_now = sum(
                 len(ag.completed_requests) for ag in self._agents.values()
@@ -546,7 +541,7 @@ class Simulator(SimulatorI):
             if (
                 (
                     evt.event_type == EventType.REQUEST_ARRIVAL
-                    and evt.payload["target_agent"] == agent_id
+                    and evt.payload.get("target_agent") == agent_id
                 )
                 or evt.event_type == EventType.MIG_TRIGGER
                 or evt.event_type == EventType.REALLOCATION_TRIGGER

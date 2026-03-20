@@ -2,17 +2,14 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from models import Agent, LLMEngine, AgentId, SimulationLogger as SimulationLoggerI
-
-type LogMessage = str
-type LogBuffer = List[LogMessage]
+from models import *
 
 
-class SimulationLogger(SimulationLoggerI):
+class SimulationLoggerImpl(SimulationLogger):
     def __init__(self, log_dir: str = "./logs", enabled: bool = True):
         self.log_dir = Path(log_dir)
         self.enabled = enabled
-        self.buffer: LogBuffer = []
+        self.buffer: List[str] = []
         self.buffer_size = 1000
         if not self.enabled:
             return
@@ -21,7 +18,7 @@ class SimulationLogger(SimulationLoggerI):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_file = self.log_dir / f"simulation-{timestamp}.log"
 
-    def log(self, message: LogMessage):
+    def log(self, message: str):
         if not self.enabled:
             return
         # print(message)

@@ -2,17 +2,11 @@ import random
 import argparse
 from typing import Dict, List
 
+from models import *
 import global_vars as g
-from objects import Agent, LLMEngine
-from simulator import Simulator
-from models import (
-    AgentId,
-    MIGProfile,
-    Agent as AgentI,
-    LLMEngine as LLMEngineI,
-    Request as RequestI,
-)
-from request import Request
+from request import RequestImpl
+from simulator import SimulatorImpl
+from objects import AgentImpl, LLMEngineImpl
 
 
 def get_mig_profile(profile_str: str) -> MIGProfile:
@@ -22,12 +16,12 @@ def get_mig_profile(profile_str: str) -> MIGProfile:
     raise ValueError(f"Invalid MIG profile string: {profile_str}")
 
 
-def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
+def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
     """
     Loads arriving Requests from the token map. Only prompt_tokens is set here;
     completion_tokens is determined at dispatch time based on the assigned engine's model.
     """
-    requests: List[RequestI] = []
+    requests: List[Request] = []
 
     for agent_id in AgentId:
         first_model = next(iter(g.TOKENS_MAP[agent_id]))
@@ -38,7 +32,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
             selected = random.sample(list(req_map.items()), 25000)
             for rid, (prompt_tokens, _) in selected:
                 requests.append(
-                    Request(
+                    RequestImpl(
                         id=rid,
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
@@ -47,12 +41,12 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
                 )
         elif agent_id == AgentId.RAG:
             all_items = list(req_map.items())
-            rag_requests: List[RequestI] = []
+            rag_requests: List[Request] = []
 
             # Duplicate each row
             for rid, (prompt_tokens, _) in all_items:
                 rag_requests.append(
-                    Request(
+                    RequestImpl(
                         id=f"{rid}_dup1",
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
@@ -61,7 +55,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
                 )
             for rid, (prompt_tokens, _) in all_items:
                 rag_requests.append(
-                    Request(
+                    RequestImpl(
                         id=f"{rid}_dup2",
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
@@ -75,7 +69,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
                 extra = random.sample(all_items, needed)
                 for i, (rid, (prompt_tokens, _)) in enumerate(extra):
                     rag_requests.append(
-                        Request(
+                        RequestImpl(
                             id=f"{rid}_extra_{i}",
                             agent_id=agent_id,
                             prompt_tokens=prompt_tokens,
@@ -106,10 +100,10 @@ def main():
     requests = load_requests()
     print(f"Loaded {len(requests)} requests.")
 
-    agents: Dict[AgentId, AgentI] = {}
-    engines: Dict[str, LLMEngineI] = {}
+    agents: Dict[AgentId, Agent] = {}
+    engines: Dict[str, LLMEngine] = {}
     for aid in AgentId:
-        agents[aid] = Agent(aid)
+        agents[aid] = AgentImpl(aid)
 
     for eng_conf in g.SIM_CONFIG.initial_state:
         mig = get_mig_profile(eng_conf["mig"])
@@ -117,7 +111,7 @@ def main():
         eid = f"GPU_{gpu}_{mig.string}"
         agent = agents[AgentId(eng_conf["agent"])]
         mname = g.SIM_CONFIG.get_model(agent.agent_id, mig)
-        eng = LLMEngine(
+        eng = LLMEngineImpl(
             gpu=gpu,
             engine_id=eid,
             owner=agent,
@@ -132,7 +126,7 @@ def main():
         agent.add_engine(eng)
         engines[eid] = eng
 
-    sim = Simulator(
+    sim = SimulatorImpl(
         agents=agents,
         engines=engines,
         no_log=args.no_log,

@@ -2,18 +2,38 @@ from __future__ import annotations
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import (
-    List,
-    Optional,
-    Dict,
-    Tuple,
-    Union,
-    TypedDict,
-    Mapping,
-)
+from typing import List, Optional, Dict, Tuple, Union, TypedDict, Mapping, Literal
 from abc import ABC, abstractmethod
 
 from sortedcontainers import SortedList
+
+
+__all__ = [
+    "EventType",
+    "Request",
+    "RunningRequests",
+    "RequestState",
+    "Agent",
+    "AgentId",
+    "MIGProfile",
+    "SimulationEvent",
+    "LLMEngine",
+    "Simulator",
+    "SimulationLogger",
+    "OperationPurpose",
+    "EngineStatus",
+    "ParamDict",
+    "EngineStepPayload",
+    "RequestArrivalPayload",
+    "ShutdownPayload",
+    "ShutdownReallocatePayload",
+    "ShutdownMergePayload",
+    "ShutdownSplitPayload",
+    "BootPayload",
+    "BootPlainPayload",
+    "BootReallocatePayload",
+    "BootSplitPayload",
+]
 
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
@@ -285,8 +305,10 @@ class RequestArrivalPayload(TypedDict):
 
 # ENGINE_SHUTDOWN_COMPLETE — one variant per purpose
 
+
 class ShutdownReallocatePayload(TypedDict):
     """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.REALLOCATE."""
+
     engine_id: str
     purpose: OperationPurpose
     receiver_id: AgentId
@@ -294,6 +316,7 @@ class ShutdownReallocatePayload(TypedDict):
 
 class ShutdownMergePayload(TypedDict):
     """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.MERGE."""
+
     engine_id: str
     purpose: OperationPurpose
     # Identifiers of both engines participating in the merge
@@ -307,6 +330,7 @@ class ShutdownMergePayload(TypedDict):
 
 class ShutdownSplitPayload(TypedDict):
     """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.SPLIT."""
+
     engine_id: str
     purpose: OperationPurpose
     new_profiles: List[MIGProfile]
@@ -323,14 +347,17 @@ ShutdownPayload = Union[
 
 # ENGINE_BOOT_COMPLETE — one variant per boot context
 
+
 class BootPlainPayload(TypedDict):
     """ENGINE_BOOT_COMPLETE with no extra context (e.g. after a merge)."""
+
     engine_id: str
     purpose: OperationPurpose
 
 
 class BootReallocatePayload(TypedDict):
     """ENGINE_BOOT_COMPLETE after a reallocate shutdown."""
+
     engine_id: str
     purpose: OperationPurpose
     giver_id: AgentId
@@ -339,6 +366,7 @@ class BootReallocatePayload(TypedDict):
 
 class BootSplitPayload(TypedDict):
     """ENGINE_BOOT_COMPLETE for one of the child engines from a split."""
+
     engine_id: str
     purpose: OperationPurpose
     new_profiles: List[MIGProfile]
@@ -390,7 +418,12 @@ class Agent(ABC):
     def add_engine(self, engine: LLMEngine) -> None: ...
 
     @abstractmethod
-    def dispatch(self, request: Request, current_time: float) -> LLMEngine: ...
+    def dispatch(
+        self, request: Request, current_time: float
+    ) -> Optional[LLMEngine]: ...
+
+    @abstractmethod
+    def process_waiting_queue(self, current_time: float) -> None: ...
 
 
 class LLMEngine(ABC):
@@ -457,10 +490,10 @@ class LLMEngine(ABC):
     def create(
         gpu: int,
         engine_id: str,
-        owner: "Agent",
+        owner: Agent,
         mig_profile: MIGProfile,
         current_time: float,
-    ) -> "LLMEngine": ...
+    ) -> LLMEngine: ...
 
     @abstractmethod
     def trigger_shutdown(
