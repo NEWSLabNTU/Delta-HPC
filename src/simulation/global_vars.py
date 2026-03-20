@@ -51,7 +51,7 @@ def init_tokens_map(base_dir: Path) -> TokensMapType:
             seen_models.add(model_name)
             filepath = base_dir / SIM_CONFIG.get_generate_path(model_name)
             req_map = {}
-            with open(filepath, "r") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 for line in f:
                     data = json.loads(line)
                     req_map[str(data["id"])] = (

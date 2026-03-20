@@ -1,5 +1,5 @@
 import random
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, cast
 from tqdm import tqdm
 from sortedcontainers import SortedList
 
@@ -14,6 +14,13 @@ from models import (
     LLMEngine,
     Simulator as SimulatorI,
     Request,
+    OperationPurpose,
+    ShutdownReallocatePayload,
+    ShutdownMergePayload,
+    ShutdownSplitPayload,
+    BootPlainPayload,
+    BootReallocatePayload,
+    BootSplitPayload,
 )
 
 
@@ -21,14 +28,6 @@ class ResourceManager:
     def __init__(self, simulator: "SimulatorI"):
         self.simulator = simulator
         self.trigger_interval = 3600.0
-        # Tracks engines that are draining/restarting for MIG
-        # merge_id -> {engines: [], drained: [], new_profile}
-        self.pending_merges: Dict[str, Dict] = {}
-        self.pending_splits: Dict[str, Dict] = {}  # engine_id -> {new_profiles: []}
-        self.pending_split_boots: Dict[str, Dict] = (
-            {}
-        )  # op_id -> {remaining: int, agent_id: str}
-        self._next_merge_id = 1
 
     def trigger(self, current_time: float):
         coding_agent = self.simulator.agents[AgentId.CODING]
@@ -62,11 +61,12 @@ class ResourceManager:
             current_time, giver.agent_id, receiver.agent_id, engine_to_shift.engine_id
         )
 
-        evt = engine_to_shift.trigger_shutdown(
-            purpose="reallocate",
-            current_time=current_time,
-            metadata={"receiver_id": receiver.agent_id},
-        )
+        payload: ShutdownReallocatePayload = {
+            "engine_id": engine_to_shift.engine_id,
+            "purpose": OperationPurpose.REALLOCATE,
+            "receiver_id": receiver.agent_id,
+        }
+        evt = engine_to_shift.trigger_shutdown(payload, current_time)
         if evt:
             self.simulator.events.add(evt)
 
@@ -131,21 +131,22 @@ class ResourceManager:
 
         if action_type == "merge":
             e1, e2 = data["engines"]
-            merge_id = f"merge_{self._next_merge_id}"
-            self._next_merge_id += 1
-
-            self.pending_merges[merge_id] = {
-                "engines": [e1, e2],
-                "drained": [],
+            # Both engines carry the full merge payload; drained_ids starts empty.
+            merge_payload: ShutdownMergePayload = {
+                "engine_id": e1.engine_id,  # will be overwritten per engine below
+                "purpose": OperationPurpose.MERGE,
+                "merge_engine_ids": (e1.engine_id, e2.engine_id),
+                "drained_ids": [],  # This list is shared between 2 engines
                 "new_profile": data["new_profile"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
             }
-
             for e in [e1, e2]:
-                evt = e.trigger_shutdown(
-                    "merge", current_time, metadata={"operation_id": merge_id}
-                )
+                per_engine_payload: ShutdownMergePayload = {
+                    **merge_payload,  # type: ignore[misc]
+                    "engine_id": e.engine_id,
+                }
+                evt = e.trigger_shutdown(per_engine_payload, current_time)
                 if evt:
                     sim.events.add(evt)
             sim.logger.log_mig_merge_trigger(
@@ -154,12 +155,14 @@ class ResourceManager:
 
         elif action_type == "split":
             e = data["engine"]
-            self.pending_splits[e.engine_id] = {
+            split_payload: ShutdownSplitPayload = {
+                "engine_id": e.engine_id,
+                "purpose": OperationPurpose.SPLIT,
                 "new_profiles": data["new_profiles"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
             }
-            evt = e.trigger_shutdown("split", current_time)
+            evt = e.trigger_shutdown(split_payload, current_time)
             if evt:
                 sim.events.add(evt)
             sim.logger.log_mig_split_trigger(current_time, e.engine_id, data["gpu"])
@@ -336,15 +339,15 @@ class Simulator(SimulatorI):
                                 self._events.add(evt)
 
                 case EventType.ENGINE_SHUTDOWN_COMPLETE:
-                    assert "engine_id" in current_event.payload
-                    engine_id = current_event.payload["engine_id"]
-                    purpose = current_event.payload["purpose"]
-
                     from objects import create_llm_engine
 
-                    if purpose == "reallocate":
-                        metadata = current_event.payload["metadata"]
-                        receiver_id = metadata["receiver_id"]
+                    payload = current_event.payload
+                    purpose = payload["purpose"]  # type: ignore[index]
+
+                    if purpose == OperationPurpose.REALLOCATE:
+                        sd = cast(ShutdownReallocatePayload, payload)
+                        engine_id = sd["engine_id"]
+                        receiver_id = sd["receiver_id"]
                         engine = self._engines[engine_id]
 
                         # Update model configuration for new receiver
@@ -376,115 +379,131 @@ class Simulator(SimulatorI):
                         engine.owner = receiver
 
                         # Trigger Boot up
-                        evt = engine.trigger_boot(
-                            metadata={
-                                "giver_id": giver.agent_id,
-                                "receiver_id": receiver_id,
-                            }
-                        )
+                        boot_payload: BootReallocatePayload = {
+                            "engine_id": engine_id,
+                            "purpose": OperationPurpose.REALLOCATE,
+                            "giver_id": giver.agent_id,
+                            "receiver_id": receiver_id,
+                        }
+                        evt = engine.trigger_boot(boot_payload)
                         self._events.add(evt)
 
-                    elif purpose == "merge":
-                        mid = current_event.payload["metadata"]["operation_id"]
-                        mdata = self.resource_manager.pending_merges[mid]
-                        mdata["drained"].append(engine_id)
+                    elif purpose == OperationPurpose.MERGE:
+                        sd_merge = cast(ShutdownMergePayload, payload)
+                        engine_id = sd_merge["engine_id"]
 
-                        if len(mdata["drained"]) == len(mdata["engines"]):
-                            agent = self._agents[mdata["agent_id"]]
-                            for e in mdata["engines"]:
-                                if e.engine_id in self._engines:
-                                    del self._engines[e.engine_id]
-                                if e in agent.engines:
+                        # Mark this engine as drained (mutate the shared list in-place;
+                        # both sibling events share the same drained_ids list object
+                        # created in trigger_mig).
+                        sd_merge["drained_ids"].append(engine_id)
+
+                        if len(sd_merge["drained_ids"]) == len(sd_merge["merge_engine_ids"]):
+                            agent = self._agents[sd_merge["agent_id"]]
+                            for eid in sd_merge["merge_engine_ids"]:
+                                e = self._engines.pop(eid, None)
+                                if e is not None and e in agent.engines:
                                     agent.engines.remove(e)
 
-                            new_profile = mdata["new_profile"]
-                            new_eid = f"GPU_{mdata['gpu']}_{new_profile.string}_{int(self._current_time)}"
+                            new_profile = sd_merge["new_profile"]
+                            new_eid = f"GPU_{sd_merge['gpu']}_{new_profile.string}_{int(self._current_time)}"
                             new_eng = create_llm_engine(
-                                mdata["gpu"],
+                                sd_merge["gpu"],
                                 new_eid,
                                 agent,
                                 new_profile,
                                 self._current_time,
                             )
 
-                            evt = new_eng.trigger_boot()
+                            boot_plain: BootPlainPayload = {
+                                "engine_id": new_eid,
+                                "purpose": OperationPurpose.PLAIN,
+                            }
+                            evt = new_eng.trigger_boot(boot_plain)
                             self._events.add(evt)
 
                             self._engines[new_eid] = new_eng
                             agent.add_engine(new_eng)
-                            del self.resource_manager.pending_merges[mid]
                             self._logger.log_mig_merge_complete(
                                 self._current_time, new_eid
                             )
 
-                    elif purpose == "split":
-                        sdata = self.resource_manager.pending_splits[engine_id]
-                        agent = self._agents[sdata["agent_id"]]
+                    elif purpose == OperationPurpose.SPLIT:
+                        sd_split = cast(ShutdownSplitPayload, payload)
+                        engine_id = sd_split["engine_id"]
+                        agent = self._agents[sd_split["agent_id"]]
                         e = self._engines[engine_id]
                         if engine_id in self._engines:
                             del self._engines[engine_id]
                         if e in agent.engines:
                             agent.engines.remove(e)
 
-                        # Set up split boots tracker
-                        op_id = f"split_boot_{engine_id}_{int(self._current_time)}"
-                        self.resource_manager.pending_split_boots[op_id] = {
-                            "remaining": len(sdata["new_profiles"]),
-                            "agent_id": sdata["agent_id"],
-                        }
-
-                        for i, p in enumerate(sdata["new_profiles"]):
-                            new_eid = f"GPU_{sdata['gpu']}_{p.string}_{int(self._current_time)}_{i}"
+                        new_profiles = sd_split["new_profiles"]
+                        # Pre-compute all new engine IDs so every sibling payload
+                        # shares the same sibling_engine_ids list reference.
+                        new_eids = [
+                            f"GPU_{sd_split['gpu']}_{p.string}_{int(self._current_time)}_{i}"
+                            for i, p in enumerate(new_profiles)
+                        ]
+                        sibling_ids: List[str] = new_eids
+                        for new_eid, p in zip(new_eids, new_profiles):
                             new_eng = create_llm_engine(
-                                sdata["gpu"],
+                                sd_split["gpu"],
                                 new_eid,
                                 agent,
                                 p,
                                 self._current_time,
                             )
 
-                            evt = new_eng.trigger_boot(
-                                metadata={"operation_id": op_id, "purpose": "split"}
-                            )
+                            boot_split: BootSplitPayload = {
+                                "engine_id": new_eid,
+                                "purpose": OperationPurpose.SPLIT,
+                                "new_profiles": new_profiles,
+                                "agent_id": sd_split["agent_id"],
+                                "gpu": sd_split["gpu"],
+                                "sibling_engine_ids": sibling_ids,
+                            }
+                            evt = new_eng.trigger_boot(boot_split)
                             self._events.add(evt)
 
                             self._engines[new_eid] = new_eng
                             agent.add_engine(new_eng)
-                        del self.resource_manager.pending_splits[engine_id]
                         self._logger.log_mig_split_complete(
                             self._current_time, engine_id
                         )
 
                 case EventType.ENGINE_BOOT_COMPLETE:
-                    assert "engine_id" in current_event.payload
-                    engine_id = current_event.payload["engine_id"]
+                    payload = current_event.payload
+                    engine_id = payload["engine_id"]  # type: ignore[index]
 
                     engine = self._engines[engine_id]
                     engine.activate(self._current_time)
                     agent = engine.owner
 
-                    # Log Boot Complete
-                    metadata = current_event.payload.get("metadata", {})
-                    giver_id = metadata.get("giver_id")
-                    receiver_id = metadata.get("receiver_id")
-                    self._logger.log_engine_boot_complete(
-                        self._current_time, engine_id, giver_id, receiver_id
-                    )
+                    boot_purpose = payload.get("purpose")  # type: ignore[union-attr]
 
-                    # Defer process_waiting_queue if split operations are still booting
-                    op_id = metadata.get("operation_id")
-                    purpose = metadata.get("purpose")
+                    if boot_purpose == OperationPurpose.REALLOCATE:
+                        bd_realloc = cast(BootReallocatePayload, payload)
+                        self._logger.log_engine_boot_complete(
+                            self._current_time,
+                            engine_id,
+                            bd_realloc["giver_id"],
+                            bd_realloc["receiver_id"],
+                        )
+                    else:
+                        self._logger.log_engine_boot_complete(
+                            self._current_time, engine_id
+                        )
 
-                    if (
-                        purpose == "split"
-                        and op_id in self.resource_manager.pending_split_boots
-                    ):
-                        p_boot = self.resource_manager.pending_split_boots[op_id]
-                        p_boot["remaining"] -= 1
-                        if p_boot["remaining"] > 0:
-                            continue  # Wait for remaining engines
-                        else:
-                            del self.resource_manager.pending_split_boots[op_id]
+                    # Defer process_waiting_queue if split siblings are still booting
+                    if boot_purpose == OperationPurpose.SPLIT:
+                        bd_split = cast(BootSplitPayload, payload)
+                        still_booting = any(
+                            self._engines[sid].status == EngineStatus.BOOTING
+                            for sid in bd_split["sibling_engine_ids"]
+                            if sid != engine_id and sid in self._engines
+                        )
+                        if still_booting:
+                            continue  # Wait for remaining sibling engines
 
                     # Process waiting queue
                     agent.process_waiting_queue(self._current_time)
@@ -504,11 +523,11 @@ class Simulator(SimulatorI):
                                 self._events.add(evt)
 
                 case EventType.REQUEST_ARRIVAL:
-                    assert "request" in current_event.payload
-                    assert "target_agent" in current_event.payload
+                    assert "request" in current_event.payload  # type: ignore[operator]
+                    assert "target_agent" in current_event.payload  # type: ignore[operator]
 
-                    req: Request = current_event.payload["request"]
-                    agent_id = current_event.payload["target_agent"]
+                    req: Request = current_event.payload["request"]  # type: ignore[index]
+                    agent_id = current_event.payload["target_agent"]  # type: ignore[index]
 
                     agent = self._agents[agent_id]
                     engine = agent.dispatch(req, self._current_time)
@@ -533,9 +552,9 @@ class Simulator(SimulatorI):
                             self._events.add(evt)
 
                 case EventType.ENGINE_STEP_COMPLETE:
-                    assert "engine_id" in current_event.payload
+                    assert "engine_id" in current_event.payload  # type: ignore[operator]
 
-                    engine_id = current_event.payload["engine_id"]
+                    engine_id = current_event.payload["engine_id"]  # type: ignore[index]
                     engine = self._engines[engine_id]
 
                     next_arrival_time = self._peak_next_stopping_evt(
@@ -572,7 +591,7 @@ class Simulator(SimulatorI):
             if (
                 (
                     evt.event_type == EventType.REQUEST_ARRIVAL
-                    and evt.payload["target_agent"] == agent_id
+                    and evt.payload["target_agent"] == agent_id  # type: ignore[index]
                 )
                 or evt.event_type == EventType.MIG_TRIGGER
                 or evt.event_type == EventType.REALLOCATION_TRIGGER

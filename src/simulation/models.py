@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from typing import (
     List,
     Optional,
-    Literal,
     Dict,
+    Tuple,
     Union,
     TypedDict,
     Mapping,
@@ -65,6 +65,13 @@ class EventType(Enum):
     MIG_TRIGGER = "MIG_TRIGGER"
     ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
     ENGINE_BOOT_COMPLETE = "ENGINE_BOOT_COMPLETE"
+
+
+class OperationPurpose(Enum):
+    REALLOCATE = "reallocate"
+    MERGE = "merge"
+    SPLIT = "split"
+    PLAIN = "plain"
 
 
 # --- Interfaces ---
@@ -237,39 +244,119 @@ class SimulationLogger(ABC):
         receiver_id: Optional[AgentId] = None,
     ) -> None: ...
 
+    @abstractmethod
+    def log_mig_merge_trigger(
+        self, current_time: float, e1_id: str, e2_id: str, gpu: int
+    ) -> None: ...
+
+    @abstractmethod
+    def log_mig_split_trigger(
+        self, current_time: float, engine_id: str, gpu: int
+    ) -> None: ...
+
+    @abstractmethod
+    def log_mig_merge_complete(
+        self, current_time: float, new_engine_id: str
+    ) -> None: ...
+
+    @abstractmethod
+    def log_mig_split_complete(self, current_time: float, engine_id: str) -> None: ...
+
 
 # --- Payloads and Events ---
 
 
+# REALLOCATION_TRIGGER / MIG_TRIGGER
 class EmptyPayload(TypedDict):
-    """Payload for REALLOCATION_TRIGGER events (no data)."""
+    """Payload for REALLOCATION_TRIGGER / MIG_TRIGGER events (no data)."""
 
 
-class EnginePayload(TypedDict):
-    """Payload for ENGINE_RESTART_COMPLETE events."""
-
-    engine_id: str
-
-
+# ENGINE_STEP_COMPLETE
 class EngineStepPayload(TypedDict):
-    """Payload for ENGINE_STEP_COMPLETE events."""
-
     engine_id: str
     steps_taken: int
 
 
+# REQUEST_ARRIVAL
 class RequestArrivalPayload(TypedDict):
-    """Payload for REQUEST_ARRIVAL events."""
-
     request: Request
     target_agent: AgentId
 
 
+# ENGINE_SHUTDOWN_COMPLETE — one variant per purpose
+
+class ShutdownReallocatePayload(TypedDict):
+    """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.REALLOCATE."""
+    engine_id: str
+    purpose: OperationPurpose
+    receiver_id: AgentId
+
+
+class ShutdownMergePayload(TypedDict):
+    """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.MERGE."""
+    engine_id: str
+    purpose: OperationPurpose
+    # Identifiers of both engines participating in the merge
+    merge_engine_ids: Tuple[str, str]
+    # IDs that have already drained (grows as each engine shuts down)
+    drained_ids: List[str]
+    new_profile: MIGProfile
+    agent_id: AgentId
+    gpu: int
+
+
+class ShutdownSplitPayload(TypedDict):
+    """ENGINE_SHUTDOWN_COMPLETE when purpose == OperationPurpose.SPLIT."""
+    engine_id: str
+    purpose: OperationPurpose
+    new_profiles: List[MIGProfile]
+    agent_id: AgentId
+    gpu: int
+
+
+ShutdownPayload = Union[
+    ShutdownReallocatePayload,
+    ShutdownMergePayload,
+    ShutdownSplitPayload,
+]
+
+
+# ENGINE_BOOT_COMPLETE — one variant per boot context
+
+class BootPlainPayload(TypedDict):
+    """ENGINE_BOOT_COMPLETE with no extra context (e.g. after a merge)."""
+    engine_id: str
+    purpose: OperationPurpose
+
+
+class BootReallocatePayload(TypedDict):
+    """ENGINE_BOOT_COMPLETE after a reallocate shutdown."""
+    engine_id: str
+    purpose: OperationPurpose
+    giver_id: AgentId
+    receiver_id: AgentId
+
+
+class BootSplitPayload(TypedDict):
+    """ENGINE_BOOT_COMPLETE for one of the child engines from a split."""
+    engine_id: str
+    purpose: OperationPurpose
+    new_profiles: List[MIGProfile]
+    agent_id: AgentId
+    gpu: int
+    # IDs of all engines spawned by this split (used to detect when all are booted)
+    sibling_engine_ids: List[str]
+
+
+BootPayload = Union[BootPlainPayload, BootReallocatePayload, BootSplitPayload]
+
+
 type PayloadType = Union[
     EmptyPayload,
-    EnginePayload,
     EngineStepPayload,
     RequestArrivalPayload,
+    ShutdownPayload,
+    BootPayload,
 ]
 
 
@@ -367,11 +454,11 @@ class LLMEngine(ABC):
 
     @abstractmethod
     def trigger_shutdown(
-        self, purpose: str, current_time: float, metadata: Dict = {}
+        self, payload: ShutdownPayload, current_time: float
     ) -> Optional[SimulationEvent]: ...
 
     @abstractmethod
-    def trigger_boot(self, metadata: Dict = {}) -> SimulationEvent: ...
+    def trigger_boot(self, payload: BootPayload) -> SimulationEvent: ...
 
     @abstractmethod
     def activate(self, current_time: float) -> None: ...

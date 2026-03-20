@@ -15,6 +15,9 @@ from models import (
     LLMEngine as LLMEngineI,
     Request,
     RunningRequests as RunningRequestsI,
+    ShutdownPayload,
+    BootPayload,
+    BootPlainPayload,
 )
 from request import RunningRequests
 
@@ -147,7 +150,7 @@ class LLMEngine(LLMEngineI):
         # State
         self._current_time: float = current_time
         self._status: EngineStatus = EngineStatus.ACTIVE
-        self._shutdown_pending: Optional[Dict[str, str]] = None
+        self._shutdown_pending: Optional[ShutdownPayload] = None
 
     @property
     def gpu(self) -> int:
@@ -225,25 +228,21 @@ class LLMEngine(LLMEngineI):
         self._current_time = max(self._current_time, current_time)
 
     def trigger_shutdown(
-        self, purpose: str, current_time: float, metadata: Dict = {}
+        self, payload: ShutdownPayload, current_time: float
     ) -> Optional[SimulationEvent]:
         """Trigger engine shutdown for reallocation or MIG operations."""
         self._status = EngineStatus.DRAINING
         self._current_time = max(self._current_time, current_time)
-        self._shutdown_pending = {"purpose": purpose, "metadata": metadata}
+        self._shutdown_pending = payload
 
         if len(self._running_queue) == 0 and not self._waiting_queue:
             return self._start_shutdown()
         return None
 
     def _start_shutdown(self) -> SimulationEvent:
-        """Create shutdown complete event carrying MIG or reallocation payloads."""
+        """Emit the stored shutdown payload as a SHUTDOWN_COMPLETE event."""
         assert self._shutdown_pending is not None
-        payload = {
-            "engine_id": self._engine_id,
-            "purpose": self._shutdown_pending["purpose"],
-            "metadata": self._shutdown_pending["metadata"],
-        }
+        payload = self._shutdown_pending
         self._shutdown_pending = None
         return SimulationEvent(
             time=self._current_time,
@@ -251,13 +250,13 @@ class LLMEngine(LLMEngineI):
             payload=payload,
         )
 
-    def trigger_boot(self, metadata: Dict = {}) -> SimulationEvent:
+    def trigger_boot(self, payload: BootPayload) -> SimulationEvent:
         """Move to BOOTING and schedule boot completion."""
         self._status = EngineStatus.BOOTING
         return SimulationEvent(
             time=self._current_time + self.restart_time,
             event_type=EventType.ENGINE_BOOT_COMPLETE,
-            payload={"engine_id": self._engine_id, "metadata": metadata},
+            payload=payload,
         )
 
     def activate(self, current_time: float):
