@@ -4,11 +4,22 @@ import yaml
 from pathlib import Path
 from typing import Dict, Tuple, Set
 
-from models import AgentId
+from models import AgentId, MIGProfile
 from config import SimulationConfig
+from bidict import bidict
 
 type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
 type TokensMapType = Dict[AgentId, ModelsMapType]
+
+# Maps (MIGProfile, MIGProfile) <-> Merged MIGProfile
+# Always use canonical sorted tuple (by size descending) for lookups
+MIG_MERGE_RULES: bidict[Tuple[MIGProfile, MIGProfile], MIGProfile] = bidict(
+    {
+        (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB): MIGProfile.MIG_7G_40GB,
+        (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_1G_10GB): MIGProfile.MIG_3G_20GB,
+        (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_2G_10GB): MIGProfile.MIG_4G_20GB,
+    }
+)
 
 
 def init_config(base_dir: Path) -> SimulationConfig:

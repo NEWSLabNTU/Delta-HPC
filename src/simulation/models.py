@@ -13,15 +13,31 @@ from typing import (
 )
 from abc import ABC, abstractmethod
 
+from sortedcontainers import SortedList
+
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
 
+@dataclass(frozen=True)
+class MIGProfileValue:
+    name: str
+    size: int
+
+
 class MIGProfile(Enum):
-    MIG_7G_40GB = "7g.40gb"
-    MIG_4G_20GB = "4g.20gb"
-    MIG_3G_20GB = "3g.20gb"
-    MIG_2G_10GB = "2g.10gb"
-    MIG_1G_10GB = "1g.10gb"
+    MIG_7G_40GB = MIGProfileValue("7g.40gb", 7)
+    MIG_4G_20GB = MIGProfileValue("4g.20gb", 4)
+    MIG_3G_20GB = MIGProfileValue("3g.20gb", 3)
+    MIG_2G_10GB = MIGProfileValue("2g.10gb", 2)
+    MIG_1G_10GB = MIGProfileValue("1g.10gb", 1)
+
+    @property
+    def string(self) -> str:
+        return self.value.name
+
+    @property
+    def size(self) -> int:
+        return self.value.size
 
 
 class RequestState(Enum):
@@ -34,7 +50,7 @@ class RequestState(Enum):
 class EngineStatus(Enum):
     ACTIVE = "ACTIVE"
     DRAINING = "DRAINING"
-    RESTARTING = "RESTARTING"
+    BOOTING = "BOOTING"
 
 
 class AgentId(Enum):
@@ -46,7 +62,9 @@ class EventType(Enum):
     REQUEST_ARRIVAL = "REQUEST_ARRIVAL"
     ENGINE_STEP_COMPLETE = "ENGINE_STEP_COMPLETE"
     REALLOCATION_TRIGGER = "REALLOCATION_TRIGGER"
-    ENGINE_RESTART_COMPLETE = "ENGINE_RESTART_COMPLETE"
+    MIG_TRIGGER = "MIG_TRIGGER"
+    ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
+    ENGINE_BOOT_COMPLETE = "ENGINE_BOOT_COMPLETE"
 
 
 # --- Interfaces ---
@@ -198,6 +216,7 @@ class SimulationLogger(ABC):
         req_id: str,
         target_agent: AgentId,
         assigned_engine: Optional[LLMEngine],
+        next_stopping_evt_time: Optional[float],
     ) -> None: ...
 
     @abstractmethod
@@ -206,16 +225,16 @@ class SimulationLogger(ABC):
         current_time: float,
         giver_id: AgentId,
         receiver_id: AgentId,
-        mig_profile: str,
+        engine_id: str,
     ) -> None: ...
 
     @abstractmethod
-    def log_engine_restart_complete(
+    def log_engine_boot_complete(
         self,
         current_time: float,
         engine_id: str,
-        giver_id: AgentId,
-        receiver_id: AgentId,
+        giver_id: Optional[AgentId] = None,
+        receiver_id: Optional[AgentId] = None,
     ) -> None: ...
 
 
@@ -276,6 +295,9 @@ class Agent(ABC):
     @property
     @abstractmethod
     def completed_requests(self) -> List[Request]: ...
+
+    @property
+    def dispatch_queue(self) -> List[Request]: ...
 
     @abstractmethod
     def add_engine(self, engine: LLMEngine) -> None: ...
@@ -344,12 +366,15 @@ class LLMEngine(ABC):
     def add_request(self, request: Request, current_time: float) -> None: ...
 
     @abstractmethod
-    def trigger_reallocation(
-        self, current_time: float
+    def trigger_shutdown(
+        self, purpose: str, current_time: float, metadata: Dict = {}
     ) -> Optional[SimulationEvent]: ...
 
     @abstractmethod
-    def finish_restart(self, current_time: float) -> None: ...
+    def trigger_boot(self, metadata: Dict = {}) -> SimulationEvent: ...
+
+    @abstractmethod
+    def activate(self, current_time: float) -> None: ...
 
     @abstractmethod
     def step(
@@ -368,7 +393,7 @@ class Simulator(ABC):
 
     @property
     @abstractmethod
-    def events(self) -> List[SimulationEvent]: ...
+    def events(self) -> SortedList[SimulationEvent]: ...
 
     @property
     @abstractmethod

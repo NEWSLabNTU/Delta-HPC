@@ -24,6 +24,7 @@ class SimulationLogger(SimulationLoggerI):
     def log(self, message: LogMessage):
         if not self.enabled:
             return
+        # print(message)
         self.buffer.append(message)
         if len(self.buffer) >= self.buffer_size:
             self.flush()
@@ -112,6 +113,7 @@ class SimulationLogger(SimulationLoggerI):
         req_id: str,
         target_agent: AgentId,
         assigned_engine: Optional[LLMEngine],
+        next_stopping_evt_time: Optional[float],
     ):
         """Logs a request arrival event."""
         if not self.enabled:
@@ -123,7 +125,8 @@ class SimulationLogger(SimulationLoggerI):
         )
         msg = (
             f"[{current_time:.4f}] EVENT: REQUEST_ARRIVAL | "
-            f"ReqId: {req_id} | Agent: {target_agent.value} | Engine: {eng_str}"
+            f"ReqId: {req_id} | Agent: {target_agent.value} | Engine: {eng_str} | "
+            f"Next StoppingEvt: {next_stopping_evt_time}"
         )
         self.log(msg)
 
@@ -144,18 +147,47 @@ class SimulationLogger(SimulationLoggerI):
         )
         self.log(msg)
 
-    def log_engine_restart_complete(
+    def log_engine_boot_complete(
         self,
         current_time: float,
         engine_id: str,
-        giver_id: AgentId,
-        receiver_id: AgentId,
+        giver_id: Optional[AgentId] = None,
+        receiver_id: Optional[AgentId] = None,
     ):
-        """Logs an engine restart complete event with giver and receiver."""
+        """Logs an engine boot complete event with giver and receiver."""
         if not self.enabled:
             return
-        msg = (
-            f"[{current_time:.4f}] EVENT: ENGINE_RESTART_COMPLETE | "
-            f"Engine: {engine_id} | Giver: {giver_id.value} | Receiver: {receiver_id.value}"
-        )
+        msg = f"[{current_time:.4f}] EVENT: ENGINE_BOOT_COMPLETE | Engine: {engine_id}"
+        if giver_id and receiver_id:
+            msg += f" | Giver: {giver_id.value} | Receiver: {receiver_id.value}"
         self.log(msg)
+
+    def log_mig_merge_trigger(
+        self, current_time: float, e1_id: str, e2_id: str, gpu: int
+    ):
+        if not self.enabled:
+            return
+        self.log(
+            f"[{current_time:.4f}] EVENT: MIG_MERGE_TRIGGER | Engines: {e1_id}, {e2_id} | GPU: {gpu}"
+        )
+
+    def log_mig_split_trigger(self, current_time: float, engine_id: str, gpu: int):
+        if not self.enabled:
+            return
+        self.log(
+            f"[{current_time:.4f}] EVENT: MIG_SPLIT_TRIGGER | Engine: {engine_id} | GPU: {gpu}"
+        )
+
+    def log_mig_merge_complete(self, current_time: float, new_engine_id: str):
+        if not self.enabled:
+            return
+        self.log(
+            f"[{current_time:.4f}] EVENT: MIG_MERGE_COMPLETE | New Engine: {new_engine_id}"
+        )
+
+    def log_mig_split_complete(self, current_time: float, engine_id: str):
+        if not self.enabled:
+            return
+        self.log(
+            f"[{current_time:.4f}] EVENT: MIG_SPLIT_COMPLETE | Original: {engine_id}"
+        )

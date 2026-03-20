@@ -30,7 +30,7 @@ class SimulationConfig:
 
     def get_model(self, agent: AgentId, mig_profile: MIGProfile) -> str:
         """Return the model name for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["model"]
+        return self.simulation_configs[agent.value]["mig"][mig_profile.string]["model"]
 
     def get_dataset(self, agent: AgentId) -> str:
         """Return the dataset path for a given agent."""
@@ -38,19 +38,19 @@ class SimulationConfig:
 
     def get_restart_time(self, agent: AgentId, mig_profile: MIGProfile) -> float:
         """Return the restart time for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile.value][
+        return self.simulation_configs[agent.value]["mig"][mig_profile.string][
             "restart_time"
         ]
 
     def get_prefill_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
         """Return prefill regression params for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["param"][
+        return self.simulation_configs[agent.value]["mig"][mig_profile.string]["param"][
             "prefill"
         ]
 
     def get_tpot_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
         """Return tpot regression params for a given agent + MIG profile."""
-        return self.simulation_configs[agent.value]["mig"][mig_profile.value]["param"][
+        return self.simulation_configs[agent.value]["mig"][mig_profile.string]["param"][
             "tpot"
         ]
 

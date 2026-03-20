@@ -11,7 +11,13 @@ simulation:
         mig: 1g.10gb
         agent: CodingAgent
       - gpu: 1
-        mig: 7g.40gb
+        mig: 4g.20gb
+        agent: RAGAgent
+      - gpu: 1
+        mig: 2g.10gb
+        agent: RAGAgent
+      - gpu: 1
+        mig: 1g.10gb
         agent: RAGAgent
 
   configs:

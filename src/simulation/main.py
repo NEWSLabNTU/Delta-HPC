@@ -16,7 +16,10 @@ from request import Request
 
 
 def get_mig_profile(profile_str: str) -> MIGProfile:
-    return MIGProfile(profile_str)
+    for p in MIGProfile:
+        if p.string == profile_str:
+            return p
+    raise ValueError(f"Invalid MIG profile string: {profile_str}")
 
 
 def load_requests(arrival_interval_sec: float = 0.5) -> list[RequestI]:
@@ -111,7 +114,7 @@ def main():
     for eng_conf in g.SIM_CONFIG.initial_state:
         mig = get_mig_profile(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
-        eid = f"GPU_{gpu}_{mig.value}"
+        eid = f"GPU_{gpu}_{mig.string}"
         agent = agents[AgentId(eng_conf["agent"])]
         mname = g.SIM_CONFIG.get_model(agent.agent_id, mig)
         eng = LLMEngine(

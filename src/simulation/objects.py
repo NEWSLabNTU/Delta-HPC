@@ -19,11 +19,36 @@ from models import (
 from request import RunningRequests
 
 
+def create_llm_engine(
+    gpu: int,
+    engine_id: str,
+    owner: AgentI,
+    mig_profile: MIGProfile,
+    current_time: float,
+) -> LLMEngine:
+    """Factory function to create an LLMEngine with configuration loaded."""
+    mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
+    eg = LLMEngine(
+        gpu=gpu,
+        engine_id=engine_id,
+        owner=owner,
+        model_name=mname,
+        mig_profile=mig_profile,
+        max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
+        prefill_params=g.SIM_CONFIG.get_prefill_params(owner.agent_id, mig_profile),
+        tpot_params=g.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
+        restart_time=g.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
+        current_time=current_time,
+    )
+    return eg
+
+
 class Agent(AgentI):
     def __init__(self, agent_id: AgentId):
         self._agent_id = agent_id
         self._engines: List[LLMEngineI] = []
         self._completed_requests: List[Request] = []
+        self._dispatch_queue: List[Request] = []
 
     @property
     def agent_id(self) -> AgentId:
@@ -37,20 +62,24 @@ class Agent(AgentI):
     def completed_requests(self) -> List[Request]:
         return self._completed_requests
 
+    @property
+    def dispatch_queue(self) -> List[Request]:
+        return self._dispatch_queue
+
     def add_engine(self, engine: LLMEngineI):
         self._engines.append(engine)
 
-    def dispatch(self, request: Request, current_time: float) -> LLMEngineI:
+    def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngineI]:
         """
         Dispatches an incoming request to the best engine based on simple work-balance.
         Finds engines matching the requested model size, and picks the one with the smallest queue length.
         Sets completion_tokens based on the chosen engine's model before queuing the request.
+        If no active engines exist, queues the request in the agent's waiting queue.
         """
         active_engines = [e for e in self.engines if e.status == EngineStatus.ACTIVE]
         if not active_engines:
-            raise RuntimeError(
-                f"[{self.agent_id}] No active engines to dispatch request {request.id}"
-            )
+            self._dispatch_queue.append(request)
+            return None
 
         # Simple work-balance: Pick the active engine with the fewest requests
         best_engine = min(
@@ -67,6 +96,19 @@ class Agent(AgentI):
         best_engine.add_request(request, current_time)
         return best_engine
 
+    def process_waiting_queue(self, current_time: float) -> List[SimulationEvent]:
+        """Process queued requests if there are active engines."""
+        events = []
+        while self._dispatch_queue:
+            active_engines = [
+                e for e in self.engines if e.status == EngineStatus.ACTIVE
+            ]
+            if not active_engines:
+                break
+            req = self._dispatch_queue.pop(0)
+            engine = self.dispatch(req, current_time)
+        return events
+
 
 class LLMEngine(LLMEngineI):
     def __init__(
@@ -80,6 +122,7 @@ class LLMEngine(LLMEngineI):
         prefill_params: ParamDict,
         tpot_params: ParamDict,
         restart_time: float,
+        current_time: float = 0.0,
     ):
         self._gpu = gpu
         self._engine_id = engine_id
@@ -102,8 +145,9 @@ class LLMEngine(LLMEngineI):
         self._running_queue = RunningRequests()
 
         # State
-        self._current_time: float = 0.0
+        self._current_time: float = current_time
         self._status: EngineStatus = EngineStatus.ACTIVE
+        self._shutdown_pending: Optional[Dict[str, str]] = None
 
     @property
     def gpu(self) -> int:
@@ -180,23 +224,44 @@ class LLMEngine(LLMEngineI):
         self._waiting_queue.append(request)
         self._current_time = max(self._current_time, current_time)
 
-    def trigger_reallocation(self, current_time: float) -> Optional[SimulationEvent]:
+    def trigger_shutdown(
+        self, purpose: str, current_time: float, metadata: Dict = {}
+    ) -> Optional[SimulationEvent]:
+        """Trigger engine shutdown for reallocation or MIG operations."""
         self._status = EngineStatus.DRAINING
         self._current_time = max(self._current_time, current_time)
+        self._shutdown_pending = {"purpose": purpose, "metadata": metadata}
 
         if len(self._running_queue) == 0 and not self._waiting_queue:
-            return self._start_restart()
+            return self._start_shutdown()
         return None
 
-    def _start_restart(self) -> SimulationEvent:
-        self._status = EngineStatus.RESTARTING
+    def _start_shutdown(self) -> SimulationEvent:
+        """Create shutdown complete event carrying MIG or reallocation payloads."""
+        assert self._shutdown_pending is not None
+        payload = {
+            "engine_id": self._engine_id,
+            "purpose": self._shutdown_pending["purpose"],
+            "metadata": self._shutdown_pending["metadata"],
+        }
+        self._shutdown_pending = None
         return SimulationEvent(
-            time=self._current_time + self.restart_time,
-            event_type=EventType.ENGINE_RESTART_COMPLETE,
-            payload={"engine_id": self._engine_id},
+            time=self._current_time,
+            event_type=EventType.ENGINE_SHUTDOWN_COMPLETE,
+            payload=payload,
         )
 
-    def finish_restart(self, current_time: float):
+    def trigger_boot(self, metadata: Dict = {}) -> SimulationEvent:
+        """Move to BOOTING and schedule boot completion."""
+        self._status = EngineStatus.BOOTING
+        return SimulationEvent(
+            time=self._current_time + self.restart_time,
+            event_type=EventType.ENGINE_BOOT_COMPLETE,
+            payload={"engine_id": self._engine_id, "metadata": metadata},
+        )
+
+    def activate(self, current_time: float):
+        """Move from BOOTING to ACTIVE."""
         self._status = EngineStatus.ACTIVE
         self._current_time = max(self._current_time, current_time)
 
@@ -302,8 +367,11 @@ class LLMEngine(LLMEngineI):
                 self._running_queue.decoding_requests.remove(r)
 
         if len(self._running_queue) == 0 and not self._waiting_queue:
-            if self._status == EngineStatus.DRAINING:
-                return self._start_restart()
+            if (
+                self._status == EngineStatus.DRAINING
+                and self._shutdown_pending is not None
+            ):
+                return self._start_shutdown()
 
         if steps_taken > 0 or finished:
             return SimulationEvent(
