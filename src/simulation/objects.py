@@ -22,29 +22,6 @@ from models import (
 from request import RunningRequests
 
 
-def create_llm_engine(
-    gpu: int,
-    engine_id: str,
-    owner: AgentI,
-    mig_profile: MIGProfile,
-    current_time: float,
-) -> LLMEngine:
-    """Factory function to create an LLMEngine with configuration loaded."""
-    mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
-    eg = LLMEngine(
-        gpu=gpu,
-        engine_id=engine_id,
-        owner=owner,
-        model_name=mname,
-        mig_profile=mig_profile,
-        max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
-        prefill_params=g.SIM_CONFIG.get_prefill_params(owner.agent_id, mig_profile),
-        tpot_params=g.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
-        restart_time=g.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
-        current_time=current_time,
-    )
-    return eg
-
 
 class Agent(AgentI):
     def __init__(self, agent_id: AgentId):
@@ -114,6 +91,29 @@ class Agent(AgentI):
 
 
 class LLMEngine(LLMEngineI):
+    @staticmethod
+    def create(
+        gpu: int,
+        engine_id: str,
+        owner: AgentI,
+        mig_profile: MIGProfile,
+        current_time: float,
+    ) -> "LLMEngine":
+        """Factory: create an LLMEngine with configuration loaded from SIM_CONFIG."""
+        mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
+        return LLMEngine(
+            gpu=gpu,
+            engine_id=engine_id,
+            owner=owner,
+            model_name=mname,
+            mig_profile=mig_profile,
+            max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
+            prefill_params=g.SIM_CONFIG.get_prefill_params(owner.agent_id, mig_profile),
+            tpot_params=g.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
+            restart_time=g.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
+            current_time=current_time,
+        )
+
     def __init__(
         self,
         gpu: int,

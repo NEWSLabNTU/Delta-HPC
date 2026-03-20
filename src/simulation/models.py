@@ -452,6 +452,16 @@ class LLMEngine(ABC):
     @abstractmethod
     def add_request(self, request: Request, current_time: float) -> None: ...
 
+    @staticmethod
+    @abstractmethod
+    def create(
+        gpu: int,
+        engine_id: str,
+        owner: "Agent",
+        mig_profile: MIGProfile,
+        current_time: float,
+    ) -> "LLMEngine": ...
+
     @abstractmethod
     def trigger_shutdown(
         self, payload: ShutdownPayload, current_time: float
