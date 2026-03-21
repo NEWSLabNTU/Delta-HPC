@@ -481,6 +481,7 @@ class LLMEngine(ABC):
     @abstractmethod
     def update_model(
         self,
+        new_owner: Agent,
         model_name: str,
         max_batched_tokens: int,
         prefill_params: ParamDict,

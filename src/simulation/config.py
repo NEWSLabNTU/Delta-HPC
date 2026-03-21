@@ -61,3 +61,19 @@ class SimulationConfig:
     def get_vllm_config_path(self, model_name: str) -> str:
         """Return the vllm config file path for a given model."""
         return self.model[model_name]["vllm_config"]
+
+    def get_kv_cache_gb(self, agent: AgentId, mig_profile: MIGProfile) -> float:
+        """Return the kv_cache_GB for a given agent + MIG profile."""
+        return self.simulation_configs[agent.value]["mig"][mig_profile.string]["kv_cache_GB"]
+
+    def get_kv_per_token_kb(self, model_name: str) -> float:
+        """Return the kv_per_token_KB for a given model."""
+        return self.model[model_name]["kv_per_token_KB"]
+
+    def get_max_kv_cache_tokens(self, agent: AgentId, mig_profile: MIGProfile) -> int:
+        """Return the max concurrent KV cache tokens for a given agent + MIG profile."""
+        mname = self.get_model(agent, mig_profile)
+        kv_cache_gb = self.get_kv_cache_gb(agent, mig_profile)
+        kv_per_token_kb = self.get_kv_per_token_kb(mname)
+        # 1 GB = 1048576 KB
+        return int((kv_cache_gb * 1048576) / kv_per_token_kb)

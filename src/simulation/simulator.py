@@ -445,7 +445,12 @@ class SimulatorImpl(Simulator):
         engine = self._engines[engine_id]
 
         new_model = g.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
+        
+        giver_id = engine.owner.agent_id
+        receiver = self._agents[receiver_id]
+
         engine.update_model(
+            new_owner=receiver,
             model_name=new_model,
             max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[new_model],
             prefill_params=g.SIM_CONFIG.get_prefill_params(
@@ -455,17 +460,10 @@ class SimulatorImpl(Simulator):
             restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
-        giver = engine.owner
-        receiver = self._agents[receiver_id]
-        if engine in giver.engines:
-            giver.engines.remove(engine)
-        receiver.add_engine(engine)
-        engine.owner = receiver
-
         boot_payload: BootReallocatePayload = {
             "engine_id": engine_id,
             "purpose": OperationPurpose.REALLOCATE,
-            "giver_id": giver.agent_id,
+            "giver_id": giver_id,
             "receiver_id": receiver_id,
         }
         self._events.add(engine.trigger_boot(boot_payload))

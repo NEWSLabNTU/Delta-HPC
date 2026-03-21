@@ -26,6 +26,7 @@ simulation:
         7g.40gb:
           model: Qwen/Qwen2.5-Coder-14B-Instruct
           restart_time: 60
+          kv_cache_GB: 6.45
           param:
             prefill:
               alpha: 0.04467752846225546
@@ -38,6 +39,7 @@ simulation:
         4g.20gb:
           model: Qwen/Qwen2.5-Coder-7B-Instruct
           restart_time: 60
+          kv_cache_GB: 1.97
           param:
             prefill:
               alpha: 0.030755387104644764
@@ -50,6 +52,7 @@ simulation:
         3g.20gb:
           model: Qwen/Qwen2.5-Coder-7B-Instruct
           restart_time: 60
+          kv_cache_GB: 1.97
           param:
             prefill:
               alpha: 0.051558955438592846
@@ -62,6 +65,7 @@ simulation:
         2g.10gb:
           model: Qwen/Qwen2.5-Coder-3B-Instruct
           restart_time: 60
+          kv_cache_GB: 2.0 # to be verified
           param:
             prefill:
               alpha: 0.030826559662746153
@@ -74,6 +78,7 @@ simulation:
         1g.10gb:
           model: Qwen/Qwen2.5-Coder-3B-Instruct
           restart_time: 60
+          kv_cache_GB: 2.0 # to be verified
           param:
             prefill:
               alpha: 0.041886878858170405
@@ -89,6 +94,7 @@ simulation:
         7g.40gb:
           model: Qwen/Qwen2.5-14B-Instruct
           restart_time: 60
+          kv_cache_GB: 6.41
           param:
             prefill:
               alpha: 0.045291878638524366
@@ -101,6 +107,7 @@ simulation:
         4g.20gb:
           model: Qwen/Qwen2.5-7B-Instruct
           restart_time: 60
+          kv_cache_GB: 1.96
           param:
             prefill:
               alpha: 0.030131679064210343
@@ -113,6 +120,7 @@ simulation:
         3g.20gb:
           model: Qwen/Qwen2.5-7B-Instruct
           restart_time: 60
+          kv_cache_GB: 1.96
           param:
             prefill:
               alpha: 0.051270775707020814
@@ -125,6 +133,7 @@ simulation:
         2g.10gb:
           model: Qwen/Qwen2.5-3B-Instruct
           restart_time: 60
+          kv_cache_GB: 2.0 # to be verified
           param:
             prefill:
               alpha: 0.028287213630630248
@@ -137,6 +146,7 @@ simulation:
         1g.10gb:
           model: Qwen/Qwen2.5-3B-Instruct
           restart_time: 60
+          kv_cache_GB: 2.0 # to be verified
           param:
             prefill:
               alpha: 0.041907479380461986
@@ -151,18 +161,24 @@ model:
   Qwen/Qwen2.5-Coder-14B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-14b-instruct.yaml
+    kv_per_token_KB: 192
   Qwen/Qwen2.5-Coder-7B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-7b-instruct.yaml
+    kv_per_token_KB: 56
   Qwen/Qwen2.5-Coder-3B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
     vllm_config: configs/qwen2_5-coder-3b-instruct.yaml
+    kv_per_token_KB: 36
   Qwen/Qwen2.5-14B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-14b-instruct.yaml
+    kv_per_token_KB: 192
   Qwen/Qwen2.5-7B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-7b-instruct.yaml
+    kv_per_token_KB: 56
   Qwen/Qwen2.5-3B-Instruct:
     generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
     vllm_config: configs/qwen2_5-3b-instruct.yaml
+    kv_per_token_KB: 36

@@ -80,9 +80,9 @@ class LLMEngineImpl(LLMEngine):
         owner: Agent,
         mig_profile: MIGProfile,
         current_time: float,
-    ) -> "LLMEngineImpl":
-        """Factory: create an LLMEngine with configuration loaded from SIM_CONFIG."""
+    ) -> LLMEngineImpl:
         mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
+
         return LLMEngineImpl(
             gpu=gpu,
             engine_id=engine_id,
@@ -124,6 +124,9 @@ class LLMEngineImpl(LLMEngine):
         self.tpot_sigma = tpot_params["sigma"]
         self.restart_time = restart_time
         self.max_batched_tokens = max_batched_tokens
+        self.max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+            owner.agent_id, mig_profile
+        )
 
         # Queues
         self._waiting_queue: List[Request] = []
@@ -162,6 +165,8 @@ class LLMEngineImpl(LLMEngine):
     def current_time(self) -> float:
         return self._current_time
 
+
+
     @property
     def status(self) -> EngineStatus:
         return self._status
@@ -186,14 +191,23 @@ class LLMEngineImpl(LLMEngine):
 
     def update_model(
         self,
+        new_owner: Agent,
         model_name: str,
         max_batched_tokens: int,
         prefill_params: ParamDict,
         tpot_params: ParamDict,
         restart_time: float,
     ):
+        if self in self._owner.engines:
+            self._owner.engines.remove(self)
+        new_owner.add_engine(self)
+        self._owner = new_owner
+        
         self._model_name = model_name
         self.max_batched_tokens = max_batched_tokens
+        self.max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+            new_owner.agent_id, self.mig_profile
+        )
         self.prefill_alpha = prefill_params["alpha"]
         self.prefill_beta = prefill_params["beta"]
         self.prefill_sigma = prefill_params["sigma"]
@@ -286,6 +300,17 @@ class LLMEngineImpl(LLMEngine):
 
             # 3b. Pull from waiting_queue if we still have budget
             while budget > 0 and self._waiting_queue:
+                req = self._waiting_queue[0]
+
+                # Check KV Cache limits before pulling
+                req_tokens = req.prompt_tokens + req.completion_tokens
+                current_reserved = sum(
+                    r.prompt_tokens + r.completion_tokens 
+                    for r in self._running_queue.all_requests
+                )
+                if current_reserved + req_tokens > self.max_kv_cache_tokens:
+                    break
+
                 req = self._waiting_queue.pop(0)
                 req.state = RequestState.PREFILLING
                 if req.start_time is None:

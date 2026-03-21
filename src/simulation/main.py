@@ -110,17 +110,12 @@ def main():
         gpu = int(eng_conf["gpu"])
         eid = f"GPU_{gpu}_{mig.string}"
         agent = agents[AgentId(eng_conf["agent"])]
-        mname = g.SIM_CONFIG.get_model(agent.agent_id, mig)
-        eng = LLMEngineImpl(
+        eng = LLMEngineImpl.create(
             gpu=gpu,
             engine_id=eid,
             owner=agent,
-            model_name=mname,
             mig_profile=mig,
-            max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
-            prefill_params=g.SIM_CONFIG.get_prefill_params(agent.agent_id, mig),
-            tpot_params=g.SIM_CONFIG.get_tpot_params(agent.agent_id, mig),
-            restart_time=g.SIM_CONFIG.get_restart_time(agent.agent_id, mig),
+            current_time=0.0,
         )
 
         agent.add_engine(eng)
