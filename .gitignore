@@ -15,3 +15,6 @@ assets/*
 results/
 profiling_results
 logs/
+
+*.zip
+*.gz

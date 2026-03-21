@@ -1,6 +1,7 @@
 services:
   vllm-server:
-    image: vllm/vllm-gh200-openai:latest
+    image: vllm/vllm-openai:latest
+    tty: true
     runtime: nvidia
     ipc: host
     ports:

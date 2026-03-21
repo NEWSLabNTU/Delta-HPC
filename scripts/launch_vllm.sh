@@ -22,13 +22,13 @@ PROJECT_NAME="vllm-${MODEL_ID}-${MIG_SHORT}"
 
 case "$ACTION" in
   up)
-    docker compose -p "$PROJECT_NAME" up -d
+    docker compose -p "$PROJECT_NAME" up -d --force-recreate
     ;;
   down)
     docker compose -p "$PROJECT_NAME" down
     ;;
   logs)
-    docker compose -p "$PROJECT_NAME" logs -f -t --no-log-prefix -n 30
+    docker compose -p "$PROJECT_NAME" logs -f --no-log-prefix
     ;;
   *)
     echo "Invalid action: $ACTION"
