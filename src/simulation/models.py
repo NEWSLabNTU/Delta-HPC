@@ -40,24 +40,27 @@ type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
 @dataclass(frozen=True)
 class MIGProfileValue:
-    name: str
     size: int
-
+    vram: int
 
 class MIGProfile(Enum):
-    MIG_7G_40GB = MIGProfileValue("7g.40gb", 7)
-    MIG_4G_20GB = MIGProfileValue("4g.20gb", 4)
-    MIG_3G_20GB = MIGProfileValue("3g.20gb", 3)
-    MIG_2G_10GB = MIGProfileValue("2g.10gb", 2)
-    MIG_1G_10GB = MIGProfileValue("1g.10gb", 1)
+    MIG_7G_40GB = MIGProfileValue(7, 40)
+    MIG_4G_20GB = MIGProfileValue(4, 20)
+    MIG_3G_20GB = MIGProfileValue(3, 20)
+    MIG_2G_10GB = MIGProfileValue(2, 10)
+    MIG_1G_10GB = MIGProfileValue(1, 10)
 
     @property
     def string(self) -> str:
-        return self.value.name
+        return f"{self.value.size}g.{self.value.vram}gb"
 
     @property
     def size(self) -> int:
         return self.value.size
+
+    @property
+    def vram(self) -> int:
+        return self.value.vram
 
 
 class RequestState(Enum):
@@ -81,7 +84,7 @@ class AgentId(Enum):
 class EventType(Enum):
     REQUEST_ARRIVAL = "REQUEST_ARRIVAL"
     ENGINE_STEP_COMPLETE = "ENGINE_STEP_COMPLETE"
-    REALLOCATION_TRIGGER = "REALLOCATION_TRIGGER"
+    VRAM_TRANSFER_TRIGGER = "VRAM_TRANSFER_TRIGGER"
     MIG_TRIGGER = "MIG_TRIGGER"
     ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
     ENGINE_BOOT_COMPLETE = "ENGINE_BOOT_COMPLETE"
@@ -247,11 +250,12 @@ class SimulationLogger(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def log_reallocation(
+    def log_vram_transfer(
         self,
         current_time: float,
         giver_id: AgentId,
         receiver_id: AgentId,
+        amount: int,
         engine_id: str,
     ) -> None: ...
 
@@ -286,9 +290,9 @@ class SimulationLogger(ABC):
 # --- Payloads and Events ---
 
 
-# REALLOCATION_TRIGGER / MIG_TRIGGER
+# VRAM_TRANSFER_TRIGGER / MIG_TRIGGER
 class EmptyPayload(TypedDict):
-    """Payload for REALLOCATION_TRIGGER / MIG_TRIGGER events (no data)."""
+    """Payload for VRAM_TRANSFER_TRIGGER / MIG_TRIGGER events (no data)."""
 
 
 # ENGINE_STEP_COMPLETE
@@ -336,6 +340,8 @@ class ShutdownSplitPayload(TypedDict):
     new_profiles: List[MIGProfile]
     agent_id: AgentId
     gpu: int
+    transfer_index: Optional[int]
+    transfer_receiver_id: Optional[AgentId]
 
 
 ShutdownPayload = Union[

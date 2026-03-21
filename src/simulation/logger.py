@@ -127,20 +127,21 @@ class SimulationLoggerImpl(SimulationLogger):
         )
         self.log(msg)
 
-    def log_reallocation(
+    def log_vram_transfer(
         self,
         current_time: float,
         giver_id: AgentId,
         receiver_id: AgentId,
+        amount: int,
         engine_id: str,
     ):
-        """Logs a reallocation event."""
+        """Logs a VRAM transfer event."""
         if not self.enabled:
             return
         msg = (
-            f"[{current_time:.4f}] EVENT: REALLOCATION | "
+            f"[{current_time:.4f}] EVENT: VRAM_TRANSFER | "
             f"Giver: {giver_id.value} | Receiver: {receiver_id.value} | "
-            f"Engine: {engine_id}"
+            f"Amount: {amount}GB | Source Engine: {engine_id}"
         )
         self.log(msg)
 

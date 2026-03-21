@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import random
 from tqdm import tqdm
+from dataclasses import dataclass
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
@@ -9,51 +12,193 @@ from objects import LLMEngineImpl
 from logger import SimulationLoggerImpl
 
 
+@dataclass
+class PendingTransfer:
+    """
+    Represents an ongoing VRAM transfer request from a giver to a receiver.
+    Holds the required VRAM amount and a flag indicating if a MIG split is currently in progress.
+    """
+
+    amount: int
+    giver_id: AgentId
+    receiver_id: AgentId
+    waiting_for_split: bool = False
+
+
+class Worker:
+    def __init__(self, simulator: Simulator, resource_manager: ResourceManager):
+        self.simulator = simulator
+        self.resource_manager = resource_manager
+
+    def queue_transfer(
+        self, amount: int, giver_id: AgentId, receiver_id: AgentId, current_time: float
+    ):
+        """
+        Adds a new transfer request to the queue and immediately attempts to process it.
+        """
+        self.resource_manager.pending_transfers.append(
+            PendingTransfer(amount, giver_id, receiver_id)
+        )
+        self.step(current_time)
+
+    def step(self, current_time: float):
+        """
+        Processes the next pending VRAM transfer in the queue.
+        Attempts to find an exact engine match, a direct split match, or initiates a generic split
+        to break down larger engines until the required VRAM amount can be seamlessly transferred.
+        """
+        if not self.resource_manager.pending_transfers:
+            return
+
+        t = self.resource_manager.pending_transfers[0]
+        giver = self.simulator.agents[t.giver_id]
+        receiver = self.simulator.agents[t.receiver_id]
+
+        exact_matches = [
+            e
+            for e in giver.engines
+            if e.status == EngineStatus.ACTIVE and e.mig_profile.vram == t.amount
+        ]
+        if exact_matches:
+            engine_to_shift = min(
+                exact_matches,
+                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+            )
+            shutdown_payload: ShutdownReallocatePayload = {
+                "engine_id": engine_to_shift.engine_id,
+                "purpose": OperationPurpose.REALLOCATE,
+                "receiver_id": receiver.agent_id,
+            }
+            self.simulator.logger.log_vram_transfer(
+                current_time,
+                giver.agent_id,
+                receiver.agent_id,
+                t.amount,
+                engine_to_shift.engine_id,
+            )
+            evt = engine_to_shift.trigger_shutdown(shutdown_payload, current_time)
+            if evt:
+                self.simulator.events.add(evt)
+            self.resource_manager.pending_transfers.pop(0)
+            return
+
+        larger_engines = [
+            e
+            for e in giver.engines
+            if e.status == EngineStatus.ACTIVE and e.mig_profile.vram > t.amount
+        ]
+        if not larger_engines:
+            return
+
+        engine_to_split = None
+        transfer_index = None
+        for e in larger_engines:
+            if e.mig_profile in g.MIG_MERGE_RULES.inverse:
+                profiles = list(g.MIG_MERGE_RULES.inverse[e.mig_profile])
+                for i, p in enumerate(profiles):
+                    if p.vram == t.amount:
+                        engine_to_split = e
+                        transfer_index = i
+                        break
+            if engine_to_split:
+                break
+
+        if engine_to_split:
+            profiles = list(g.MIG_MERGE_RULES.inverse[engine_to_split.mig_profile])
+            split_payload: ShutdownSplitPayload = {
+                "engine_id": engine_to_split.engine_id,
+                "purpose": OperationPurpose.SPLIT,
+                "new_profiles": profiles,
+                "agent_id": giver.agent_id,
+                "gpu": engine_to_split.gpu,
+                "transfer_index": transfer_index,
+                "transfer_receiver_id": receiver.agent_id,
+            }
+            evt = engine_to_split.trigger_shutdown(split_payload, current_time)
+            if evt:
+                self.simulator.events.add(evt)
+            self.simulator.logger.log_mig_split_trigger(
+                current_time, engine_to_split.engine_id, engine_to_split.gpu
+            )
+            self.simulator.logger.log_vram_transfer(
+                current_time,
+                giver.agent_id,
+                receiver.agent_id,
+                t.amount,
+                engine_to_split.engine_id,
+            )
+            # The exact child will be transferred directly upon boot; consume the pending transfer.
+            self.resource_manager.pending_transfers.pop(0)
+            return
+
+        # If a split is already underway for this transfer, wait until its children boot.
+        if t.waiting_for_split:
+            return
+
+        # 3. Schedule a normal split of any larger engine to break it down.
+        # Choose the engine that has the closest VRAM amount to the target amount.
+        engine_to_split = min(larger_engines, key=lambda e: e.mig_profile.vram)
+        if engine_to_split.mig_profile in g.MIG_MERGE_RULES.inverse:
+            profiles = list(g.MIG_MERGE_RULES.inverse[engine_to_split.mig_profile])
+            split_payload_normal: ShutdownSplitPayload = {
+                "engine_id": engine_to_split.engine_id,
+                "purpose": OperationPurpose.SPLIT,
+                "new_profiles": profiles,
+                "agent_id": giver.agent_id,
+                "gpu": engine_to_split.gpu,
+                "transfer_index": None,
+                "transfer_receiver_id": None,
+            }
+            evt = engine_to_split.trigger_shutdown(split_payload_normal, current_time)
+            if evt:
+                self.simulator.events.add(evt)
+            self.simulator.logger.log_mig_split_trigger(
+                current_time, engine_to_split.engine_id, engine_to_split.gpu
+            )
+            t.waiting_for_split = True
+
+
 class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
         self.trigger_interval = 3600.0
+        self.pending_transfers: List[PendingTransfer] = []
+        self.worker = Worker(simulator, self)
 
-    def trigger(self, current_time: float):
-        coding_agent = self.simulator.agents[AgentId.CODING]
-        rag_agent = self.simulator.agents[AgentId.RAG]
-
-        candidates_to_give: List[Tuple[Agent, Agent]] = []
-        # Support multiple engines
-        if len(coding_agent.engines) > 1:
-            # We should only pick from ACTIVE engines
-            active_engines = [
-                e for e in coding_agent.engines if e.status == EngineStatus.ACTIVE
-            ]
-            if active_engines:
-                candidates_to_give.append((coding_agent, rag_agent))
-
-        if len(rag_agent.engines) > 1:
-            active_engines = [
-                e for e in rag_agent.engines if e.status == EngineStatus.ACTIVE
-            ]
-            if active_engines:
-                candidates_to_give.append((rag_agent, coding_agent))
-
-        if not candidates_to_give:
+    def trigger_vram_transfer(self, current_time: float):
+        """
+        Periodically transfers VRAM between agents.
+        Randomly selects an agent. If it has >20GB active VRAM, transfers 10 or 20GB.
+        If it has exactly 20GB, transfers 10GB.
+        Otherwise, it attempts the same logic on the other agent.
+        """
+        agents = list(self.simulator.agents.values())
+        if len(agents) < 2:
             return
 
-        giver, receiver = random.choice(candidates_to_give)
-        active_engines = [e for e in giver.engines if e.status == EngineStatus.ACTIVE]
-        engine_to_shift = random.choice(active_engines)
+        random.shuffle(agents)
 
-        self.simulator.logger.log_reallocation(
-            current_time, giver.agent_id, receiver.agent_id, engine_to_shift.engine_id
-        )
+        for i in range(2):
+            giver = agents[i]
+            receiver = agents[1 - i]
 
-        payload: ShutdownReallocatePayload = {
-            "engine_id": engine_to_shift.engine_id,
-            "purpose": OperationPurpose.REALLOCATE,
-            "receiver_id": receiver.agent_id,
-        }
-        evt = engine_to_shift.trigger_shutdown(payload, current_time)
-        if evt:
-            self.simulator.events.add(evt)
+            active_vram = sum(
+                e.mig_profile.vram 
+                for e in giver.engines 
+                if e.status == EngineStatus.ACTIVE
+            )
+
+            amount = 0
+            if active_vram > 20:
+                amount = random.choice([10, 20])
+            elif active_vram == 20:
+                amount = 10
+
+            if amount > 0:
+                self.worker.queue_transfer(
+                    amount, giver.agent_id, receiver.agent_id, current_time
+                )
+                return
 
     def trigger_mig(self, current_time: float):
         sim = self.simulator
@@ -146,6 +291,8 @@ class ResourceManager:
                 "new_profiles": data["new_profiles"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
+                "transfer_index": None,
+                "transfer_receiver_id": None,
             }
             evt = e.trigger_shutdown(split_payload, current_time)
             if evt:
@@ -168,11 +315,11 @@ class SimulatorImpl(Simulator):
         self._logger = SimulationLoggerImpl(enabled=not no_log)
         self.total_requests = 0
 
-        # Schedule Reallocation at 3600.0
+        # Schedule VRAM Transfer at 3600.0
         self._events.add(
             SimulationEvent(
                 time=3600.0,
-                event_type=EventType.REALLOCATION_TRIGGER,
+                event_type=EventType.VRAM_TRANSFER_TRIGGER,
                 payload={},
             ),
         )
@@ -222,7 +369,7 @@ class SimulatorImpl(Simulator):
 
     def has_active_work(self) -> bool:
         if any(
-            e.event_type not in [EventType.REALLOCATION_TRIGGER, EventType.MIG_TRIGGER]
+            e.event_type not in [EventType.VRAM_TRANSFER_TRIGGER, EventType.MIG_TRIGGER]
             for e in self._events
         ):
             return True
@@ -266,12 +413,16 @@ class SimulatorImpl(Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_reallocation_trigger(self):
-        self.resource_manager.trigger(self._current_time)
+    def _handle_vram_transfer_trigger(self):
+        """
+        Event handler for VRAM_TRANSFER_TRIGGER.
+        Calls the resource manager to attempt a transfer and re-schedules the next trigger.
+        """
+        self.resource_manager.trigger_vram_transfer(self._current_time)
         self._events.add(
             SimulationEvent(
                 time=self._current_time + self.resource_manager.trigger_interval,
-                event_type=EventType.REALLOCATION_TRIGGER,
+                event_type=EventType.VRAM_TRANSFER_TRIGGER,
                 payload={},
             )
         )
@@ -358,17 +509,32 @@ class SimulatorImpl(Simulator):
             agent.engines.remove(e)
 
         new_profiles = payload["new_profiles"]
-        # Pre-compute all new engine IDs so every sibling payload
-        # shares the same sibling_engine_ids list reference.
         new_eids = [
             f"GPU_{payload['gpu']}_{p.string}_{int(self._current_time)}_{i}"
             for i, p in enumerate(new_profiles)
         ]
         sibling_ids: List[str] = new_eids
-        for new_eid, p in zip(new_eids, new_profiles):
-            new_eng = LLMEngineImpl.create(
-                payload["gpu"], new_eid, agent, p, self._current_time
-            )
+
+        transfer_idx = payload.get("transfer_index")
+        transfer_rec = payload.get("transfer_receiver_id")
+
+        for i, (new_eid, p) in enumerate(zip(new_eids, new_profiles)):
+            if (
+                transfer_idx is not None
+                and transfer_rec is not None
+                and i == transfer_idx
+            ):
+                receiver_agent = self._agents[transfer_rec]
+                new_eng = LLMEngineImpl.create(
+                    payload["gpu"], new_eid, receiver_agent, p, self._current_time
+                )
+                receiver_agent.add_engine(new_eng)
+            else:
+                new_eng = LLMEngineImpl.create(
+                    payload["gpu"], new_eid, agent, p, self._current_time
+                )
+                agent.add_engine(new_eng)
+
             boot_split: BootSplitPayload = {
                 "engine_id": new_eid,
                 "purpose": OperationPurpose.SPLIT,
@@ -377,9 +543,9 @@ class SimulatorImpl(Simulator):
                 "gpu": payload["gpu"],
                 "sibling_engine_ids": sibling_ids,
             }
+
             self._events.add(new_eng.trigger_boot(boot_split))
             self._engines[new_eid] = new_eng
-            agent.add_engine(new_eng)
         self._logger.log_mig_split_complete(self._current_time, engine_id)
 
     def _handle_shutdown_complete(
@@ -438,6 +604,8 @@ class SimulatorImpl(Simulator):
             )
             if still_booting:
                 return  # Wait for remaining sibling engines
+
+            self.resource_manager.worker.step(self._current_time)
 
         agent.process_waiting_queue(self._current_time)
         for e in agent.engines:
@@ -507,8 +675,8 @@ class SimulatorImpl(Simulator):
             self._current_time = current_event.time
 
             match current_event.event_type:
-                case EventType.REALLOCATION_TRIGGER:
-                    self._handle_reallocation_trigger()
+                case EventType.VRAM_TRANSFER_TRIGGER:
+                    self._handle_vram_transfer_trigger()
                 case EventType.MIG_TRIGGER:
                     self._handle_mig_trigger()
                 case EventType.ENGINE_SHUTDOWN_COMPLETE:
@@ -544,7 +712,7 @@ class SimulatorImpl(Simulator):
                     and evt.payload.get("target_agent") == agent_id
                 )
                 or evt.event_type == EventType.MIG_TRIGGER
-                or evt.event_type == EventType.REALLOCATION_TRIGGER
+                or evt.event_type == EventType.VRAM_TRANSFER_TRIGGER
             ):
                 return evt.time
         return None
