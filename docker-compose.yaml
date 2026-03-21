@@ -6,11 +6,11 @@ services:
     ports:
       - "${HOST_PORT}:8000"
     environment:
-      - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
       - MIG_UUID=${MIG_UUID} # Ensure this is set in your shell or an .env file
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_CACHE_ROOT=/root/.cache/vllm
     volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-      - /tmp/nvidia-mps-${MIG_UUID}:/tmp/nvidia-mps
+      - ~/.cache:/root/.cache
       - ./configs:/vllm-workspace/configs
     deploy:
       resources:
@@ -19,4 +19,4 @@ services:
             - driver: nvidia
               device_ids: ["${MIG_UUID}"]
               capabilities: [gpu]
-    command: --no-enable-prefix-caching --config /vllm-workspace/configs/${MODEL_ID}.yaml
+    command: --config /vllm-workspace/configs/${MODEL_ID}.yaml
