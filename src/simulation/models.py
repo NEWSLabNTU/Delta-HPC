@@ -473,12 +473,6 @@ class LLMEngine(ABC):
     def running_queue(self) -> RunningRequests: ...
 
     @abstractmethod
-    def get_tpot(self, concurrent_requests: int) -> float: ...
-
-    @abstractmethod
-    def get_prefill_time(self, num_tokens: int) -> float: ...
-
-    @abstractmethod
     def update_model(
         self,
         new_owner: Agent,

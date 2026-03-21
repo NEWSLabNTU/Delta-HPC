@@ -116,15 +116,15 @@ class LLMEngineImpl(LLMEngine):
         self._mig_profile = mig_profile
 
         # Regression params
-        self.prefill_alpha = prefill_params["alpha"]
-        self.prefill_beta = prefill_params["beta"]
-        self.prefill_sigma = prefill_params["sigma"]
-        self.tpot_alpha = tpot_params["alpha"]
-        self.tpot_beta = tpot_params["beta"]
-        self.tpot_sigma = tpot_params["sigma"]
-        self.restart_time = restart_time
-        self.max_batched_tokens = max_batched_tokens
-        self.max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+        self._prefill_alpha = prefill_params["alpha"]
+        self._prefill_beta = prefill_params["beta"]
+        self._prefill_sigma = prefill_params["sigma"]
+        self._tpot_alpha = tpot_params["alpha"]
+        self._tpot_beta = tpot_params["beta"]
+        self._tpot_sigma = tpot_params["sigma"]
+        self._restart_time = restart_time
+        self._max_batched_tokens = max_batched_tokens
+        self._max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
             owner.agent_id, mig_profile
         )
 
@@ -179,15 +179,15 @@ class LLMEngineImpl(LLMEngine):
     def running_queue(self) -> RunningRequests:
         return self._running_queue
 
-    def get_tpot(self, concurrent_requests: int) -> float:
+    def _get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
-        mu = self.tpot_alpha + self.tpot_beta * concurrent_requests
-        return max(0.0, random.gauss(mu, self.tpot_sigma))
+        mu = self._tpot_alpha + self._tpot_beta * concurrent_requests
+        return max(0.0, random.gauss(mu, self._tpot_sigma))
 
-    def get_prefill_time(self, num_tokens: int) -> float:
+    def _get_prefill_time(self, num_tokens: int) -> float:
         """Calculate prefill time using polynomial regression params with Gaussian noise"""
-        mu = self.prefill_alpha + self.prefill_beta * num_tokens
-        return max(0.0, random.gauss(mu, self.prefill_sigma))
+        mu = self._prefill_alpha + self._prefill_beta * num_tokens
+        return max(0.0, random.gauss(mu, self._prefill_sigma))
 
     def update_model(
         self,
@@ -204,17 +204,17 @@ class LLMEngineImpl(LLMEngine):
         self._owner = new_owner
         
         self._model_name = model_name
-        self.max_batched_tokens = max_batched_tokens
-        self.max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+        self._max_batched_tokens = max_batched_tokens
+        self._max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
             new_owner.agent_id, self.mig_profile
         )
-        self.prefill_alpha = prefill_params["alpha"]
-        self.prefill_beta = prefill_params["beta"]
-        self.prefill_sigma = prefill_params["sigma"]
-        self.tpot_alpha = tpot_params["alpha"]
-        self.tpot_beta = tpot_params["beta"]
-        self.tpot_sigma = tpot_params["sigma"]
-        self.restart_time = restart_time
+        self._prefill_alpha = prefill_params["alpha"]
+        self._prefill_beta = prefill_params["beta"]
+        self._prefill_sigma = prefill_params["sigma"]
+        self._tpot_alpha = tpot_params["alpha"]
+        self._tpot_beta = tpot_params["beta"]
+        self._tpot_sigma = tpot_params["sigma"]
+        self._restart_time = restart_time
 
     def add_request(self, request: Request, current_time: float):
         assert (
@@ -250,7 +250,7 @@ class LLMEngineImpl(LLMEngine):
         """Move to BOOTING and schedule boot completion."""
         self._status = EngineStatus.BOOTING
         return SimulationEvent(
-            time=self._current_time + self.restart_time,
+            time=self._current_time + self._restart_time,
             event_type=EventType.ENGINE_BOOT_COMPLETE,
             payload=payload,
         )
@@ -283,7 +283,7 @@ class LLMEngineImpl(LLMEngine):
                 break
 
             # Compute budget for prefill
-            budget = self.max_batched_tokens - len(
+            budget = self._max_batched_tokens - len(
                 self._running_queue.decoding_requests
             )
             total_prefill_tokens = 0
@@ -308,7 +308,7 @@ class LLMEngineImpl(LLMEngine):
                     r.prompt_tokens + r.completion_tokens 
                     for r in self._running_queue.all_requests
                 )
-                if current_reserved + req_tokens > self.max_kv_cache_tokens:
+                if current_reserved + req_tokens > self._max_kv_cache_tokens:
                     break
 
                 req = self._waiting_queue.pop(0)
@@ -327,7 +327,7 @@ class LLMEngineImpl(LLMEngine):
 
             # Determine steps and durations
             if total_prefill_tokens > 0:
-                duration = self.get_prefill_time(total_prefill_tokens)
+                duration = self._get_prefill_time(total_prefill_tokens)
                 for req in self._running_queue.prefill_requests:
                     req.prefilled_tokens += req_prefill_tokens.get(req.id, 0)
                 for r in self._running_queue.decoding_requests:
@@ -348,7 +348,7 @@ class LLMEngineImpl(LLMEngine):
 
             else:
                 num_decodes = len(self._running_queue.decoding_requests)
-                duration = self.get_tpot(num_decodes)
+                duration = self._get_tpot(num_decodes)
 
                 for r in self._running_queue.decoding_requests:
                     r.generated_tokens += 1
