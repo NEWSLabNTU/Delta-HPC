@@ -165,8 +165,6 @@ class LLMEngineImpl(LLMEngine):
     def current_time(self) -> float:
         return self._current_time
 
-
-
     @property
     def status(self) -> EngineStatus:
         return self._status
@@ -202,7 +200,7 @@ class LLMEngineImpl(LLMEngine):
             self._owner.engines.remove(self)
         new_owner.add_engine(self)
         self._owner = new_owner
-        
+
         self._model_name = model_name
         self._max_batched_tokens = max_batched_tokens
         self._max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
@@ -305,7 +303,7 @@ class LLMEngineImpl(LLMEngine):
                 # Check KV Cache limits before pulling
                 req_tokens = req.prompt_tokens + req.completion_tokens
                 current_reserved = sum(
-                    r.prompt_tokens + r.completion_tokens 
+                    r.prompt_tokens + r.completion_tokens
                     for r in self._running_queue.all_requests
                 )
                 if current_reserved + req_tokens > self._max_kv_cache_tokens:

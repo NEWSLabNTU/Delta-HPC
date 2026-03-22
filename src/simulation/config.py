@@ -73,7 +73,9 @@ class SimulationConfig:
 
     def get_kv_cache_gb(self, agent: AgentId, mig_profile: MIGProfile) -> float:
         """Return the kv_cache_GB for a given agent + MIG profile."""
-        return self.agents_configs[agent.value]["mig"][mig_profile.string]["kv_cache_GB"]
+        return self.agents_configs[agent.value]["mig"][mig_profile.string][
+            "kv_cache_GB"
+        ]
 
     def get_kv_per_token_kb(self, model_name: str) -> float:
         """Return the kv_per_token_KB for a given model."""

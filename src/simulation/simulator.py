@@ -197,8 +197,8 @@ class ResourceManager:
             receiver = agents[1 - i]
 
             active_vram = sum(
-                e.mig_profile.vram 
-                for e in giver.engines 
+                e.mig_profile.vram
+                for e in giver.engines
                 if e.status == EngineStatus.ACTIVE
             )
 
@@ -377,8 +377,7 @@ class SimulatorImpl(Simulator):
 
     def has_active_work(self) -> bool:
         if any(
-            e.event_type != EventType.RESOURCE_MANAGER_TRIGGER
-            for e in self._events
+            e.event_type != EventType.RESOURCE_MANAGER_TRIGGER for e in self._events
         ):
             return True
         if any(
@@ -438,7 +437,7 @@ class SimulatorImpl(Simulator):
         engine = self._engines[engine_id]
 
         new_model = g.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
-        
+
         giver_id = engine.owner.agent_id
         receiver = self._agents[receiver_id]
 
@@ -696,11 +695,8 @@ class SimulatorImpl(Simulator):
     def _peak_next_stopping_evt(self, agent_id: AgentId) -> float | None:
         for evt in self._events:
             if (
-                (
-                    evt.event_type == EventType.REQUEST_ARRIVAL
-                    and evt.payload.get("target_agent") == agent_id
-                )
-                or evt.event_type == EventType.RESOURCE_MANAGER_TRIGGER
-            ):
+                evt.event_type == EventType.REQUEST_ARRIVAL
+                and evt.payload.get("target_agent") == agent_id
+            ) or evt.event_type == EventType.RESOURCE_MANAGER_TRIGGER:
                 return evt.time
         return None

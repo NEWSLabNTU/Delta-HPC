@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 
 from sortedcontainers import SortedList
 
-
 __all__ = [
     "EventType",
     "Request",
@@ -42,6 +41,7 @@ type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 class MIGProfileValue:
     size: int
     vram: int
+
 
 class MIGProfile(Enum):
     MIG_7G_40GB = MIGProfileValue(7, 40)
