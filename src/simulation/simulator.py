@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 from tqdm import tqdm
-from dataclasses import dataclass
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
@@ -10,164 +9,19 @@ from models import *
 import global_vars as g
 from objects import LLMEngineImpl
 from logger import SimulationLoggerImpl
-
-
-@dataclass
-class PendingTransfer:
-    """
-    Represents an ongoing VRAM transfer request from a giver to a receiver.
-    Holds the required VRAM amount and a flag indicating if a MIG split is currently in progress.
-    """
-
-    amount: int
-    giver_id: AgentId
-    receiver_id: AgentId
-    waiting_for_split: bool = False
-
-
-class Worker:
-    def __init__(self, simulator: Simulator, resource_manager: ResourceManager):
-        self.simulator = simulator
-        self.resource_manager = resource_manager
-
-    def queue_transfer(
-        self, amount: int, giver_id: AgentId, receiver_id: AgentId, current_time: float
-    ):
-        """
-        Adds a new transfer request to the queue and immediately attempts to process it.
-        """
-        self.resource_manager.pending_transfers.append(
-            PendingTransfer(amount, giver_id, receiver_id)
-        )
-        self.step(current_time)
-
-    def step(self, current_time: float):
-        """
-        Processes the next pending VRAM transfer in the queue.
-        Attempts to find an exact engine match, a direct split match, or initiates a generic split
-        to break down larger engines until the required VRAM amount can be seamlessly transferred.
-        """
-        if not self.resource_manager.pending_transfers:
-            return
-
-        t = self.resource_manager.pending_transfers[0]
-        giver = self.simulator.agents[t.giver_id]
-        receiver = self.simulator.agents[t.receiver_id]
-
-        exact_matches = [
-            e
-            for e in giver.engines
-            if e.status == EngineStatus.ACTIVE and e.mig_profile.vram == t.amount
-        ]
-        if exact_matches:
-            engine_to_shift = min(
-                exact_matches,
-                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
-            )
-            shutdown_payload: ShutdownReallocatePayload = {
-                "engine_id": engine_to_shift.engine_id,
-                "purpose": OperationPurpose.REALLOCATE,
-                "receiver_id": receiver.agent_id,
-            }
-            self.simulator.logger.log_vram_transfer(
-                current_time,
-                giver.agent_id,
-                receiver.agent_id,
-                t.amount,
-                engine_to_shift.engine_id,
-            )
-            evt = engine_to_shift.trigger_shutdown(shutdown_payload, current_time)
-            if evt:
-                self.simulator.events.add(evt)
-            self.resource_manager.pending_transfers.pop(0)
-            return
-
-        larger_engines = [
-            e
-            for e in giver.engines
-            if e.status == EngineStatus.ACTIVE and e.mig_profile.vram > t.amount
-        ]
-        if not larger_engines:
-            return
-
-        engine_to_split = None
-        transfer_index = None
-        for e in larger_engines:
-            if e.mig_profile in g.MIG_MERGE_RULES.inverse:
-                profiles = list(g.MIG_MERGE_RULES.inverse[e.mig_profile])
-                for i, p in enumerate(profiles):
-                    if p.vram == t.amount:
-                        engine_to_split = e
-                        transfer_index = i
-                        break
-            if engine_to_split:
-                break
-
-        if engine_to_split:
-            profiles = list(g.MIG_MERGE_RULES.inverse[engine_to_split.mig_profile])
-            split_payload: ShutdownSplitPayload = {
-                "engine_id": engine_to_split.engine_id,
-                "purpose": OperationPurpose.SPLIT,
-                "new_profiles": profiles,
-                "agent_id": giver.agent_id,
-                "gpu": engine_to_split.gpu,
-                "transfer_index": transfer_index,
-                "transfer_receiver_id": receiver.agent_id,
-            }
-            evt = engine_to_split.trigger_shutdown(split_payload, current_time)
-            if evt:
-                self.simulator.events.add(evt)
-            self.simulator.logger.log_mig_split_trigger(
-                current_time, engine_to_split.engine_id, engine_to_split.gpu
-            )
-            self.simulator.logger.log_vram_transfer(
-                current_time,
-                giver.agent_id,
-                receiver.agent_id,
-                t.amount,
-                engine_to_split.engine_id,
-            )
-            # The exact child will be transferred directly upon boot; consume the pending transfer.
-            self.resource_manager.pending_transfers.pop(0)
-            return
-
-        # If a split is already underway for this transfer, wait until its children boot.
-        if t.waiting_for_split:
-            return
-
-        # 3. Schedule a normal split of any larger engine to break it down.
-        # Choose the engine that has the closest VRAM amount to the target amount.
-        engine_to_split = min(larger_engines, key=lambda e: e.mig_profile.vram)
-        if engine_to_split.mig_profile in g.MIG_MERGE_RULES.inverse:
-            profiles = list(g.MIG_MERGE_RULES.inverse[engine_to_split.mig_profile])
-            split_payload_normal: ShutdownSplitPayload = {
-                "engine_id": engine_to_split.engine_id,
-                "purpose": OperationPurpose.SPLIT,
-                "new_profiles": profiles,
-                "agent_id": giver.agent_id,
-                "gpu": engine_to_split.gpu,
-                "transfer_index": None,
-                "transfer_receiver_id": None,
-            }
-            evt = engine_to_split.trigger_shutdown(split_payload_normal, current_time)
-            if evt:
-                self.simulator.events.add(evt)
-            self.simulator.logger.log_mig_split_trigger(
-                current_time, engine_to_split.engine_id, engine_to_split.gpu
-            )
-            t.waiting_for_split = True
+from management import WorkerImpl, EnvironmentStateImpl
 
 
 class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
         self.trigger_interval = 3600.0
-        self.next_vram_transfer_time = 3600.0
-        self.next_mig_trigger_time = 1800.0
+        self.next_vram_transfer_time = 1800.0
+        self.next_mig_trigger_time = 3600.0
         self.pending_transfers: List[PendingTransfer] = []
-        self.worker = Worker(simulator, self)
+        self.worker = WorkerImpl(simulator, self)
 
-    def act(self, current_time: float):
+    def act(self, current_time: float, state: EnvironmentStateData):
         """
         Periodically checks if it is time to trigger VRAM transfer or MIG split/merge.
         """
@@ -284,6 +138,7 @@ class ResourceManager:
                 "new_profile": data["new_profile"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
+                "receiver_id": None,
             }
             for e in [e1, e2]:
                 per_engine_payload: ShutdownMergePayload = {
@@ -330,6 +185,8 @@ class SimulatorImpl(Simulator):
         self.total_requests = 0
 
         self.action_interval = g.SIM_CONFIG.get_rl_action_interval()
+        self.environment_state = EnvironmentStateImpl(self.action_interval)
+        self.environment_state.reset_for_next_interval(0.0, self._agents, self._engines)
 
         # Schedule Resource Manager Action at action_interval
         self._events.add(
@@ -421,7 +278,16 @@ class SimulatorImpl(Simulator):
                     self._events.add(evt)
 
     def _handle_resource_manager_trigger(self):
-        self.resource_manager.act(self._current_time)
+        self.environment_state.record_queue_length_advance(
+            self._current_time, self._agents
+        )
+        state_data = self.environment_state.get_state(self)
+        self._logger.log_environment_state(self._current_time, state_data)
+        self.resource_manager.act(self._current_time, state_data)
+        self.environment_state.reset_for_next_interval(
+            self._current_time, self._agents, self._engines
+        )
+
         self._events.add(
             SimulationEvent(
                 time=self._current_time + self.action_interval,
@@ -468,18 +334,21 @@ class SimulatorImpl(Simulator):
         payload["drained_ids"].append(engine_id)
 
         if len(payload["drained_ids"]) == len(payload["merge_engine_ids"]):
-            agent = self._agents[payload["agent_id"]]
+            giver_agent = self._agents[payload["agent_id"]]
             for eid in payload["merge_engine_ids"]:
                 e = self._engines.pop(eid, None)
-                if e is not None and e in agent.engines:
-                    agent.engines.remove(e)
+                if e is not None and e in giver_agent.engines:
+                    giver_agent.engines.remove(e)
 
             new_profile = payload["new_profile"]
             new_eid = (
                 f"GPU_{payload['gpu']}_{new_profile.string}_{int(self._current_time)}"
             )
+            # If a receiver was specified (merge-for-transfer), boot directly on receiver
+            receiver_id = payload.get("receiver_id")
+            target_agent = self._agents[receiver_id] if receiver_id else giver_agent
             new_eng = LLMEngineImpl.create(
-                payload["gpu"], new_eid, agent, new_profile, self._current_time
+                payload["gpu"], new_eid, target_agent, new_profile, self._current_time
             )
 
             boot_plain: BootPlainPayload = {
@@ -488,7 +357,7 @@ class SimulatorImpl(Simulator):
             }
             self._events.add(new_eng.trigger_boot(boot_plain))
             self._engines[new_eid] = new_eng
-            agent.add_engine(new_eng)
+            target_agent.add_engine(new_eng)
             self._logger.log_mig_merge_complete(self._current_time, new_eid)
 
     def _handle_shutdown_complete_split(self, payload: ShutdownSplitPayload):
@@ -542,6 +411,7 @@ class SimulatorImpl(Simulator):
         self,
         payload: ShutdownPayload,
     ):
+        self.environment_state.register_reconfig()
         purpose = payload["purpose"]
         match purpose:
             case OperationPurpose.REALLOCATE:
@@ -565,6 +435,7 @@ class SimulatorImpl(Simulator):
         Activates the engine and processes the agent's waiting queue.
         Returns early if sibling engines from a split are still booting.
         """
+        self.environment_state.register_reconfig()
         engine_id = payload["engine_id"]
 
         engine = self._engines[engine_id]
@@ -590,12 +461,14 @@ class SimulatorImpl(Simulator):
             still_booting = any(
                 self._engines[sid].status == EngineStatus.BOOTING
                 for sid in bd_split["sibling_engine_ids"]
-                if sid != engine_id and sid in self._engines
+                if sid in self._engines
+                and sid != engine_id
+                and self._engines[sid].owner == agent
             )
             if still_booting:
                 return  # Wait for remaining sibling engines
 
-            self.resource_manager.worker.step(self._current_time)
+        self.resource_manager.worker.step(self._current_time)
 
         agent.process_waiting_queue(self._current_time)
         for e in agent.engines:
@@ -614,6 +487,8 @@ class SimulatorImpl(Simulator):
     def _handle_request_arrival(self, payload: RequestArrivalPayload):
         req = payload["request"]
         agent_id = payload["target_agent"]
+
+        self.environment_state.register_arrival(agent_id, self._current_time)
 
         agent = self._agents[agent_id]
         engine = agent.dispatch(req, self._current_time)
@@ -662,6 +537,9 @@ class SimulatorImpl(Simulator):
                     break
 
             current_event = self._events.pop(0)
+            self.environment_state.record_queue_length_advance(
+                current_event.time, self._agents
+            )
             self._current_time = current_event.time
 
             match current_event.event_type:
@@ -681,6 +559,10 @@ class SimulatorImpl(Simulator):
                     self._handle_engine_step_complete(
                         cast(EngineStepPayload, current_event.payload)
                     )
+
+            self.environment_state.record_queue_length_advance(
+                self._current_time, self._agents
+            )
 
             completed_now = sum(
                 len(ag.completed_requests) for ag in self._agents.values()

@@ -177,6 +177,19 @@ class LLMEngineImpl(LLMEngine):
     def running_queue(self) -> RunningRequests:
         return self._running_queue
 
+    @property
+    def current_kv_utilization(self) -> float:
+        current = 0
+        for req in self._running_queue.all_requests:
+            match req.state:
+                case RequestState.PREFILLING:
+                    current += req.prefilled_tokens
+                case RequestState.DECODING:
+                    current += req.prompt_tokens + req.generated_tokens
+                case RequestState.PENDING | RequestState.COMPLETED:
+                    pass
+        return current / self._max_kv_cache_tokens
+
     def _get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
         mu = self._tpot_alpha + self._tpot_beta * concurrent_requests

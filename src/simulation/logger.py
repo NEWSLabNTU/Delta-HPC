@@ -1,3 +1,4 @@
+import json
 import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -17,6 +18,26 @@ class SimulationLoggerImpl(SimulationLogger):
         # Use datetime to create a unique file name
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.log_file = self.log_dir / f"simulation-{timestamp}.log"
+        self.env_log_file = self.log_dir / f"env_state-{timestamp}.jsonl"
+
+    def log_environment_state(self, current_time: float, state: EnvironmentStateData):
+        if not self.enabled:
+            return
+
+        state_dict = {}
+        for k, v in state.items():
+            if isinstance(v, dict):
+                cleaned_v = {
+                    str(key.value if hasattr(key, "value") else key): val
+                    for key, val in v.items()
+                }
+                state_dict[k] = cleaned_v
+            else:
+                state_dict[k] = v
+
+        record = {"time": current_time, "state": state_dict}
+        with open(self.env_log_file, "a") as f:
+            f.write(json.dumps(record) + "\n")
 
     def log(self, message: str):
         if not self.enabled:

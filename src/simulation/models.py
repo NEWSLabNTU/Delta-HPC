@@ -32,6 +32,10 @@ __all__ = [
     "BootPlainPayload",
     "BootReallocatePayload",
     "BootSplitPayload",
+    "PendingTransfer",
+    "EnvironmentStateData",
+    "EnvironmentState",
+    "Worker",
 ]
 
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
@@ -44,11 +48,11 @@ class MIGProfileValue:
 
 
 class MIGProfile(Enum):
-    MIG_7G_40GB = MIGProfileValue(7, 40)
-    MIG_4G_20GB = MIGProfileValue(4, 20)
-    MIG_3G_20GB = MIGProfileValue(3, 20)
-    MIG_2G_10GB = MIGProfileValue(2, 10)
     MIG_1G_10GB = MIGProfileValue(1, 10)
+    MIG_2G_10GB = MIGProfileValue(2, 10)
+    MIG_3G_20GB = MIGProfileValue(3, 20)
+    MIG_4G_20GB = MIGProfileValue(4, 20)
+    MIG_7G_40GB = MIGProfileValue(7, 40)
 
     @property
     def string(self) -> str:
@@ -61,6 +65,10 @@ class MIGProfile(Enum):
     @property
     def vram(self) -> int:
         return self.value.vram
+
+    @property
+    def idx(self) -> int:
+        return list(MIGProfile).index(self)
 
 
 class RequestState(Enum):
@@ -285,6 +293,11 @@ class SimulationLogger(ABC):
     @abstractmethod
     def log_mig_split_complete(self, current_time: float, engine_id: str) -> None: ...
 
+    @abstractmethod
+    def log_environment_state(
+        self, current_time: float, state: EnvironmentStateData
+    ) -> None: ...
+
 
 # --- Payloads and Events ---
 
@@ -329,6 +342,8 @@ class ShutdownMergePayload(TypedDict):
     new_profile: MIGProfile
     agent_id: AgentId
     gpu: int
+    # If set, the merged engine boots directly on the receiver (VRAM transfer via merge)
+    receiver_id: Optional[AgentId]
 
 
 class ShutdownSplitPayload(TypedDict):
@@ -443,9 +458,13 @@ class LLMEngine(ABC):
     @property
     @abstractmethod
     def owner(self) -> Agent: ...
+
     @owner.setter
     @abstractmethod
     def owner(self, value: Agent) -> None: ...
+
+    @property
+    def current_kv_utilization(self) -> float: ...
 
     @property
     @abstractmethod
@@ -538,3 +557,63 @@ class Simulator(ABC):
 
     @abstractmethod
     def run(self) -> None: ...
+
+
+# --- Management Interfaces ---
+
+
+@dataclass
+class PendingTransfer:
+    amount: int
+    giver_id: AgentId
+    receiver_id: AgentId
+    waiting_for_split: bool = False
+
+
+class EnvironmentStateData(TypedDict):
+    arrival_rate: Dict[AgentId, float]
+    arrival_trend: Dict[AgentId, float]
+    avg_queue_length: Dict[AgentId, float]
+    queue_delta: Dict[AgentId, int]
+    p99_ttft: Dict[AgentId, float]
+    kv_cache_utilization: Dict[int, List[float]]
+    mig_config_encoding: Dict[int, List[int]]
+    recovery_flag: bool
+
+
+class Worker(ABC):
+    @abstractmethod
+    def queue_transfer(
+        self, amount: int, giver_id: AgentId, receiver_id: AgentId, current_time: float
+    ) -> None: ...
+
+    @abstractmethod
+    def step(self, current_time: float) -> None: ...
+
+
+class EnvironmentState(ABC):
+    @property
+    @abstractmethod
+    def action_interval(self) -> float: ...
+
+    @abstractmethod
+    def reset_for_next_interval(
+        self,
+        current_time: float,
+        agents: Dict[AgentId, Agent],
+        engines: Dict[str, LLMEngine],
+    ) -> None: ...
+
+    @abstractmethod
+    def record_queue_length_advance(
+        self, current_time: float, agents: Dict[AgentId, Agent]
+    ) -> None: ...
+
+    @abstractmethod
+    def register_arrival(self, agent_id: AgentId, time: float) -> None: ...
+
+    @abstractmethod
+    def register_reconfig(self) -> None: ...
+
+    @abstractmethod
+    def get_state(self, simulator: Simulator) -> EnvironmentStateData: ...
