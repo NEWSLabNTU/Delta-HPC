@@ -42,7 +42,7 @@ def init_tokens_map(base_dir: Path) -> TokensMapType:
     tokens_map: TokensMapType = {}
     for agent_id in AgentId:
         model_map: ModelsMapType = {}
-        agent_cfg = SIM_CONFIG.simulation_configs[agent_id.value]
+        agent_cfg = SIM_CONFIG.agents_configs[agent_id.value]
         seen_models: Set[str] = set()
         for mig_cfg in agent_cfg["mig"].values():
             model_name = mig_cfg["model"]

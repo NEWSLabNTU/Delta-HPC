@@ -162,8 +162,22 @@ class ResourceManager:
     def __init__(self, simulator: "Simulator"):
         self.simulator = simulator
         self.trigger_interval = 3600.0
+        self.next_vram_transfer_time = 3600.0
+        self.next_mig_trigger_time = 1800.0
         self.pending_transfers: List[PendingTransfer] = []
         self.worker = Worker(simulator, self)
+
+    def act(self, current_time: float):
+        """
+        Periodically checks if it is time to trigger VRAM transfer or MIG split/merge.
+        """
+        if current_time >= self.next_mig_trigger_time:
+            self.trigger_mig(current_time)
+            self.next_mig_trigger_time += self.trigger_interval
+
+        if current_time >= self.next_vram_transfer_time:
+            self.trigger_vram_transfer(current_time)
+            self.next_vram_transfer_time += self.trigger_interval
 
     def trigger_vram_transfer(self, current_time: float):
         """
@@ -315,19 +329,13 @@ class SimulatorImpl(Simulator):
         self._logger = SimulationLoggerImpl(enabled=not no_log)
         self.total_requests = 0
 
-        # Schedule VRAM Transfer at 3600.0
+        self.action_interval = g.SIM_CONFIG.get_rl_action_interval()
+
+        # Schedule Resource Manager Action at action_interval
         self._events.add(
             SimulationEvent(
-                time=3600.0,
-                event_type=EventType.VRAM_TRANSFER_TRIGGER,
-                payload={},
-            ),
-        )
-        # Schedule MIG at 1800.0
-        self._events.add(
-            SimulationEvent(
-                time=1800.0,
-                event_type=EventType.MIG_TRIGGER,
+                time=self.action_interval,
+                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
                 payload={},
             ),
         )
@@ -369,7 +377,7 @@ class SimulatorImpl(Simulator):
 
     def has_active_work(self) -> bool:
         if any(
-            e.event_type not in [EventType.VRAM_TRANSFER_TRIGGER, EventType.MIG_TRIGGER]
+            e.event_type != EventType.RESOURCE_MANAGER_TRIGGER
             for e in self._events
         ):
             return True
@@ -413,27 +421,12 @@ class SimulatorImpl(Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_vram_transfer_trigger(self):
-        """
-        Event handler for VRAM_TRANSFER_TRIGGER.
-        Calls the resource manager to attempt a transfer and re-schedules the next trigger.
-        """
-        self.resource_manager.trigger_vram_transfer(self._current_time)
+    def _handle_resource_manager_trigger(self):
+        self.resource_manager.act(self._current_time)
         self._events.add(
             SimulationEvent(
-                time=self._current_time + self.resource_manager.trigger_interval,
-                event_type=EventType.VRAM_TRANSFER_TRIGGER,
-                payload={},
-            )
-        )
-        self._step_draining_or_active_engines()
-
-    def _handle_mig_trigger(self):
-        self.resource_manager.trigger_mig(self._current_time)
-        self._events.add(
-            SimulationEvent(
-                time=self._current_time + self.resource_manager.trigger_interval,
-                event_type=EventType.MIG_TRIGGER,
+                time=self._current_time + self.action_interval,
+                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
                 payload={},
             )
         )
@@ -673,10 +666,8 @@ class SimulatorImpl(Simulator):
             self._current_time = current_event.time
 
             match current_event.event_type:
-                case EventType.VRAM_TRANSFER_TRIGGER:
-                    self._handle_vram_transfer_trigger()
-                case EventType.MIG_TRIGGER:
-                    self._handle_mig_trigger()
+                case EventType.RESOURCE_MANAGER_TRIGGER:
+                    self._handle_resource_manager_trigger()
                 case EventType.ENGINE_SHUTDOWN_COMPLETE:
                     self._handle_shutdown_complete(
                         cast(ShutdownPayload, current_event.payload)
@@ -709,8 +700,7 @@ class SimulatorImpl(Simulator):
                     evt.event_type == EventType.REQUEST_ARRIVAL
                     and evt.payload.get("target_agent") == agent_id
                 )
-                or evt.event_type == EventType.MIG_TRIGGER
-                or evt.event_type == EventType.VRAM_TRANSFER_TRIGGER
+                or evt.event_type == EventType.RESOURCE_MANAGER_TRIGGER
             ):
                 return evt.time
         return None

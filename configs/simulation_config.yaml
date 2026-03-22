@@ -2,25 +2,16 @@ simulation:
   initial_state:
     engines:
       - gpu: 0
-        mig: 4g.20gb
-        agent: CodingAgent
-      - gpu: 0
-        mig: 2g.10gb
-        agent: CodingAgent
-      - gpu: 0
-        mig: 1g.10gb
+        mig: 7g.40gb
         agent: CodingAgent
       - gpu: 1
-        mig: 4g.20gb
-        agent: RAGAgent
-      - gpu: 1
-        mig: 2g.10gb
-        agent: RAGAgent
-      - gpu: 1
-        mig: 1g.10gb
+        mig: 7g.40gb
         agent: RAGAgent
 
-  configs:
+  resource-manager:
+    action_interval: 120
+
+  agents:
     CodingAgent:
       mig:
         7g.40gb:
