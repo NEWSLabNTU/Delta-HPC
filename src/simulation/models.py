@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from enum import Enum
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple, Union, TypedDict, Mapping, Literal
-from abc import ABC, abstractmethod
 
 from sortedcontainers import SortedList
 
@@ -15,6 +15,8 @@ __all__ = [
     "Agent",
     "AgentId",
     "MIGProfile",
+    "MIGConfigType",
+    "MIGProfileRule",
     "SimulationEvent",
     "LLMEngine",
     "Simulator",
@@ -29,10 +31,7 @@ __all__ = [
     "ShutdownMergePayload",
     "ShutdownSplitPayload",
     "BootPayload",
-    "BootPlainPayload",
-    "BootReallocatePayload",
-    "BootSplitPayload",
-    "PendingTransfer",
+    "TransferDetails",
     "EnvironmentStateData",
     "EnvironmentState",
     "Worker",
@@ -69,6 +68,9 @@ class MIGProfile(Enum):
     @property
     def idx(self) -> int:
         return list(MIGProfile).index(self)
+
+
+type MIGConfigType = Tuple[MIGProfile, ...]
 
 
 class RequestState(Enum):
@@ -253,7 +255,6 @@ class SimulationLogger(ABC):
         req_id: str,
         target_agent: AgentId,
         assigned_engine: Optional[LLMEngine],
-        next_stopping_evt_time: Optional[float],
     ) -> None: ...
 
     @abstractmethod
@@ -263,7 +264,12 @@ class SimulationLogger(ABC):
         giver_id: AgentId,
         receiver_id: AgentId,
         amount: int,
-        engine_id: str,
+        eids: List[str],
+    ) -> None: ...
+
+    @abstractmethod
+    def log_discard_vram_transfer(
+        self, current_time: float, detail: TransferDetails
     ) -> None: ...
 
     @abstractmethod
@@ -271,13 +277,11 @@ class SimulationLogger(ABC):
         self,
         current_time: float,
         engine_id: str,
-        giver_id: Optional[AgentId] = None,
-        receiver_id: Optional[AgentId] = None,
     ) -> None: ...
 
     @abstractmethod
     def log_mig_merge_trigger(
-        self, current_time: float, e1_id: str, e2_id: str, gpu: int
+        self, current_time: float, eids: List[str], gpu: int
     ) -> None: ...
 
     @abstractmethod
@@ -336,7 +340,7 @@ class ShutdownMergePayload(TypedDict):
     engine_id: str
     purpose: OperationPurpose
     # Identifiers of both engines participating in the merge
-    merge_engine_ids: Tuple[str, str]
+    merge_engine_ids: Tuple[str, ...]
     # IDs that have already drained (grows as each engine shuts down)
     drained_ids: List[str]
     new_profile: MIGProfile
@@ -354,8 +358,9 @@ class ShutdownSplitPayload(TypedDict):
     new_profiles: List[MIGProfile]
     agent_id: AgentId
     gpu: int
-    transfer_index: Optional[int]
-    transfer_receiver_id: Optional[AgentId]
+    # If set, it's VRAM transfer via split
+    receiver_id: Optional[AgentId]
+    received_profile: Optional[MIGProfile]
 
 
 ShutdownPayload = Union[
@@ -368,35 +373,13 @@ ShutdownPayload = Union[
 # ENGINE_BOOT_COMPLETE — one variant per boot context
 
 
-class BootPlainPayload(TypedDict):
+class BootPayload(TypedDict):
     """ENGINE_BOOT_COMPLETE with no extra context (e.g. after a merge)."""
 
     engine_id: str
     purpose: OperationPurpose
-
-
-class BootReallocatePayload(TypedDict):
-    """ENGINE_BOOT_COMPLETE after a reallocate shutdown."""
-
-    engine_id: str
-    purpose: OperationPurpose
-    giver_id: AgentId
-    receiver_id: AgentId
-
-
-class BootSplitPayload(TypedDict):
-    """ENGINE_BOOT_COMPLETE for one of the child engines from a split."""
-
-    engine_id: str
-    purpose: OperationPurpose
-    new_profiles: List[MIGProfile]
-    agent_id: AgentId
-    gpu: int
     # IDs of all engines spawned by this split (used to detect when all are booted)
-    sibling_engine_ids: List[str]
-
-
-BootPayload = Union[BootPlainPayload, BootReallocatePayload, BootSplitPayload]
+    sibling_engine_ids: List[str] | None
 
 
 type PayloadType = Union[
@@ -563,11 +546,10 @@ class Simulator(ABC):
 
 
 @dataclass
-class PendingTransfer:
+class TransferDetails:
     amount: int
     giver_id: AgentId
     receiver_id: AgentId
-    waiting_for_split: bool = False
 
 
 class EnvironmentStateData(TypedDict):
@@ -583,12 +565,7 @@ class EnvironmentStateData(TypedDict):
 
 class Worker(ABC):
     @abstractmethod
-    def queue_transfer(
-        self, amount: int, giver_id: AgentId, receiver_id: AgentId, current_time: float
-    ) -> None: ...
-
-    @abstractmethod
-    def step(self, current_time: float) -> None: ...
+    def start_transfer(self, current_time: float, details: TransferDetails) -> None: ...
 
 
 class EnvironmentState(ABC):
@@ -617,3 +594,15 @@ class EnvironmentState(ABC):
 
     @abstractmethod
     def get_state(self, simulator: Simulator) -> EnvironmentStateData: ...
+
+
+class MIGProfileRule(ABC):
+    @abstractmethod
+    def get_possible_merges(
+        self, agent: Agent
+    ) -> List[Tuple[List[LLMEngine], MIGProfile]]: ...
+
+    @abstractmethod
+    def get_possible_splits(
+        self, agent: Agent
+    ) -> List[Tuple[LLMEngine, List[MIGProfile]]]: ...

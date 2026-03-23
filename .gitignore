@@ -9,12 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
-vllm/
 test*
 assets/*
 results/
 profiling_results
 logs/
+.vscode/
 
 *.zip
 *.gz

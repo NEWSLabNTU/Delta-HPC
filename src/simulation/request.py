@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from models import *
+from src.simulation.models import *
 
 
 class RequestImpl(Request):

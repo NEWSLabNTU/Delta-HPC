@@ -5,7 +5,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Literal
 
-from models import AgentId, ParamDict, MIGProfile
+from src.simulation.models import *
 
 
 @dataclass

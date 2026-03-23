@@ -1,9 +1,9 @@
 import json
 import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
-from models import *
+from src.simulation.models import *
 
 
 class SimulationLoggerImpl(SimulationLogger):
@@ -27,15 +27,15 @@ class SimulationLoggerImpl(SimulationLogger):
         state_dict = {}
         for k, v in state.items():
             if isinstance(v, dict):
-                cleaned_v = {
-                    str(key.value if hasattr(key, "value") else key): val
-                    for key, val in v.items()
+                cleaned_v: Dict[str, Any] = {
+                    str(key.value if hasattr(key, "value") else key): val  # type: ignore
+                    for key, val in v.items()  # type: ignore
                 }
                 state_dict[k] = cleaned_v
             else:
                 state_dict[k] = v
 
-        record = {"time": current_time, "state": state_dict}
+        record: Dict[str, Any] = {"time": current_time, "state": state_dict}
         with open(self.env_log_file, "a") as f:
             f.write(json.dumps(record) + "\n")
 
@@ -66,16 +66,9 @@ class SimulationLoggerImpl(SimulationLogger):
         if not self.enabled:
             return
 
-        owner_id = None
-        for aid, agent in agents.items():
-            if stepping_engine in agent.engines:
-                owner_id = aid
-                break
-        assert owner_id is not None
-
         lines = [
             f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
-            f"Stepping: {owner_id.value}-{stepping_engine.engine_id} | "
+            f"Stepping: {stepping_engine.owner.agent_id.value}-{stepping_engine.engine_id} | "
             f"Next Arrival: {next_arrival_time}"
         ]
         for aid, agent in agents.items():
@@ -131,7 +124,6 @@ class SimulationLoggerImpl(SimulationLogger):
         req_id: str,
         target_agent: AgentId,
         assigned_engine: Optional[LLMEngine],
-        next_stopping_evt_time: Optional[float],
     ):
         """Logs a request arrival event."""
         if not self.enabled:
@@ -143,8 +135,7 @@ class SimulationLoggerImpl(SimulationLogger):
         )
         msg = (
             f"[{current_time:.4f}] EVENT: REQUEST_ARRIVAL | "
-            f"ReqId: {req_id} | Agent: {target_agent.value} | Engine: {eng_str} | "
-            f"Next StoppingEvt: {next_stopping_evt_time}"
+            f"ReqId: {req_id} | Agent: {target_agent.value} | Engine: {eng_str}"
         )
         self.log(msg)
 
@@ -154,7 +145,7 @@ class SimulationLoggerImpl(SimulationLogger):
         giver_id: AgentId,
         receiver_id: AgentId,
         amount: int,
-        engine_id: str,
+        eids: List[str],
     ):
         """Logs a VRAM transfer event."""
         if not self.enabled:
@@ -162,7 +153,16 @@ class SimulationLoggerImpl(SimulationLogger):
         msg = (
             f"[{current_time:.4f}] EVENT: VRAM_TRANSFER | "
             f"Giver: {giver_id.value} | Receiver: {receiver_id.value} | "
-            f"Amount: {amount}GB | Source Engine: {engine_id}"
+            f"Amount: {amount}GB | Source Engine: {", ".join(eids)}"
+        )
+        self.log(msg)
+
+    def log_discard_vram_transfer(self, current_time: float, detail: TransferDetails):
+        if not self.enabled:
+            return
+        msg = (
+            f"[{current_time:.4f}] VRAM TRANSFER DROP | "
+            f"GIVER: {detail.giver_id} | RECEIVER: {detail.receiver_id} | AMOUNT: {detail.amount}"
         )
         self.log(msg)
 
@@ -170,24 +170,18 @@ class SimulationLoggerImpl(SimulationLogger):
         self,
         current_time: float,
         engine_id: str,
-        giver_id: Optional[AgentId] = None,
-        receiver_id: Optional[AgentId] = None,
     ):
         """Logs an engine boot complete event with giver and receiver."""
         if not self.enabled:
             return
         msg = f"[{current_time:.4f}] EVENT: ENGINE_BOOT_COMPLETE | Engine: {engine_id}"
-        if giver_id and receiver_id:
-            msg += f" | Giver: {giver_id.value} | Receiver: {receiver_id.value}"
         self.log(msg)
 
-    def log_mig_merge_trigger(
-        self, current_time: float, e1_id: str, e2_id: str, gpu: int
-    ):
+    def log_mig_merge_trigger(self, current_time: float, eids: List[str], gpu: int):
         if not self.enabled:
             return
         self.log(
-            f"[{current_time:.4f}] EVENT: MIG_MERGE_TRIGGER | Engines: {e1_id}, {e2_id} | GPU: {gpu}"
+            f"[{current_time:.4f}] EVENT: MIG_MERGE_TRIGGER | Engines: {", ".join(eids)} | GPU: {gpu}"
         )
 
     def log_mig_split_trigger(self, current_time: float, engine_id: str, gpu: int):

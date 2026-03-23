@@ -2,11 +2,12 @@ import random
 import argparse
 from typing import Dict, List
 
-from models import *
-import global_vars as g
-from request import RequestImpl
-from simulator import SimulatorImpl
-from objects import AgentImpl, LLMEngineImpl
+from src.simulation.models import *
+import src.simulation.global_vars as g
+from src.simulation.request import RequestImpl
+from src.simulation.simulator import SimulatorImpl
+from src.simulation.engine import LLMEngineImpl
+from src.simulation.agent import AgentImpl
 
 
 def get_mig_profile(profile_str: str) -> MIGProfile:

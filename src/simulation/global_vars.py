@@ -4,61 +4,12 @@ import yaml
 from pathlib import Path
 from typing import Dict, Tuple, Set
 
-from models import AgentId, MIGProfile, LLMEngine, EngineStatus
-from config import SimulationConfig
-from bidict import bidict
-from typing import Dict, Tuple, Set, List, Optional
+from src.simulation.models import *
+from src.simulation.config import SimulationConfig
+from src.simulation.mig_rule import MIGProfileRuleImpl
 
 type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
 type TokensMapType = Dict[AgentId, ModelsMapType]
-
-# Maps (MIGProfile, MIGProfile) <-> Merged MIGProfile
-# Always use canonical sorted tuple (by size descending) for lookups
-MIG_MERGE_RULES: bidict[Tuple[MIGProfile, MIGProfile], MIGProfile] = bidict(
-    {
-        (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB): MIGProfile.MIG_7G_40GB,
-        (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_1G_10GB): MIGProfile.MIG_3G_20GB,
-        (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_2G_10GB): MIGProfile.MIG_4G_20GB,
-    }
-)
-
-
-type MergeCandidates = List[Tuple[LLMEngine, LLMEngine, MIGProfile]]
-type SplitCandidates = List[Tuple[LLMEngine, int, List[MIGProfile]]]
-
-
-def find_merge_candidates(engines: List[LLMEngine]) -> MergeCandidates:
-    """Return all valid (e1, e2, merged_profile) pairs from ACTIVE engines on the same GPU."""
-    candidates: MergeCandidates = []
-    by_gpu: Dict[int, List[LLMEngine]] = {}
-    for e in engines:
-        if e.status == EngineStatus.ACTIVE:
-            by_gpu.setdefault(e.gpu, []).append(e)
-    for gpu_engines in by_gpu.values():
-        n = len(gpu_engines)
-        for i in range(n):
-            for j in range(i + 1, n):
-                e1, e2 = gpu_engines[i], gpu_engines[j]
-                canonical = (
-                    (e1.mig_profile, e2.mig_profile)
-                    if e1.mig_profile.size > e2.mig_profile.size
-                    else (e2.mig_profile, e1.mig_profile)
-                )
-                new_profile = MIG_MERGE_RULES.get(canonical)
-                if new_profile is not None:
-                    candidates.append((e1, e2, new_profile))
-    return candidates
-
-
-def find_split_candidates(engines: List[LLMEngine]) -> SplitCandidates:
-    """Return all valid (engine, transfer_index, [child_profiles]) tuples for ACTIVE engines."""
-    candidates: SplitCandidates = []
-    for e in engines:
-        if e.status == EngineStatus.ACTIVE and e.mig_profile in MIG_MERGE_RULES.inverse:
-            children = list(MIG_MERGE_RULES.inverse[e.mig_profile])
-            for i, child in enumerate(children):
-                candidates.append((e, i, children))
-    return candidates
 
 
 def init_config(base_dir: Path) -> SimulationConfig:
@@ -119,3 +70,5 @@ SIM_CONFIG: SimulationConfig = init_config(base_dir)
 
 # Global token map: { AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
 TOKENS_MAP: TokensMapType = init_tokens_map(base_dir)
+
+MIG_RULES = MIGProfileRuleImpl()

@@ -5,21 +5,21 @@ from tqdm import tqdm
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
-from models import *
-import global_vars as g
-from objects import LLMEngineImpl
-from logger import SimulationLoggerImpl
-from management import WorkerImpl, EnvironmentStateImpl
+from src.simulation.models import *
+import src.simulation.global_vars as g
+from src.simulation.engine import LLMEngineImpl
+from src.simulation.logger import SimulationLoggerImpl
+from src.simulation.worker import WorkerImpl
+from src.simulation.environment_state import EnvironmentStateImpl
 
 
 class ResourceManager:
-    def __init__(self, simulator: "Simulator"):
+    def __init__(self, simulator: Simulator):
         self.simulator = simulator
         self.trigger_interval = 3600.0
         self.next_vram_transfer_time = 1800.0
         self.next_mig_trigger_time = 3600.0
-        self.pending_transfers: List[PendingTransfer] = []
-        self.worker = WorkerImpl(simulator, self)
+        self.worker = WorkerImpl(simulator)
 
     def act(self, current_time: float, state: EnvironmentStateData):
         """
@@ -63,64 +63,48 @@ class ResourceManager:
                 amount = 10
 
             if amount > 0:
-                self.worker.queue_transfer(
-                    amount, giver.agent_id, receiver.agent_id, current_time
+                self.worker.start_transfer(
+                    current_time,
+                    TransferDetails(
+                        amount, giver_id=giver.agent_id, receiver_id=receiver.agent_id
+                    ),
                 )
                 return
 
     def trigger_mig(self, current_time: float):
         sim = self.simulator
-        # Group active engines by (Agent, GPU)
-        grouped_engines: Dict[Tuple[AgentId, int], List[LLMEngine]] = {}
-        for engine in sim.engines.values():
-            if engine.status == EngineStatus.ACTIVE:
-                key = (engine.owner.agent_id, engine.gpu)
-                if key not in grouped_engines:
-                    grouped_engines[key] = []
-                grouped_engines[key].append(engine)
 
-        candidates: List[Tuple[str, Any]] = []  # List of (type, data)
-
-        for (agent_id, gpu), engines in grouped_engines.items():
-            # 1. Look for Merges using bidict
-            for i in range(len(engines)):
-                for j in range(i + 1, len(engines)):
-                    e1 = engines[i]
-                    e2 = engines[j]
-                    canonical_key = (
-                        (e1.mig_profile, e2.mig_profile)
-                        if e1.mig_profile.size > e2.mig_profile.size
-                        else (e2.mig_profile, e1.mig_profile)
+        candidates: List[Tuple[str, Any]] = []  # List of (action type, data)
+        for agent in sim.agents.values():
+            # 1. Look for Merges
+            possible_merges = g.MIG_RULES.get_possible_merges(agent)
+            for engs, new_profile in possible_merges:
+                candidates.append(
+                    (
+                        "merge",
+                        {
+                            "engines": engs,
+                            "new_profile": new_profile,
+                            "agent_id": agent.agent_id,
+                            "gpu": engs[0].gpu,
+                        },
                     )
-                    new_profile = g.MIG_MERGE_RULES.get(canonical_key)
-                    if new_profile:
-                        candidates.append(
-                            (
-                                "merge",
-                                {
-                                    "engines": [e1, e2],
-                                    "new_profile": new_profile,
-                                    "agent_id": agent_id,
-                                    "gpu": gpu,
-                                },
-                            )
-                        )
+                )
 
-            # 2. Look for Splits using bidict.inverse
-            for e in engines:
-                if e.mig_profile in g.MIG_MERGE_RULES.inverse:
-                    new_profiles = g.MIG_MERGE_RULES.inverse[e.mig_profile]
-                    candidates.append(
-                        (
-                            "split",
-                            {
-                                "engine": e,
-                                "new_profiles": list(new_profiles),
-                                "agent_id": agent_id,
-                                "gpu": gpu,
-                            },
-                        )
+            # 2. Look for Splits
+            possible_splits = g.MIG_RULES.get_possible_splits(agent)
+            for eng, new_profiles in possible_splits:
+                candidates.append(
+                    (
+                        "split",
+                        {
+                            "engine": eng,
+                            "new_profiles": new_profiles,
+                            "agent_id": agent.agent_id,
+                            "gpu": eng.gpu,
+                        },
                     )
+                )
 
         if not candidates:
             return
@@ -128,19 +112,20 @@ class ResourceManager:
         action_type, data = random.choice(candidates)
 
         if action_type == "merge":
-            e1, e2 = data["engines"]
+            engs: List[LLMEngine] = data["engines"]
+            eids = [e.engine_id for e in engs]
             # Both engines carry the full merge payload; drained_ids starts empty.
             merge_payload: ShutdownMergePayload = {
-                "engine_id": e1.engine_id,  # will be overwritten per engine below
+                "engine_id": engs[0].engine_id,  # will be overwritten per engine below
                 "purpose": OperationPurpose.MERGE,
-                "merge_engine_ids": (e1.engine_id, e2.engine_id),
+                "merge_engine_ids": tuple(eids),
                 "drained_ids": [],  # This list is shared between 2 engines
                 "new_profile": data["new_profile"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
                 "receiver_id": None,
             }
-            for e in [e1, e2]:
+            for e in engs:
                 per_engine_payload: ShutdownMergePayload = {
                     **merge_payload,
                     "engine_id": e.engine_id,
@@ -148,20 +133,18 @@ class ResourceManager:
                 evt = e.trigger_shutdown(per_engine_payload, current_time)
                 if evt:
                     sim.events.add(evt)
-            sim.logger.log_mig_merge_trigger(
-                current_time, e1.engine_id, e2.engine_id, data["gpu"]
-            )
+            sim.logger.log_mig_merge_trigger(current_time, eids, data["gpu"])
 
         elif action_type == "split":
-            e = data["engine"]
+            e: LLMEngine = data["engine"]
             split_payload: ShutdownSplitPayload = {
                 "engine_id": e.engine_id,
                 "purpose": OperationPurpose.SPLIT,
                 "new_profiles": data["new_profiles"],
                 "agent_id": data["agent_id"],
                 "gpu": data["gpu"],
-                "transfer_index": None,
-                "transfer_receiver_id": None,
+                "receiver_id": None,
+                "received_profile": None,
             }
             evt = e.trigger_shutdown(split_payload, current_time)
             if evt:
@@ -304,7 +287,6 @@ class SimulatorImpl(Simulator):
 
         new_model = g.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
 
-        giver_id = engine.owner.agent_id
         receiver = self._agents[receiver_id]
 
         engine.update_model(
@@ -318,11 +300,10 @@ class SimulatorImpl(Simulator):
             restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
         )
 
-        boot_payload: BootReallocatePayload = {
+        boot_payload: BootPayload = {
             "engine_id": engine_id,
             "purpose": OperationPurpose.REALLOCATE,
-            "giver_id": giver_id,
-            "receiver_id": receiver_id,
+            "sibling_engine_ids": None,
         }
         self._events.add(engine.trigger_boot(boot_payload))
 
@@ -351,9 +332,10 @@ class SimulatorImpl(Simulator):
                 payload["gpu"], new_eid, target_agent, new_profile, self._current_time
             )
 
-            boot_plain: BootPlainPayload = {
+            boot_plain: BootPayload = {
                 "engine_id": new_eid,
                 "purpose": OperationPurpose.PLAIN,
+                "sibling_engine_ids": None,
             }
             self._events.add(new_eng.trigger_boot(boot_plain))
             self._engines[new_eid] = new_eng
@@ -367,40 +349,35 @@ class SimulatorImpl(Simulator):
         if e is not None and e in agent.engines:
             agent.engines.remove(e)
 
+        receiver_id = payload["receiver_id"]
+        received_profile = payload["received_profile"]
         new_profiles = payload["new_profiles"]
+        gpu = payload["gpu"]
+
+        is_vram_transfer = receiver_id is not None
+        if is_vram_transfer:
+            assert received_profile is not None
+        has_received = False
+
         new_eids = [
-            f"GPU_{payload['gpu']}_{p.string}_{int(self._current_time)}_{i}"
+            f"GPU_{gpu}_{p.string}_{int(self._current_time)}_{i}"
             for i, p in enumerate(new_profiles)
         ]
-        sibling_ids: List[str] = new_eids
+        for new_eid, p in zip(new_eids, new_profiles):
+            new_owner = agent
+            if is_vram_transfer and p == received_profile and not has_received:
+                new_owner = self._agents[receiver_id]
+                has_received = True
 
-        transfer_idx = payload.get("transfer_index")
-        transfer_rec = payload.get("transfer_receiver_id")
+            new_eng = LLMEngineImpl.create(
+                payload["gpu"], new_eid, new_owner, p, self._current_time
+            )
+            new_owner.add_engine(new_eng)
 
-        for i, (new_eid, p) in enumerate(zip(new_eids, new_profiles)):
-            if (
-                transfer_idx is not None
-                and transfer_rec is not None
-                and i == transfer_idx
-            ):
-                receiver_agent = self._agents[transfer_rec]
-                new_eng = LLMEngineImpl.create(
-                    payload["gpu"], new_eid, receiver_agent, p, self._current_time
-                )
-                receiver_agent.add_engine(new_eng)
-            else:
-                new_eng = LLMEngineImpl.create(
-                    payload["gpu"], new_eid, agent, p, self._current_time
-                )
-                agent.add_engine(new_eng)
-
-            boot_split: BootSplitPayload = {
+            boot_split: BootPayload = {
                 "engine_id": new_eid,
                 "purpose": OperationPurpose.SPLIT,
-                "new_profiles": new_profiles,
-                "agent_id": payload["agent_id"],
-                "gpu": payload["gpu"],
-                "sibling_engine_ids": sibling_ids,
+                "sibling_engine_ids": new_eids,
             }
 
             self._events.add(new_eng.trigger_boot(boot_split))
@@ -442,33 +419,19 @@ class SimulatorImpl(Simulator):
         engine.activate(self._current_time)
         agent = engine.owner
 
-        boot_purpose = payload.get("purpose")
-
-        if boot_purpose == OperationPurpose.REALLOCATE:
-            bd_realloc = cast(BootReallocatePayload, payload)
-            self._logger.log_engine_boot_complete(
-                self._current_time,
-                engine_id,
-                bd_realloc["giver_id"],
-                bd_realloc["receiver_id"],
-            )
-        else:
-            self._logger.log_engine_boot_complete(self._current_time, engine_id)
+        self._logger.log_engine_boot_complete(self._current_time, engine_id)
 
         # Defer waiting-queue processing if split siblings are still booting
-        if boot_purpose == OperationPurpose.SPLIT:
-            bd_split = cast(BootSplitPayload, payload)
+        if payload["purpose"] == OperationPurpose.SPLIT:
+            assert payload["sibling_engine_ids"] is not None
             still_booting = any(
                 self._engines[sid].status == EngineStatus.BOOTING
-                for sid in bd_split["sibling_engine_ids"]
-                if sid in self._engines
-                and sid != engine_id
-                and self._engines[sid].owner == agent
+                for sid in payload["sibling_engine_ids"]
+                if sid != engine_id
+                and self._engines[sid].owner.agent_id == agent.agent_id
             )
             if still_booting:
                 return  # Wait for remaining sibling engines
-
-        self.resource_manager.worker.step(self._current_time)
 
         agent.process_waiting_queue(self._current_time)
         for e in agent.engines:
@@ -497,7 +460,6 @@ class SimulatorImpl(Simulator):
             req.id,
             agent_id,
             engine,
-            self._peak_next_stopping_evt(agent_id),
         )
 
         if engine and len(engine.running_queue) == 0 and len(engine.waiting_queue) > 0:
