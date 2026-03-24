@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple, Union, TypedDict, Mapping, Literal
+from typing import Any, List, Optional, Dict, Tuple, Union, TypedDict, Mapping, Literal
 
 from sortedcontainers import SortedList
 
@@ -35,6 +35,9 @@ __all__ = [
     "EnvironmentStateData",
     "EnvironmentState",
     "Worker",
+    "ResourceManagerAction",
+    "VramTransferAction",
+    "MigAction",
 ]
 
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
@@ -538,7 +541,44 @@ class Simulator(ABC):
     def add_arrival_events(self, requests: List[Request]) -> None: ...
 
     @abstractmethod
-    def run(self) -> None: ...
+    def run(self) -> bool: ...
+
+
+@dataclass
+class VramTransferAction:
+    giver: AgentId
+    receiver: AgentId
+    amount: int
+
+
+@dataclass
+class MigAction:
+    action: str  # "split" or "merge"
+    victim: AgentId
+
+
+class ResourceManagerAction(Enum):
+    NO_ACTION = None
+
+    # 1-4: VRAM
+    TRANSFER_10_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, amount=10
+    )
+    TRANSFER_10_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, amount=10
+    )
+    TRANSFER_20_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, amount=20
+    )
+    TRANSFER_20_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, amount=20
+    )
+
+    # 5-8: MIG
+    SPLIT_CODING = MigAction(action="split", victim=AgentId.CODING)
+    SPLIT_RAG = MigAction(action="split", victim=AgentId.RAG)
+    MERGE_CODING = MigAction(action="merge", victim=AgentId.CODING)
+    MERGE_RAG = MigAction(action="merge", victim=AgentId.RAG)
 
 
 # --- Management Interfaces ---
@@ -561,11 +601,18 @@ class EnvironmentStateData(TypedDict):
     kv_cache_utilization: Dict[int, List[float]]
     mig_config_encoding: Dict[int, List[int]]
     recovery_flag: bool
+    requests: List[Request]
+    avg_running_requests: Dict[AgentId, float]
 
 
 class Worker(ABC):
     @abstractmethod
-    def start_transfer(self, current_time: float, details: TransferDetails) -> None: ...
+    def transfer(
+        self,
+        current_time: float,
+        details: TransferDetails,
+        agents: Dict[AgentId, Agent],
+    ) -> Tuple[str, Any] | None: ...
 
 
 class EnvironmentState(ABC):
@@ -584,13 +631,20 @@ class EnvironmentState(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def register_arrival(self, agent_id: AgentId, time: float) -> None: ...
+    def register_arrival(
+        self, agent_id: AgentId, time: float, request: Request
+    ) -> None: ...
 
     @abstractmethod
     def register_reconfig(self) -> None: ...
 
     @abstractmethod
-    def get_state(self, simulator: Simulator) -> EnvironmentStateData: ...
+    def get_state(
+        self,
+        current_time: float,
+        agents: Dict[AgentId, Agent],
+        engines: Dict[str, LLMEngine],
+    ) -> EnvironmentStateData: ...
 
 
 class MIGProfileRule(ABC):

@@ -1,155 +1,16 @@
 from __future__ import annotations
 
-import random
 from tqdm import tqdm
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
 from src.simulation.models import *
 import src.simulation.global_vars as g
+from src.simulation.worker import WorkerImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
-from src.simulation.worker import WorkerImpl
 from src.simulation.environment_state import EnvironmentStateImpl
-
-
-class ResourceManager:
-    def __init__(self, simulator: Simulator):
-        self.simulator = simulator
-        self.trigger_interval = 3600.0
-        self.next_vram_transfer_time = 1800.0
-        self.next_mig_trigger_time = 3600.0
-        self.worker = WorkerImpl(simulator)
-
-    def act(self, current_time: float, state: EnvironmentStateData):
-        """
-        Periodically checks if it is time to trigger VRAM transfer or MIG split/merge.
-        """
-        if current_time >= self.next_mig_trigger_time:
-            self.trigger_mig(current_time)
-            self.next_mig_trigger_time += self.trigger_interval
-
-        if current_time >= self.next_vram_transfer_time:
-            self.trigger_vram_transfer(current_time)
-            self.next_vram_transfer_time += self.trigger_interval
-
-    def trigger_vram_transfer(self, current_time: float):
-        """
-        Periodically transfers VRAM between agents.
-        Randomly selects an agent. If it has >20GB active VRAM, transfers 10 or 20GB.
-        If it has exactly 20GB, transfers 10GB.
-        Otherwise, it attempts the same logic on the other agent.
-        """
-        agents = list(self.simulator.agents.values())
-        if len(agents) < 2:
-            return
-
-        random.shuffle(agents)
-
-        for i in range(2):
-            giver = agents[i]
-            receiver = agents[1 - i]
-
-            active_vram = sum(
-                e.mig_profile.vram
-                for e in giver.engines
-                if e.status == EngineStatus.ACTIVE
-            )
-
-            amount = 0
-            if active_vram > 20:
-                amount = random.choice([10, 20])
-            elif active_vram == 20:
-                amount = 10
-
-            if amount > 0:
-                self.worker.start_transfer(
-                    current_time,
-                    TransferDetails(
-                        amount, giver_id=giver.agent_id, receiver_id=receiver.agent_id
-                    ),
-                )
-                return
-
-    def trigger_mig(self, current_time: float):
-        sim = self.simulator
-
-        candidates: List[Tuple[str, Any]] = []  # List of (action type, data)
-        for agent in sim.agents.values():
-            # 1. Look for Merges
-            possible_merges = g.MIG_RULES.get_possible_merges(agent)
-            for engs, new_profile in possible_merges:
-                candidates.append(
-                    (
-                        "merge",
-                        {
-                            "engines": engs,
-                            "new_profile": new_profile,
-                            "agent_id": agent.agent_id,
-                            "gpu": engs[0].gpu,
-                        },
-                    )
-                )
-
-            # 2. Look for Splits
-            possible_splits = g.MIG_RULES.get_possible_splits(agent)
-            for eng, new_profiles in possible_splits:
-                candidates.append(
-                    (
-                        "split",
-                        {
-                            "engine": eng,
-                            "new_profiles": new_profiles,
-                            "agent_id": agent.agent_id,
-                            "gpu": eng.gpu,
-                        },
-                    )
-                )
-
-        if not candidates:
-            return
-
-        action_type, data = random.choice(candidates)
-
-        if action_type == "merge":
-            engs: List[LLMEngine] = data["engines"]
-            eids = [e.engine_id for e in engs]
-            # Both engines carry the full merge payload; drained_ids starts empty.
-            merge_payload: ShutdownMergePayload = {
-                "engine_id": engs[0].engine_id,  # will be overwritten per engine below
-                "purpose": OperationPurpose.MERGE,
-                "merge_engine_ids": tuple(eids),
-                "drained_ids": [],  # This list is shared between 2 engines
-                "new_profile": data["new_profile"],
-                "agent_id": data["agent_id"],
-                "gpu": data["gpu"],
-                "receiver_id": None,
-            }
-            for e in engs:
-                per_engine_payload: ShutdownMergePayload = {
-                    **merge_payload,
-                    "engine_id": e.engine_id,
-                }
-                evt = e.trigger_shutdown(per_engine_payload, current_time)
-                if evt:
-                    sim.events.add(evt)
-            sim.logger.log_mig_merge_trigger(current_time, eids, data["gpu"])
-
-        elif action_type == "split":
-            e: LLMEngine = data["engine"]
-            split_payload: ShutdownSplitPayload = {
-                "engine_id": e.engine_id,
-                "purpose": OperationPurpose.SPLIT,
-                "new_profiles": data["new_profiles"],
-                "agent_id": data["agent_id"],
-                "gpu": data["gpu"],
-                "receiver_id": None,
-                "received_profile": None,
-            }
-            evt = e.trigger_shutdown(split_payload, current_time)
-            if evt:
-                sim.events.add(evt)
-            sim.logger.log_mig_split_trigger(current_time, e.engine_id, data["gpu"])
+from src.training.resource_manager import ResourceManager
 
 
 class SimulatorImpl(Simulator):
@@ -163,22 +24,14 @@ class SimulatorImpl(Simulator):
         self._engines = engines
         self._events: SortedList[SimulationEvent] = SortedList()
         self._current_time: float = 0.0
-        self.resource_manager = ResourceManager(self)
+        self.resource_manager = ResourceManager()
+        self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
         self.total_requests = 0
 
         self.action_interval = g.SIM_CONFIG.get_rl_action_interval()
         self.environment_state = EnvironmentStateImpl(self.action_interval)
         self.environment_state.reset_for_next_interval(0.0, self._agents)
-
-        # Schedule Resource Manager Action at action_interval
-        self._events.add(
-            SimulationEvent(
-                time=self.action_interval,
-                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
-                payload={},
-            ),
-        )
 
     @property
     def agents(self) -> Dict[AgentId, Agent]:
@@ -200,9 +53,7 @@ class SimulatorImpl(Simulator):
     def logger(self) -> SimulationLogger:
         return self._logger
 
-    def add_arrival_events(self, requests: List[Request]):
-        self.total_requests = len(requests)
-
+    def add_arrival_events(self, requests: List[Request]) -> None:
         for req in requests:
             self._events.add(
                 SimulationEvent(
@@ -212,20 +63,19 @@ class SimulatorImpl(Simulator):
                 )
             )
 
-        self._sample_rag_searches()
+        self._sample_rag_searches(requests)
 
-    def _sample_rag_searches(self) -> None:
+    def _sample_rag_searches(self, requests: List[Request]) -> None:
         search_evts: List[SimulationEvent] = []
-        for evt in self._events:
-            if "request" in evt.payload:
-                if evt.payload["request"].agent_id == AgentId.RAG:
-                    search_evts.append(
-                        SimulationEvent(
-                            time=evt.time + g.SIM_CONFIG.get_rag_overhead(),
-                            event_type=EventType.RAG_SEARCH_COMPLETE,
-                            payload=evt.payload,
-                        )
+        for req in requests:
+            if req.agent_id == AgentId.RAG:
+                search_evts.append(
+                    SimulationEvent(
+                        time=req.arrival_time + g.SIM_CONFIG.get_rag_overhead(),
+                        event_type=EventType.RAG_SEARCH_COMPLETE,
+                        payload={"request": req},
                     )
+                )
 
         self._events.update(search_evts)
 
@@ -274,22 +124,236 @@ class SimulatorImpl(Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_resource_manager_trigger(self):
+    def _handle_resource_manager_trigger_vram_transfer(
+        self, vram_transfer: TransferDetails
+    ):
+        transfer_decision = self.worker.transfer(
+            self._current_time, vram_transfer, self._agents
+        )
+        if not transfer_decision:
+            self._logger.log_discard_vram_transfer(self._current_time, vram_transfer)
+            return
+
+        action_type, data = transfer_decision
+        match action_type:
+            case "exact":
+                engine_to_shift = data["engine"]
+                giver = data["giver"]
+                receiver = data["receiver"]
+                amount = data["amount"]
+
+                shutdown_payload: ShutdownReallocatePayload = {
+                    "engine_id": engine_to_shift.engine_id,
+                    "purpose": OperationPurpose.REALLOCATE,
+                    "receiver_id": receiver.agent_id,
+                }
+                self._logger.log_vram_transfer(
+                    self._current_time,
+                    giver.agent_id,
+                    receiver.agent_id,
+                    amount,
+                    [engine_to_shift.engine_id],
+                )
+                evt = engine_to_shift.trigger_shutdown(
+                    shutdown_payload, self._current_time
+                )
+                if evt:
+                    self._events.add(evt)
+
+            case "merge":
+                engs = data["engines"]
+                new_profile = data["new_profile"]
+                giver = data["giver"]
+                receiver = data["receiver"]
+                amount = data["amount"]
+
+                merge_payload: ShutdownMergePayload = {
+                    "engine_id": engs[0].engine_id,
+                    "purpose": OperationPurpose.MERGE,
+                    "merge_engine_ids": tuple(e.engine_id for e in engs),
+                    "drained_ids": [],
+                    "new_profile": new_profile,
+                    "agent_id": giver.agent_id,
+                    "gpu": engs[0].gpu,
+                    "receiver_id": receiver.agent_id,
+                }
+                for e in engs:
+                    per_engine_payload: ShutdownMergePayload = {
+                        **merge_payload,
+                        "engine_id": e.engine_id,
+                    }
+                    evt = e.trigger_shutdown(per_engine_payload, self._current_time)
+                    if evt:
+                        self._events.add(evt)
+                self._logger.log_mig_merge_trigger(
+                    self._current_time, [e.engine_id for e in engs], engs[0].gpu
+                )
+                self._logger.log_vram_transfer(
+                    self._current_time,
+                    giver.agent_id,
+                    receiver.agent_id,
+                    amount,
+                    [e.engine_id for e in engs],
+                )
+
+            case "split":
+                eng = data["engine"]
+                new_profiles = data["new_profiles"]
+                mig_to_transfer = data["mig_to_transfer"]
+                giver = data["giver"]
+                receiver = data["receiver"]
+                amount = data["amount"]
+
+                split_payload: ShutdownSplitPayload = {
+                    "engine_id": eng.engine_id,
+                    "purpose": OperationPurpose.SPLIT,
+                    "new_profiles": new_profiles,
+                    "agent_id": giver.agent_id,
+                    "gpu": eng.gpu,
+                    "receiver_id": receiver.agent_id,
+                    "received_profile": mig_to_transfer,
+                }
+                evt = eng.trigger_shutdown(split_payload, self._current_time)
+                if evt:
+                    self._events.add(evt)
+                self._logger.log_mig_split_trigger(
+                    self._current_time, eng.engine_id, eng.gpu
+                )
+                self._logger.log_vram_transfer(
+                    self._current_time,
+                    giver.agent_id,
+                    receiver.agent_id,
+                    amount,
+                    [eng.engine_id],
+                )
+
+            case _:
+                raise ValueError(f"Unknown action {action_type}")
+
+    def _handle_resource_manager_trigger_mig_decision(
+        self, mig_decision: Tuple[str, Any]
+    ):
+        action_type, data = mig_decision
+        match action_type:
+            case "merge":
+                engs: List[LLMEngine] = data["engines"]
+                eids = [e.engine_id for e in engs]
+                merge_payload: ShutdownMergePayload = {
+                    "engine_id": engs[0].engine_id,
+                    "purpose": OperationPurpose.MERGE,
+                    "merge_engine_ids": tuple(eids),
+                    "drained_ids": [],
+                    "new_profile": data["new_profile"],
+                    "agent_id": data["agent_id"],
+                    "gpu": data["gpu"],
+                    "receiver_id": None,
+                }
+                for e in engs:
+                    per_engine_payload: ShutdownMergePayload = {
+                        **merge_payload,
+                        "engine_id": e.engine_id,
+                    }
+                    evt = e.trigger_shutdown(per_engine_payload, self._current_time)
+                    if evt:
+                        self._events.add(evt)
+                self._logger.log_mig_merge_trigger(
+                    self._current_time, eids, data["gpu"]
+                )
+
+            case "split":
+                e: LLMEngine = data["engine"]
+                split_payload: ShutdownSplitPayload = {
+                    "engine_id": e.engine_id,
+                    "purpose": OperationPurpose.SPLIT,
+                    "new_profiles": data["new_profiles"],
+                    "agent_id": data["agent_id"],
+                    "gpu": data["gpu"],
+                    "receiver_id": None,
+                    "received_profile": None,
+                }
+                evt = e.trigger_shutdown(split_payload, self._current_time)
+                if evt:
+                    self._events.add(evt)
+                self._logger.log_mig_split_trigger(
+                    self._current_time, e.engine_id, data["gpu"]
+                )
+
+            case _:
+                raise ValueError(f"Unknown action {action_type}")
+
+    def handle_resource_manager_trigger(self, action: ResourceManagerAction):
         self.environment_state.record_queue_length_advance(
             self._current_time, self._agents
         )
-        state_data = self.environment_state.get_state(self)
-        self._logger.log_environment_state(self._current_time, state_data)
-        self.resource_manager.act(self._current_time, state_data)
-        self.environment_state.reset_for_next_interval(self._current_time, self._agents)
-
-        self._events.add(
-            SimulationEvent(
-                time=self._current_time + self.action_interval,
-                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
-                payload={},
-            )
+        state_data = self.environment_state.get_state(
+            self._current_time, self._agents, self._engines
         )
+        self._logger.log_environment_state(self._current_time, state_data)
+
+        match action:
+            case ResourceManagerAction.NO_ACTION:
+                pass
+
+            case ResourceManagerAction.TRANSFER_10_CODING_RAG | \
+                 ResourceManagerAction.TRANSFER_10_RAG_CODING | \
+                 ResourceManagerAction.TRANSFER_20_CODING_RAG | \
+                 ResourceManagerAction.TRANSFER_20_RAG_CODING:
+                v_action = cast(VramTransferAction, action.value)
+                vram_transfer = TransferDetails(
+                    amount=v_action.amount,
+                    giver_id=v_action.giver,
+                    receiver_id=v_action.receiver
+                )
+                self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
+
+            case ResourceManagerAction.SPLIT_CODING | ResourceManagerAction.SPLIT_RAG:
+                m_action = cast(MigAction, action.value)
+                agent_id = m_action.victim
+                agent = self._agents[agent_id]
+                possible_splits = g.MIG_RULES.get_possible_splits(agent)
+                if possible_splits:
+                    eng, new_profiles = min(
+                        possible_splits,
+                        key=lambda c: len(c[0].running_queue) + len(c[0].waiting_queue),
+                    )
+                    mig_decision = (
+                        "split",
+                        {
+                            "engine": eng,
+                            "new_profiles": new_profiles,
+                            "agent_id": agent_id,
+                            "gpu": eng.gpu,
+                        },
+                    )
+                    self._handle_resource_manager_trigger_mig_decision(mig_decision)
+
+            case ResourceManagerAction.MERGE_CODING | ResourceManagerAction.MERGE_RAG:
+                m_action = cast(MigAction, action.value)
+                agent_id = m_action.victim
+                agent = self._agents[agent_id]
+                possible_merges = g.MIG_RULES.get_possible_merges(agent)
+                if possible_merges:
+                    engs, new_profile = min(
+                        possible_merges,
+                        key=lambda c: sum(
+                            len(e.running_queue) + len(e.waiting_queue) for e in c[0]
+                        ),
+                    )
+                    mig_decision = (
+                        "merge",
+                        {
+                            "engines": engs,
+                            "new_profile": new_profile,
+                            "agent_id": agent_id,
+                            "gpu": engs[0].gpu,
+                        },
+                    )
+                    self._handle_resource_manager_trigger_mig_decision(mig_decision)
+
+            case _:
+                raise ValueError(f"Unknown RL action {action}")
+
+        self.environment_state.reset_for_next_interval(self._current_time, self._agents)
         self._step_draining_or_active_engines()
 
     def _handle_shutdown_complete_reallocate(self, payload: ShutdownReallocatePayload):
@@ -463,7 +527,7 @@ class SimulatorImpl(Simulator):
         req = payload["request"]
         agent_id = req.agent_id
 
-        self.environment_state.register_arrival(agent_id, self._current_time)
+        self.environment_state.register_arrival(agent_id, self._current_time, req)
 
         # If it's a RAG request, wiat til RAG_SEARCH_COMPLETE
         if agent_id == AgentId.RAG:
@@ -515,16 +579,19 @@ class SimulatorImpl(Simulator):
     # Main loop
     # ------------------------------------------------------------------
 
-    def run(self):
-        """Main event loop."""
-        pbar = tqdm(total=self.total_requests, desc="Simulation Progress")
-        last_completed = 0
-
+    def run(self) -> bool:
+        """Executes events until a RESOURCE_MANAGER_TRIGGER is popped."""
         while self.has_active_work():
             if not self._events:
                 self._step_idle_engines()
                 if not self.has_active_work():
                     break
+
+            current_event = self._events[0]
+            if current_event.event_type == EventType.RESOURCE_MANAGER_TRIGGER:
+                self._events.pop(0)
+                self._current_time = current_event.time
+                return True  # Reached trigger point
 
             current_event = self._events.pop(0)
             self.environment_state.record_queue_length_advance(
@@ -533,8 +600,6 @@ class SimulatorImpl(Simulator):
             self._current_time = current_event.time
 
             match current_event.event_type:
-                case EventType.RESOURCE_MANAGER_TRIGGER:
-                    self._handle_resource_manager_trigger()
                 case EventType.ENGINE_SHUTDOWN_COMPLETE:
                     self._handle_shutdown_complete(
                         cast(ShutdownPayload, current_event.payload)
@@ -554,19 +619,7 @@ class SimulatorImpl(Simulator):
                         cast(EngineStepPayload, current_event.payload)
                     )
 
-            self.environment_state.record_queue_length_advance(
-                self._current_time, self._agents
-            )
-
-            completed_now = sum(
-                len(ag.completed_requests) for ag in self._agents.values()
-            )
-            if completed_now > last_completed:
-                pbar.update(completed_now - last_completed)
-                last_completed = completed_now
-
-        pbar.close()
-        self._logger.flush()
+        return False  # Finished simulation
 
     def _peak_next_stopping_evt(self, agent_id: AgentId) -> float | None:
         for evt in self._events:

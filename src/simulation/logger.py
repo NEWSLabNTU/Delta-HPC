@@ -26,6 +26,8 @@ class SimulationLoggerImpl(SimulationLogger):
 
         state_dict = {}
         for k, v in state.items():
+            if k == "requests":
+                continue
             if isinstance(v, dict):
                 cleaned_v: Dict[str, Any] = {
                     str(key.value if hasattr(key, "value") else key): val  # type: ignore

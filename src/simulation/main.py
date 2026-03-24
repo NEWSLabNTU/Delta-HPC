@@ -17,7 +17,9 @@ def get_mig_profile(profile_str: str) -> MIGProfile:
     raise ValueError(f"Invalid MIG profile string: {profile_str}")
 
 
-def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
+def load_requests(
+    arrival_interval_sec: float = 0.5, start_time: float = 0.0, turn: int = 0
+) -> List[Request]:
     """
     Loads arriving Requests from the token map. Only prompt_tokens is set here;
     completion_tokens is determined at dispatch time based on the assigned engine's model.
@@ -34,7 +36,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
             for rid, (prompt_tokens, _) in selected:
                 requests.append(
                     RequestImpl(
-                        id=rid,
+                        id=f"{rid}_t{turn}",
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
                         original_id=rid,
@@ -48,7 +50,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
             for rid, (prompt_tokens, _) in all_items:
                 rag_requests.append(
                     RequestImpl(
-                        id=f"{rid}_dup1",
+                        id=f"{rid}_dup1_t{turn}",
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
                         original_id=rid,
@@ -57,7 +59,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
             for rid, (prompt_tokens, _) in all_items:
                 rag_requests.append(
                     RequestImpl(
-                        id=f"{rid}_dup2",
+                        id=f"{rid}_dup2_t{turn}",
                         agent_id=agent_id,
                         prompt_tokens=prompt_tokens,
                         original_id=rid,
@@ -71,7 +73,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
                 for i, (rid, (prompt_tokens, _)) in enumerate(extra):
                     rag_requests.append(
                         RequestImpl(
-                            id=f"{rid}_extra_{i}",
+                            id=f"{rid}_extra_{i}_t{turn}",
                             agent_id=agent_id,
                             prompt_tokens=prompt_tokens,
                             original_id=rid,
@@ -86,7 +88,7 @@ def load_requests(arrival_interval_sec: float = 0.5) -> List[Request]:
     random.shuffle(requests)
 
     for i, req in enumerate(requests):
-        req.arrival_time = i * arrival_interval_sec
+        req.arrival_time = start_time + i * arrival_interval_sec
 
     return requests
 
@@ -97,8 +99,8 @@ def main():
     args = parser.parse_args()
 
     print("Loading config and datasets...")
-
-    requests = load_requests()
+    load_turn = 0
+    requests = load_requests(turn=load_turn)
     print(f"Loaded {len(requests)} requests.")
 
     agents: Dict[AgentId, Agent] = {}
@@ -129,10 +131,52 @@ def main():
     )
 
     # For a quicker test we limit requests
-    sim.add_arrival_events(requests[:50000])
+    sim.add_arrival_events(requests[:1000])
 
-    print("Running simulation...")
-    sim.run()
+    # Pre-populate triggering events upfront for step advanced mockup
+    max_steps = 100
+    for i in range(1, max_steps + 1):
+        t = i * sim.action_interval
+        sim._events.add(
+            SimulationEvent(
+                time=t,
+                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
+                payload={},
+            )
+        )
+
+    print("Running mockup training loop...")
+    for step in range(max_steps):
+        # 1. Choose a random action
+        action = ResourceManagerAction.NO_ACTION
+ 
+        if step > 0:
+            sim.handle_resource_manager_trigger(action)
+        sim.run()
+
+        # 2. Print State
+        state_data = sim.environment_state.get_state(
+            sim.current_time, sim.agents, sim.engines
+        )
+        print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
+        avg_q = state_data["avg_queue_length"]
+        print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
+
+        # Count remaining arrival events to replenish proactively
+        remain = sum(
+            1 for e in sim._events if e.event_type == EventType.REQUEST_ARRIVAL
+        )
+        if remain < 1000:
+            max_arr_time = sim.current_time
+            for e in sim._events:
+                if e.event_type == EventType.REQUEST_ARRIVAL:
+                    max_arr_time = max(max_arr_time, e.time)
+            print(
+                f"  [Replenish] Only {remain} arrivals left. Adding batch starting at {max_arr_time:.2f}s"
+            )
+            load_turn += 1
+            new_requests = load_requests(start_time=max_arr_time, turn=load_turn)
+            sim.add_arrival_events(new_requests[:1000])
 
     print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")

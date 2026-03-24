@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "pyyaml>=6.0.3",
     "sortedcontainers>=2.4.0",
+    "stable-baselines3>=2.7.1",
     "tqdm>=4.67.3",
     "transformers>=5.3.0",
 ]
