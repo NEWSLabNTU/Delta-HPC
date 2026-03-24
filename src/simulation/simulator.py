@@ -208,12 +208,26 @@ class SimulatorImpl(Simulator):
                 SimulationEvent(
                     time=req.arrival_time,
                     event_type=EventType.REQUEST_ARRIVAL,
-                    payload={
-                        "request": req,
-                        "target_agent": req.agent_id,
-                    },
+                    payload={"request": req},
                 )
             )
+
+        self._sample_rag_searches()
+
+    def _sample_rag_searches(self) -> None:
+        search_evts: List[SimulationEvent] = []
+        for evt in self._events:
+            if "request" in evt.payload:
+                if evt.payload["request"].agent_id == AgentId.RAG:
+                    search_evts.append(
+                        SimulationEvent(
+                            time=evt.time + g.SIM_CONFIG.get_rag_overhead(),
+                            event_type=EventType.RAG_SEARCH_COMPLETE,
+                            payload=evt.payload,
+                        )
+                    )
+
+        self._events.update(search_evts)
 
     def has_active_work(self) -> bool:
         if any(
@@ -449,19 +463,35 @@ class SimulatorImpl(Simulator):
 
     def _handle_request_arrival(self, payload: RequestArrivalPayload):
         req = payload["request"]
-        agent_id = payload["target_agent"]
+        agent_id = req.agent_id
 
         self.environment_state.register_arrival(agent_id, self._current_time)
 
+        # If it's a RAG request, wiat til RAG_SEARCH_COMPLETE
+        if agent_id == AgentId.RAG:
+            self._logger.log_request_arrival(self._current_time, req, None)
+            return
+
         agent = self._agents[agent_id]
         engine = agent.dispatch(req, self._current_time)
-        self._logger.log_request_arrival(
-            self._current_time,
-            req.id,
-            agent_id,
-            engine,
-        )
+        self._logger.log_request_arrival(self._current_time, req, engine)
 
+        if engine and len(engine.running_queue) == 0 and len(engine.waiting_queue) > 0:
+            evt = engine.step(
+                self._current_time,
+                next_arrival_time=self._peak_next_stopping_evt(agent_id),
+            )
+            if evt:
+                self._events.add(evt)
+
+    def _handle_rag_search_complete(self, payload: RequestArrivalPayload):
+        req = payload["request"]
+        agent_id = req.agent_id
+        assert agent_id == AgentId.RAG
+
+        agent = self._agents[agent_id]
+        engine = agent.dispatch(req, self._current_time)
+        self._logger.log_rag_search_complete(self._current_time, req, engine)
         if engine and len(engine.running_queue) == 0 and len(engine.waiting_queue) > 0:
             evt = engine.step(
                 self._current_time,
@@ -517,6 +547,10 @@ class SimulatorImpl(Simulator):
                     self._handle_request_arrival(
                         cast(RequestArrivalPayload, current_event.payload)
                     )
+                case EventType.RAG_SEARCH_COMPLETE:
+                    self._handle_rag_search_complete(
+                        cast(RequestArrivalPayload, current_event.payload)
+                    )
                 case EventType.ENGINE_STEP_COMPLETE:
                     self._handle_engine_step_complete(
                         cast(EngineStepPayload, current_event.payload)
@@ -538,9 +572,16 @@ class SimulatorImpl(Simulator):
 
     def _peak_next_stopping_evt(self, agent_id: AgentId) -> float | None:
         for evt in self._events:
-            if (
-                evt.event_type == EventType.REQUEST_ARRIVAL
-                and evt.payload.get("target_agent") == agent_id
-            ) or evt.event_type == EventType.RESOURCE_MANAGER_TRIGGER:
+            if evt.event_type == EventType.RESOURCE_MANAGER_TRIGGER:
                 return evt.time
+
+            if evt.event_type == EventType.REQUEST_ARRIVAL:
+                payload = cast(RequestArrivalPayload, evt.payload)
+                if payload["request"].agent_id == agent_id and agent_id != AgentId.RAG:
+                    return evt.time
+
+            if evt.event_type == EventType.RAG_SEARCH_COMPLETE:
+                payload = cast(RequestArrivalPayload, evt.payload)
+                if payload["request"].agent_id == agent_id and agent_id == AgentId.RAG:
+                    return evt.time
         return None

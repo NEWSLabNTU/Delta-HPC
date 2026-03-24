@@ -93,6 +93,7 @@ class AgentId(Enum):
 
 class EventType(Enum):
     REQUEST_ARRIVAL = "REQUEST_ARRIVAL"
+    RAG_SEARCH_COMPLETE = "RAG_SEARCH_COMPLETE"
     ENGINE_STEP_COMPLETE = "ENGINE_STEP_COMPLETE"
     RESOURCE_MANAGER_TRIGGER = "RESOURCE_MANAGER_TRIGGER"
     ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
@@ -252,9 +253,8 @@ class SimulationLogger(ABC):
     def log_request_arrival(
         self,
         current_time: float,
-        req_id: str,
-        target_agent: AgentId,
-        assigned_engine: Optional[LLMEngine],
+        req: Request,
+        eng: Optional[LLMEngine],
     ) -> None: ...
 
     @abstractmethod
@@ -317,10 +317,9 @@ class EngineStepPayload(TypedDict):
     steps_taken: int
 
 
-# REQUEST_ARRIVAL
+# REQUEST_ARRIVAL or RAG_SEARCH_COMPLETE
 class RequestArrivalPayload(TypedDict):
     request: Request
-    target_agent: AgentId
 
 
 # ENGINE_SHUTDOWN_COMPLETE — one variant per purpose

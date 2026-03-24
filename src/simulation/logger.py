@@ -69,7 +69,7 @@ class SimulationLoggerImpl(SimulationLogger):
         lines = [
             f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
             f"Stepping: {stepping_engine.owner.agent_id.value}-{stepping_engine.engine_id} | "
-            f"Next Arrival: {next_arrival_time}"
+            f"Next Arrival: {next_arrival_time:.4f}"
         ]
         for aid, agent in agents.items():
             lines.append(f"  Agent: {aid.value}")
@@ -92,26 +92,16 @@ class SimulationLoggerImpl(SimulationLogger):
                 prefill = engine.running_queue.prefill_requests
                 if prefill:
                     for req in prefill:
-                        ftt_str = (
-                            f"{req.first_token_time:.4f}"
-                            if req.first_token_time is not None
-                            else "None"
-                        )
                         lines.append(
-                            f"      Prefill: {req.id} | Progress: {req.prefilled_tokens}/{req.prompt_tokens} | FirstTokenTime: {ftt_str}"
+                            f"      Prefill: {req.id} | Progress: {req.prefilled_tokens}/{req.prompt_tokens}"
                         )
 
                 # Decoding requests
                 decoding = engine.running_queue.decoding_requests
                 if decoding:
                     for req in decoding:
-                        ftt_str = (
-                            f"{req.first_token_time:.4f}"
-                            if req.first_token_time is not None
-                            else "None"
-                        )
                         lines.append(
-                            f"      Decode: {req.id} | Gen: {req.generated_tokens}/{req.completion_tokens} | FirstTokenTime: {ftt_str}"
+                            f"      Decode: {req.id} | Gen: {req.generated_tokens}/{req.completion_tokens}"
                         )
 
                 if not prefill and not decoding:
@@ -121,21 +111,28 @@ class SimulationLoggerImpl(SimulationLogger):
     def log_request_arrival(
         self,
         current_time: float,
-        req_id: str,
-        target_agent: AgentId,
-        assigned_engine: Optional[LLMEngine],
+        req: Request,
+        eng: Optional[LLMEngine],
     ):
         """Logs a request arrival event."""
         if not self.enabled:
             return
-        eng_str = (
-            f"{target_agent.value}-{assigned_engine.engine_id}"
-            if assigned_engine
-            else "None"
-        )
+        eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: REQUEST_ARRIVAL | "
-            f"ReqId: {req_id} | Agent: {target_agent.value} | Engine: {eng_str}"
+            f"ReqId: {req.id} | Agent: {req.agent_id.value} | Engine: {eng_str}"
+        )
+        self.log(msg)
+
+    def log_rag_search_complete(
+        self, current_time: float, req: Request, eng: Optional[LLMEngine]
+    ):
+        if not self.enabled:
+            return
+        eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
+        msg = (
+            f"[{current_time:.4f}] EVENT: RAG_SEARCH_COMPLETE | "
+            f"ReqId: {req.id} | Agent: {req.agent_id.value} | Engine: {eng_str}"
         )
         self.log(msg)
 
@@ -161,7 +158,7 @@ class SimulationLoggerImpl(SimulationLogger):
         if not self.enabled:
             return
         msg = (
-            f"[{current_time:.4f}] VRAM TRANSFER DROP | "
+            f"[{current_time:.4f}] VRAM_TRANSFER_DROP | "
             f"GIVER: {detail.giver_id} | RECEIVER: {detail.receiver_id} | AMOUNT: {detail.amount}"
         )
         self.log(msg)

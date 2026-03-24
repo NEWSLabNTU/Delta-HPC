@@ -81,6 +81,10 @@ simulation:
               sigma: 0.0011141595232364713
 
     RAGAgent:
+      search-overhead:
+        model: "random"
+        min: 0.05 # unit: sec
+        max: 0.3
       mig:
         7g.40gb:
           model: Qwen/Qwen2.5-14B-Instruct

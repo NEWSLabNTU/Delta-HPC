@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -88,3 +89,9 @@ class SimulationConfig:
         kv_per_token_kb = self.get_kv_per_token_kb(mname)
         # 1 GB = 1048576 KB
         return int((kv_cache_gb * 1048576) / kv_per_token_kb)
+
+    def get_rag_overhead(self) -> float:
+        overheads = self.agents_configs[AgentId.RAG.value]["search-overhead"]
+        assert overheads["model"] == "random"  # support random for now
+        min_, max_ = overheads["min"], overheads["max"]
+        return random.uniform(min_, max_)
