@@ -557,6 +557,7 @@ class EnvironmentStateData(TypedDict):
     avg_queue_length: Dict[AgentId, float]
     queue_delta: Dict[AgentId, int]
     p99_ttft: Dict[AgentId, float]
+    avg_tpot: Dict[AgentId, float]
     kv_cache_utilization: Dict[int, List[float]]
     mig_config_encoding: Dict[int, List[int]]
     recovery_flag: bool

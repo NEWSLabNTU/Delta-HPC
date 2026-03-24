@@ -68,6 +68,7 @@ class EnvironmentStateImpl(EnvironmentState):
             "avg_queue_length": self._get_avg_queue_length(simulator),
             "queue_delta": self._get_queue_delta(simulator),
             "p99_ttft": self._get_p99_ttft(simulator),
+            "avg_tpot": self._get_avg_tpot(simulator),
             "kv_cache_utilization": self._get_kv_cache_utilization(simulator),
             "mig_config_encoding": self._get_mig_config_encoding(simulator),
             "recovery_flag": self._reconfig_in_interval,
@@ -148,6 +149,38 @@ class EnvironmentStateImpl(EnvironmentState):
                 idx = min(idx, len(ttfts) - 1)
                 p99[agent_id] = ttfts[idx]
         return p99
+
+    def _get_avg_tpot(self, simulator: Simulator) -> Dict[AgentId, float]:
+        """Average time-per-output-token (s/token) for requests that both
+        started and finished within the current action interval."""
+        avg_tpot: Dict[AgentId, float] = {}
+        start_time = simulator.current_time - self.action_interval
+        for agent_id, agent in simulator.agents.items():
+            tpots: List[float] = []
+
+            # Search completed_requests in reverse-finish-time order;
+            # break early once finish_time predates the interval.
+            sorted_done_reqs: List[Request] = sorted(
+                agent.completed_requests,
+                key=lambda r: (
+                    r.finish_time if r.finish_time is not None else -float("inf")
+                ),
+                reverse=True,
+            )
+            for r in sorted_done_reqs:
+                if r.finish_time is None or r.finish_time < start_time:
+                    break
+                if (
+                    r.start_time is not None
+                    and r.start_time >= start_time
+                    and r.finish_time <= simulator.current_time
+                ):
+                    duration = r.finish_time - r.start_time
+                    if duration > 0 and r.completion_tokens > 0:
+                        tpots.append(duration / r.completion_tokens)
+
+            avg_tpot[agent_id] = sum(tpots) / len(tpots) if tpots else 0.0
+        return avg_tpot
 
     def _get_kv_cache_utilization(self, simulator: Simulator) -> Dict[int, List[float]]:
         util: Dict[int, List[float]] = {0: [0.0] * 5, 1: [0.0] * 5}
