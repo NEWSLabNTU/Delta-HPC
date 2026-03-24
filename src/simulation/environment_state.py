@@ -24,7 +24,6 @@ class EnvironmentStateImpl(EnvironmentState):
         self,
         current_time: float,
         agents: Dict[AgentId, Agent],
-        engines: Dict[str, LLMEngine],
     ):
         self._interval_arrivals.clear()
         self._queue_length_integral.clear()
@@ -120,7 +119,14 @@ class EnvironmentStateImpl(EnvironmentState):
         for agent_id, agent in simulator.agents.items():
             ttfts: List[float] = []
 
-            for r in reversed(agent.completed_requests):
+            sorted_done_reqs: List[Request] = sorted(
+                agent.completed_requests,
+                key=lambda r: (
+                    r.finish_time if r.finish_time is not None else -float("inf")
+                ),
+                reverse=True,
+            )
+            for r in sorted_done_reqs:
                 if r.finish_time is not None and r.finish_time < start_time:
                     break
                 if r.first_token_time is not None and r.first_token_time > start_time:

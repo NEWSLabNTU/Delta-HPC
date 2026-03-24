@@ -574,10 +574,7 @@ class EnvironmentState(ABC):
 
     @abstractmethod
     def reset_for_next_interval(
-        self,
-        current_time: float,
-        agents: Dict[AgentId, Agent],
-        engines: Dict[str, LLMEngine],
+        self, current_time: float, agents: Dict[AgentId, Agent]
     ) -> None: ...
 
     @abstractmethod

@@ -169,7 +169,7 @@ class SimulatorImpl(Simulator):
 
         self.action_interval = g.SIM_CONFIG.get_rl_action_interval()
         self.environment_state = EnvironmentStateImpl(self.action_interval)
-        self.environment_state.reset_for_next_interval(0.0, self._agents, self._engines)
+        self.environment_state.reset_for_next_interval(0.0, self._agents)
 
         # Schedule Resource Manager Action at action_interval
         self._events.add(
@@ -281,9 +281,7 @@ class SimulatorImpl(Simulator):
         state_data = self.environment_state.get_state(self)
         self._logger.log_environment_state(self._current_time, state_data)
         self.resource_manager.act(self._current_time, state_data)
-        self.environment_state.reset_for_next_interval(
-            self._current_time, self._agents, self._engines
-        )
+        self.environment_state.reset_for_next_interval(self._current_time, self._agents)
 
         self._events.add(
             SimulationEvent(
