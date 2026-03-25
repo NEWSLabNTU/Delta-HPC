@@ -211,6 +211,31 @@ class LLMEngineImpl(LLMEngine):
             payload=payload,
         )
 
+    def predict_drain_time(self) -> float:
+        """Predict the time needed to drain current requests."""
+        all_reqs = self._waiting_queue + self._running_queue.all_requests
+        if not all_reqs:
+            return 0.0
+
+        # Estimate prefill time
+        remaining_prefill = sum(
+            r.remaining_prefill_tokens for r in all_reqs if not r.prefill_completed
+        )
+        prefill_time = (
+            self._get_prefill_time(remaining_prefill) if remaining_prefill > 0 else 0.0
+        )
+
+        # Estimate decode time
+        max_decode_steps = max(
+            (r.completion_tokens - r.generated_tokens for r in all_reqs), default=0
+        )
+        decode_time = 0.0
+        num_reqs = len(all_reqs)
+        for _ in range(max_decode_steps):
+            decode_time += self._get_tpot(num_reqs)
+
+        return prefill_time + decode_time
+
     def activate(self, current_time: float):
         """Move from BOOTING to ACTIVE."""
         self._status = EngineStatus.ACTIVE

@@ -128,11 +128,8 @@ def main():
     )
 
     # For a quicker test we limit requests
-    sim.add_arrival_events(requests[:1000])
-
-    # Pre-populate triggering events upfront for step advanced mockup
     max_steps = 100
-    sim.schedule_resource_manager_triggers(max_steps)
+    sim.init_event_queues(requests[:1000], max_steps)
 
     print("Running mockup training loop...")
     for step in range(max_steps):
@@ -147,7 +144,7 @@ def main():
 
         # 2. Print State
         state_data = sim.environment_state.get_state(
-            sim.current_time, sim.agents, sim.engines
+            sim.current_time, sim.agents, sim.engines, sim.current_budget
         )
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         avg_q = state_data["avg_queue_length"]
@@ -162,7 +159,7 @@ def main():
             )
             load_turn += 1
             new_requests = load_requests(start_time=max_arr_time, turn=load_turn)
-            sim.add_arrival_events(new_requests[:1000])
+            sim._add_arrival_events(new_requests[:1000])
 
     print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")

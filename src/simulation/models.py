@@ -108,6 +108,7 @@ class EventType(Enum):
     RESOURCE_MANAGER_TRIGGER = "RESOURCE_MANAGER_TRIGGER"
     ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
     ENGINE_BOOT_COMPLETE = "ENGINE_BOOT_COMPLETE"
+    REFRESH_ACTION_BUDGET = "REFRESH_ACTION_BUDGET"
 
 
 class OperationPurpose(Enum):
@@ -455,6 +456,9 @@ class LLMEngine(ABC):
     @property
     def current_kv_utilization(self) -> float: ...
 
+    @abstractmethod
+    def predict_drain_time(self) -> float: ...
+
     @property
     @abstractmethod
     def model_name(self) -> str: ...
@@ -544,6 +548,10 @@ class Simulator(ABC):
 
     @property
     @abstractmethod
+    def current_budget(self) -> float: ...
+
+    @property
+    @abstractmethod
     def logger(self) -> SimulationLogger: ...
 
     @property
@@ -551,7 +559,7 @@ class Simulator(ABC):
     def action_interval(self) -> float: ...
 
     @abstractmethod
-    def add_arrival_events(self, requests: List[Request]) -> None: ...
+    def init_event_queues(self, requests: List[Request], max_steps: int) -> None: ...
 
     @abstractmethod
     def run(self) -> bool: ...
@@ -561,9 +569,6 @@ class Simulator(ABC):
 
     @abstractmethod
     def get_action_mask(self) -> List[bool]: ...
-
-    @abstractmethod
-    def schedule_resource_manager_triggers(self, max_steps: int) -> None: ...
 
 
 @dataclass
@@ -622,6 +627,7 @@ class EnvironmentStateData(TypedDict):
     avg_tpot: Dict[AgentId, float]
     kv_cache_utilization: Dict[int, List[float]]
     mig_config_encoding: Dict[int, List[int]]
+    current_budget: float
     recovery_flag: bool
     requests: List[Request]
     avg_running_requests: Dict[AgentId, float]
@@ -666,6 +672,7 @@ class EnvironmentState(ABC):
         current_time: float,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
+        current_budget: float,
     ) -> EnvironmentStateData: ...
 
 

@@ -1,0 +1,3 @@
+training:
+  reconfig-budget: 150 # seconds
+  refresh: 15 # minutes

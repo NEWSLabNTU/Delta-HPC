@@ -89,6 +89,7 @@ class EnvironmentStateImpl(EnvironmentState):
         current_time: float,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
+        current_budget: float,
     ) -> EnvironmentStateData:
         return {
             "arrival_rate": self._get_arrival_rate(agents, current_time),
@@ -100,6 +101,7 @@ class EnvironmentStateImpl(EnvironmentState):
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(engines),
             "mig_config_encoding": self._get_mig_config_encoding(engines),
+            "current_budget": current_budget,
             "recovery_flag": self._reconfig_in_interval,
             "requests": self._interval_requests,
         }

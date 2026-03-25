@@ -10,6 +10,7 @@ from src.simulation.worker import WorkerImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
 from src.simulation.environment_state import EnvironmentStateImpl
+from src.training.config import TRAINING_CONFIG
 
 # from src.training.resource_manager import ResourceManager
 
@@ -32,6 +33,7 @@ class SimulatorImpl(Simulator):
         self.environment_state = EnvironmentStateImpl(
             utils.SIM_CONFIG.get_rl_action_interval()
         )
+        self._reconfig_budget: float = TRAINING_CONFIG.reconfig_budget
         self.environment_state.reset_for_next_interval(0.0, self._agents)
 
     @property
@@ -49,6 +51,10 @@ class SimulatorImpl(Simulator):
     @property
     def current_time(self) -> float:
         return self._current_time
+
+    @property
+    def current_budget(self) -> float:
+        return self._reconfig_budget
 
     @property
     def logger(self) -> SimulationLogger:
@@ -70,7 +76,18 @@ class SimulatorImpl(Simulator):
                 max_arr_time = max(max_arr_time, e.time)
         return max_arr_time
 
-    def add_arrival_events(self, requests: List[Request]) -> None:
+    def init_event_queues(self, requests: List[Request], max_steps: int) -> None:
+        self._add_arrival_events(requests)
+        self._schedule_resource_manager_triggers(max_steps)
+        self._events.add(
+            SimulationEvent(
+                time=0.0,
+                event_type=EventType.REFRESH_ACTION_BUDGET,
+                payload={},
+            )
+        )
+
+    def _add_arrival_events(self, requests: List[Request]) -> None:
         for req in requests:
             self._events.add(
                 SimulationEvent(
@@ -96,7 +113,7 @@ class SimulatorImpl(Simulator):
 
         self._events.update(search_evts)
 
-    def schedule_resource_manager_triggers(self, max_steps: int) -> None:
+    def _schedule_resource_manager_triggers(self, max_steps: int) -> None:
         """Schedules RESOURCE_MANAGER_TRIGGER events at fixed intervals."""
         for i in range(1, max_steps + 1):
             t = i * self.action_interval
@@ -310,15 +327,99 @@ class SimulatorImpl(Simulator):
             case _:
                 raise ValueError(f"Unknown action {action_type}")
 
+    def _predict_action_cost(self, action: ResourceManagerAction) -> float:
+        """Predict the reconfiguration cost (drain + boot time) for an action."""
+        val = action.value
+        cost = 0.0
+
+        if isinstance(val, VramTransferAction):
+            vram_transfer = TransferDetails(
+                amount=val.amount,
+                giver_id=val.giver,
+                receiver_id=val.receiver,
+            )
+            transfer_decision = self.worker.transfer(
+                self._current_time, vram_transfer, self._agents
+            )
+            if transfer_decision:
+                atype, data = transfer_decision
+                match atype:
+                    case "exact":
+                        affected = [data["engine"]]
+                        boot_cost = affected[0]._restart_time
+                    case "merge":
+                        affected = data["engines"]
+                        boot_cost = utils.SIM_CONFIG.get_restart_time(
+                            data["receiver"].agent_id, data["new_profile"]
+                        )
+                    case "split":
+                        affected = [data["engine"]]
+                        boot_cost = utils.SIM_CONFIG.get_restart_time(
+                            data["receiver"].agent_id, data["mig_to_transfer"]
+                        )
+                    case _:
+                        raise ValueError(f"Unknown transfer action type: {atype}")
+                drain_cost = max(
+                    (e.predict_drain_time() for e in affected), default=0.0
+                )
+                cost = drain_cost + boot_cost
+
+        elif isinstance(val, MigAction):
+            victim = self._agents[val.victim]
+            match val.action:
+                case "split":
+                    possible = utils.MIG_RULES.get_possible_splits(victim)
+                    if possible:
+                        eng, new_profiles = min(
+                            possible,
+                            key=lambda c: len(c[0].running_queue)
+                            + len(c[0].waiting_queue),
+                        )
+                        drain_cost = eng.predict_drain_time()
+                        boot_cost = max(
+                            (
+                                utils.SIM_CONFIG.get_restart_time(val.victim, p)
+                                for p in new_profiles
+                            ),
+                            default=0.0,
+                        )
+                        cost = drain_cost + boot_cost
+                case "merge":
+                    possible = utils.MIG_RULES.get_possible_merges(victim)
+                    if possible:
+                        engs, new_profile = min(
+                            possible,
+                            key=lambda c: sum(
+                                len(e.running_queue) + len(e.waiting_queue)
+                                for e in c[0]
+                            ),
+                        )
+                        drain_cost = max(
+                            (e.predict_drain_time() for e in engs), default=0.0
+                        )
+                        boot_cost = utils.SIM_CONFIG.get_restart_time(
+                            val.victim, new_profile
+                        )
+                        cost = drain_cost + boot_cost
+                case _:
+                    raise ValueError(f"Unknown MIG action: {val.action}")
+
+        return cost
+
     def handle_resource_manager_trigger(self, action: ResourceManagerAction):
         self.environment_state.record_queue_length_advance(
             self._current_time, self._agents
         )
         state_data = self.environment_state.get_state(
-            self._current_time, self._agents, self._engines
+            self._current_time, self._agents, self._engines, self._reconfig_budget
         )
         self._logger.log_environment_state(self._current_time, state_data)
 
+        # 1. Calculate and deduct cost
+        cost = self._predict_action_cost(action)
+        self._reconfig_budget -= cost
+
+        # 2. Perform action
         match action:
             case ResourceManagerAction.NO_ACTION:
                 pass
@@ -656,6 +757,15 @@ class SimulatorImpl(Simulator):
                     self._handle_engine_step_complete(
                         cast(EngineStepPayload, current_event.payload)
                     )
+                case EventType.REFRESH_ACTION_BUDGET:
+                    self._reconfig_budget = TRAINING_CONFIG.reconfig_budget
+                    self._events.add(
+                        SimulationEvent(
+                            time=self._current_time + TRAINING_CONFIG.refresh_period,
+                            event_type=EventType.REFRESH_ACTION_BUDGET,
+                            payload={},
+                        )
+                    )
                 case EventType.RESOURCE_MANAGER_TRIGGER:
                     raise ValueError(f"Unexpected event {current_event.event_type}")
 
@@ -692,6 +802,14 @@ class SimulatorImpl(Simulator):
             self._engines[eid] = eng
 
         self.environment_state.reset_for_next_interval(0.0, self._agents)
+        self._reconfig_budget = TRAINING_CONFIG.reconfig_budget
+        self._events.add(
+            SimulationEvent(
+                time=0.0,
+                event_type=EventType.REFRESH_ACTION_BUDGET,
+                payload={},
+            )
+        )
 
     def get_action_mask(self) -> List[bool]:
         mask: List[bool] = []
@@ -722,6 +840,13 @@ class SimulatorImpl(Simulator):
                         )
                     case _:
                         raise ValueError(f"Unknown MIG action: {val.action}")
+
+            # Additional budget check
+            if mask[-1]:  # Only check if the action is otherwise possible
+                cost = self._predict_action_cost(action)
+                if cost > self._reconfig_budget:
+                    mask[-1] = False
+
         assert len(mask) == len(ResourceManagerAction)
         return mask
 
