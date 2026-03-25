@@ -71,6 +71,13 @@ class MIGProfile(Enum):
     @property
     def idx(self) -> int:
         return list(MIGProfile).index(self)
+ 
+    @classmethod
+    def from_string(cls, profile_str: str) -> MIGProfile:
+        for p in cls:
+            if p.string == profile_str:
+                return p
+        raise ValueError(f"Invalid MIG profile string: {profile_str}")
 
 
 type MIGConfigType = Tuple[MIGProfile, ...]
@@ -542,6 +549,9 @@ class Simulator(ABC):
 
     @abstractmethod
     def run(self) -> bool: ...
+ 
+    @abstractmethod
+    def reset(self) -> None: ...
 
 
 @dataclass

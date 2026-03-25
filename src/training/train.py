@@ -4,7 +4,8 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from typing import Dict, Any, Tuple, Optional
-from src.simulation.models import ResourceManagerAction
+
+from src.simulation.models import *
 
 
 class MIGResourceEnv(gym.Env[np.ndarray, int]):
@@ -13,7 +14,7 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
     Follows a 90-second fixed-interval Discrete-Time MDP.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, simulator: Simulator) -> None:
         super(MIGResourceEnv, self).__init__()
 
         """
@@ -28,11 +29,12 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         7. Merge A1’s 2 smaller MIG
         8. Merge A2’s 2 smaller MIG
         """
+        self.sim = simulator
         self.action_space: spaces.Discrete = spaces.Discrete(9)
 
-        # State Space: Placeholder for the 120-second sliding window metrics
+        # State Space: Flattened dictionary metrics
         self.observation_space: spaces.Box = spaces.Box(
-            low=0, high=1, shape=(20,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(35,), dtype=np.float32
         )
 
         # Internal state tracking
@@ -40,12 +42,44 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         self.max_steps: int = 1000
 
     def _get_obs(self) -> np.ndarray:
-        """
-        TODO: Implement the 120-second sliding window calculation logic here.
-        """
-        # Dummy observation: Ensuring it matches the observation_space shape and dtype
-        obs: np.ndarray = np.random.rand(20).astype(np.float32)
-        return obs
+        state_data = self.sim.environment_state.get_state(
+            self.sim.current_time, self.sim.agents, self.sim.engines
+        )
+
+        obs_list = []
+        agents_ordered = sorted(self.sim.agents.keys())
+
+        # 1-7. Agent Metrics, 14 items
+        metrics = [
+            "arrival_rate",
+            "arrival_trend",
+            "avg_queue_length",
+            "avg_running_requests",
+            "queue_delta",
+            "p99_ttft",
+            "avg_tpot",
+        ]
+        for metric in metrics:
+            data = state_data[metric]
+            for aid in agents_ordered:
+                obs_list.append(float(data.get(aid, 0.0)))
+
+        # 8. kv_cache_utilization, 10 items
+        kv_util = state_data["kv_cache_utilization"]
+        for gpu_idx in [0, 1]:
+            lst = kv_util.get(gpu_idx, [0.0] * 5)
+            obs_list.extend(lst)
+
+        # 9. mig_config_encoding, 10 items
+        mig_enc = state_data["mig_config_encoding"]
+        for gpu_idx in [0, 1]:
+            lst = mig_enc.get(gpu_idx, [0] * 5)
+            obs_list.extend([float(x) for x in lst])
+
+        # 10. recovery_flag: 1 item
+        obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)
+
+        return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(self, action: int, obs: np.ndarray) -> float:
         """
@@ -70,7 +104,7 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         # Map integer action index to ResourceManagerAction Enum
         enum_action = list(ResourceManagerAction)[action]
         self.sim.handle_resource_manager_trigger(enum_action)
-        self.sim.run_until()
+        self.sim.run()
 
         # 3. Compute new state and reward
         obs: np.ndarray = self._get_obs()
@@ -88,6 +122,8 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         super().reset(seed=seed)
         self.current_step = 0
         # Reset hardware to initial MIG profile if in a real environment
+        self.sim.reset()
+        # TODO: Replanish requests
         return self._get_obs(), {}
 
 

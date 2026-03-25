@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from tqdm import tqdm
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
@@ -10,7 +9,8 @@ from src.simulation.worker import WorkerImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
 from src.simulation.environment_state import EnvironmentStateImpl
-from src.training.resource_manager import ResourceManager
+
+# from src.training.resource_manager import ResourceManager
 
 
 class SimulatorImpl(Simulator):
@@ -24,13 +24,13 @@ class SimulatorImpl(Simulator):
         self._engines = engines
         self._events: SortedList[SimulationEvent] = SortedList()
         self._current_time: float = 0.0
-        self.resource_manager = ResourceManager()
+        # self.resource_manager = ResourceManager()
         self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
-        self.total_requests = 0
 
-        self.action_interval = g.SIM_CONFIG.get_rl_action_interval()
-        self.environment_state = EnvironmentStateImpl(self.action_interval)
+        self.environment_state = EnvironmentStateImpl(
+            g.SIM_CONFIG.get_rl_action_interval()
+        )
         self.environment_state.reset_for_next_interval(0.0, self._agents)
 
     @property
@@ -294,20 +294,22 @@ class SimulatorImpl(Simulator):
             case ResourceManagerAction.NO_ACTION:
                 pass
 
-            case ResourceManagerAction.TRANSFER_10_CODING_RAG | \
-                 ResourceManagerAction.TRANSFER_10_RAG_CODING | \
-                 ResourceManagerAction.TRANSFER_20_CODING_RAG | \
-                 ResourceManagerAction.TRANSFER_20_RAG_CODING:
-                v_action = cast(VramTransferAction, action.value)
+            case (
+                ResourceManagerAction.TRANSFER_10_CODING_RAG
+                | ResourceManagerAction.TRANSFER_10_RAG_CODING
+                | ResourceManagerAction.TRANSFER_20_CODING_RAG
+                | ResourceManagerAction.TRANSFER_20_RAG_CODING
+            ):
+                v_action = action.value
                 vram_transfer = TransferDetails(
                     amount=v_action.amount,
                     giver_id=v_action.giver,
-                    receiver_id=v_action.receiver
+                    receiver_id=v_action.receiver,
                 )
                 self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
 
             case ResourceManagerAction.SPLIT_CODING | ResourceManagerAction.SPLIT_RAG:
-                m_action = cast(MigAction, action.value)
+                m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
                 possible_splits = g.MIG_RULES.get_possible_splits(agent)
@@ -316,7 +318,7 @@ class SimulatorImpl(Simulator):
                         possible_splits,
                         key=lambda c: len(c[0].running_queue) + len(c[0].waiting_queue),
                     )
-                    mig_decision = (
+                    mig_decision: Tuple[str, Any] = (
                         "split",
                         {
                             "engine": eng,
@@ -328,7 +330,7 @@ class SimulatorImpl(Simulator):
                     self._handle_resource_manager_trigger_mig_decision(mig_decision)
 
             case ResourceManagerAction.MERGE_CODING | ResourceManagerAction.MERGE_RAG:
-                m_action = cast(MigAction, action.value)
+                m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
                 possible_merges = g.MIG_RULES.get_possible_merges(agent)
@@ -618,8 +620,38 @@ class SimulatorImpl(Simulator):
                     self._handle_engine_step_complete(
                         cast(EngineStepPayload, current_event.payload)
                     )
+                case EventType.RESOURCE_MANAGER_TRIGGER:
+                    raise ValueError(f"Unexpected event {current_event.event_type}")
 
         return False  # Finished simulation
+
+    def reset(self) -> None:
+        """Resets the simulator to its initial hardware and agent state."""
+        self._current_time = 0.0
+        self._events.clear()
+        self._agents.clear()
+        self._engines.clear()
+
+        for aid in AgentId:
+            self._agents[aid] = AgentImpl(aid)
+
+        for eng_conf in g.SIM_CONFIG.initial_state:
+            mig = MIGProfile.from_string(eng_conf["mig"])
+            gpu = int(eng_conf["gpu"])
+            eid = f"GPU_{gpu}_{mig.string}"
+            agent = self._agents[AgentId(eng_conf["agent"])]
+
+            eng = LLMEngineImpl.create(
+                gpu=gpu,
+                engine_id=eid,
+                owner=agent,
+                mig_profile=mig,
+                current_time=0.0,
+            )
+            agent.add_engine(eng)
+            self._engines[eid] = eng
+
+        self.environment_state.reset_for_next_interval(0.0, self._agents)
 
     def _peak_next_stopping_evt(self, agent_id: AgentId) -> float | None:
         for evt in self._events:

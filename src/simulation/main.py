@@ -10,13 +10,6 @@ from src.simulation.engine import LLMEngineImpl
 from src.simulation.agent import AgentImpl
 
 
-def get_mig_profile(profile_str: str) -> MIGProfile:
-    for p in MIGProfile:
-        if p.string == profile_str:
-            return p
-    raise ValueError(f"Invalid MIG profile string: {profile_str}")
-
-
 def load_requests(
     arrival_interval_sec: float = 0.5, start_time: float = 0.0, turn: int = 0
 ) -> List[Request]:
@@ -109,7 +102,7 @@ def main():
         agents[aid] = AgentImpl(aid)
 
     for eng_conf in g.SIM_CONFIG.initial_state:
-        mig = get_mig_profile(eng_conf["mig"])
+        mig = MIGProfile.from_string(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
         eid = f"GPU_{gpu}_{mig.string}"
         agent = agents[AgentId(eng_conf["agent"])]
@@ -149,7 +142,7 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random action
         action = ResourceManagerAction.NO_ACTION
- 
+
         if step > 0:
             sim.handle_resource_manager_trigger(action)
         sim.run()
