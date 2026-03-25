@@ -482,6 +482,10 @@ class LLMEngine(ABC):
     @abstractmethod
     def running_queue(self) -> RunningRequests: ...
 
+    @property
+    @abstractmethod
+    def is_permanent(self) -> bool: ...
+
     @abstractmethod
     def update_model(
         self,
@@ -504,6 +508,7 @@ class LLMEngine(ABC):
         owner: Agent,
         mig_profile: MIGProfile,
         current_time: float,
+        is_permanent: bool = False,
     ) -> LLMEngine: ...
 
     @abstractmethod
@@ -543,6 +548,10 @@ class Simulator(ABC):
     @property
     @abstractmethod
     def logger(self) -> SimulationLogger: ...
+
+    @property
+    @abstractmethod
+    def action_interval(self) -> float: ...
 
     @abstractmethod
     def add_arrival_events(self, requests: List[Request]) -> None: ...

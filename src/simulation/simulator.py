@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from sortedcontainers import SortedList
-from typing import Any, List, Dict, Tuple, cast
+import uuid
+from typing import Any, List, Dict, Tuple, cast, Mapping
 
 from src.simulation.models import *
 import src.simulation.global_vars as g
@@ -52,6 +53,10 @@ class SimulatorImpl(Simulator):
     @property
     def logger(self) -> SimulationLogger:
         return self._logger
+
+    @property
+    def action_interval(self) -> float:
+        return g.SIM_CONFIG.get_rl_action_interval()
 
     def add_arrival_events(self, requests: List[Request]) -> None:
         for req in requests:
@@ -400,12 +405,13 @@ class SimulatorImpl(Simulator):
                     giver_agent.engines.remove(e)
 
             new_profile = payload["new_profile"]
-            new_eid = (
-                f"GPU_{payload['gpu']}_{new_profile.string}_{int(self._current_time)}"
-            )
             # If a receiver was specified (merge-for-transfer), boot directly on receiver
             receiver_id = payload.get("receiver_id")
             target_agent = self._agents[receiver_id] if receiver_id else giver_agent
+
+            new_eid = g.generate_engine_id(
+                target_agent.agent_id.value, payload["gpu"], new_profile.string
+            )
             new_eng = LLMEngineImpl.create(
                 payload["gpu"], new_eid, target_agent, new_profile, self._current_time
             )
@@ -435,22 +441,26 @@ class SimulatorImpl(Simulator):
         is_vram_transfer = receiver_id is not None
         if is_vram_transfer:
             assert received_profile is not None
-        has_received = False
+        new_owners = []
+        temp_has_received = False
+        for p in new_profiles:
+            new_owner = agent
+            if is_vram_transfer and p == received_profile and not temp_has_received:
+                new_owner = self._agents[receiver_id]
+                temp_has_received = True
+            new_owners.append(new_owner)
 
         new_eids = [
-            f"GPU_{gpu}_{p.string}_{int(self._current_time)}_{i}"
-            for i, p in enumerate(new_profiles)
+            g.generate_engine_id(own.agent_id.value, gpu, p.string)
+            for own, p in zip(new_owners, new_profiles)
         ]
-        for new_eid, p in zip(new_eids, new_profiles):
-            new_owner = agent
-            if is_vram_transfer and p == received_profile and not has_received:
-                new_owner = self._agents[receiver_id]
-                has_received = True
 
+        for new_eid, new_owner, p in zip(new_eids, new_owners, new_profiles):
             new_eng = LLMEngineImpl.create(
-                payload["gpu"], new_eid, new_owner, p, self._current_time
+                gpu, new_eid, new_owner, p, self._current_time
             )
             new_owner.add_engine(new_eng)
+            self._engines[new_eid] = new_eng
 
             boot_split: BootPayload = {
                 "engine_id": new_eid,
@@ -459,7 +469,6 @@ class SimulatorImpl(Simulator):
             }
 
             self._events.add(new_eng.trigger_boot(boot_split))
-            self._engines[new_eid] = new_eng
         self._logger.log_mig_split_complete(self._current_time, engine_id)
 
     def _handle_shutdown_complete(

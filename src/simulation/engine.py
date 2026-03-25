@@ -15,6 +15,7 @@ class LLMEngineImpl(LLMEngine):
         owner: Agent,
         mig_profile: MIGProfile,
         current_time: float,
+        is_permanent: bool = False,
     ) -> LLMEngineImpl:
         mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
 
@@ -29,6 +30,7 @@ class LLMEngineImpl(LLMEngine):
             tpot_params=g.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
             restart_time=g.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
             current_time=current_time,
+            is_permanent=is_permanent,
         )
 
     def __init__(
@@ -43,12 +45,14 @@ class LLMEngineImpl(LLMEngine):
         tpot_params: ParamDict,
         restart_time: float,
         current_time: float = 0.0,
+        is_permanent: bool = False,
     ):
         self._gpu = gpu
         self._engine_id = engine_id
         self._owner = owner
         self._model_name = model_name
         self._mig_profile = mig_profile
+        self._is_permanent = is_permanent
 
         # Regression params
         self._prefill_alpha = prefill_params["alpha"]
@@ -111,6 +115,10 @@ class LLMEngineImpl(LLMEngine):
     @property
     def running_queue(self) -> RunningRequests:
         return self._running_queue
+
+    @property
+    def is_permanent(self) -> bool:
+        return self._is_permanent
 
     @property
     def current_kv_utilization(self) -> float:

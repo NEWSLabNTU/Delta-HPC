@@ -78,8 +78,9 @@ class SimulationLoggerImpl(SimulationLogger):
             for engine in agent.engines:
                 # Log Owner + MIG
                 is_stepping = " [STEPPING]" if engine is stepping_engine else ""
+                p_suffix = " [P]" if engine.is_permanent else ""
                 lines.append(
-                    f"    Engine: {aid.value}-{engine.engine_id} (Time: {engine.current_time:.4f}) [Status: {engine.status.value}]{is_stepping}"
+                    f"    Engine: {engine.engine_id}{p_suffix} (Time: {engine.current_time:.4f}) [Status: {engine.status.value}]{is_stepping}"
                 )
                 # Log Waiting requests list
                 if engine.waiting_queue:

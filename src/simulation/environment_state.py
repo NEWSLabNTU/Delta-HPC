@@ -220,17 +220,19 @@ class EnvironmentStateImpl(EnvironmentState):
     def _get_kv_cache_utilization(
         self, engines: Dict[str, LLMEngine]
     ) -> Dict[int, List[float]]:
-        util: Dict[int, List[float]] = {0: [0.0] * 5, 1: [0.0] * 5}
+        num_profiles = len(MIGProfile)
+        util: Dict[int, List[float]] = defaultdict(lambda: [0.0] * num_profiles)
         for engine in engines.values():
             if engine.status == EngineStatus.BOOTING:
                 continue
             util[engine.gpu][engine.mig_profile.idx] = engine.current_kv_utilization
-        return util
+        return dict(util)
 
     def _get_mig_config_encoding(
         self, engines: Dict[str, LLMEngine]
     ) -> Dict[int, List[int]]:
-        encoding: Dict[int, List[int]] = {0: [0] * 5, 1: [0] * 5}
+        num_profiles = len(MIGProfile)
+        encoding: Dict[int, List[int]] = defaultdict(lambda: [0] * num_profiles)
         for engine in engines.values():
             encoding[engine.gpu][engine.mig_profile.idx] += 1
         return dict(encoding)

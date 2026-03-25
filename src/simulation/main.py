@@ -1,6 +1,7 @@
 import random
 import argparse
-from typing import Dict, List
+import uuid
+from typing import Dict, List, Set
 
 from src.simulation.models import *
 import src.simulation.global_vars as g
@@ -104,14 +105,18 @@ def main():
     for eng_conf in g.SIM_CONFIG.initial_state:
         mig = MIGProfile.from_string(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
-        eid = f"GPU_{gpu}_{mig.string}"
-        agent = agents[AgentId(eng_conf["agent"])]
+        agent_name = eng_conf["agent"]
+        agent = agents[AgentId(agent_name)]
+        eid = g.generate_engine_id(agent_name, gpu, mig.string)
+
+        is_permanent = eng_conf.get("is-permanent", False)
         eng = LLMEngineImpl.create(
             gpu=gpu,
             engine_id=eid,
             owner=agent,
             mig_profile=mig,
             current_time=0.0,
+            is_permanent=is_permanent,
         )
 
         agent.add_engine(eng)

@@ -43,11 +43,27 @@ class AgentImpl(Agent):
             self._dispatch_queue.append(request)
             return None
 
-        # Simple work-balance: Pick the active engine with the fewest requests
-        best_engine = min(
-            active_engines,
-            key=lambda e: len(e.running_queue) + len(e.waiting_queue),
-        )
+        regular_active = [e for e in active_engines if not e.is_permanent]
+        permanent_active = [e for e in active_engines if e.is_permanent]
+
+        # Use permanent engine if all regular engines have waiting requests
+        if (
+            permanent_active
+            and not regular_active
+            or (
+                regular_active and all(len(e.waiting_queue) > 0 for e in regular_active)
+            )
+        ):
+            best_engine = min(
+                permanent_active,
+                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+            )
+        else:
+            # Must have regular_active here if use_permanent case is skipped
+            best_engine = min(
+                regular_active,
+                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+            )
 
         # Resolve completion_tokens based on the engine's current model
         model_req_map = g.TOKENS_MAP[self.agent_id][best_engine.model_name]

@@ -58,7 +58,7 @@ class MIGProfileRuleImpl(MIGProfileRule):
     ) -> List[Tuple[List[LLMEngine], MIGProfile]]:
         by_gpu: Dict[int, List[LLMEngine]] = defaultdict(list)
         for e in agent.engines:
-            if e.status == EngineStatus.ACTIVE:
+            if e.status == EngineStatus.ACTIVE and not e.is_permanent:
                 by_gpu[e.gpu].append(e)
 
         possible_merges: List[Tuple[List[LLMEngine], MIGProfile]] = []
@@ -90,7 +90,7 @@ class MIGProfileRuleImpl(MIGProfileRule):
     ) -> List[Tuple[LLMEngine, List[MIGProfile]]]:
         by_gpu: Dict[int, List[LLMEngine]] = defaultdict(list)
         for e in agent.engines:
-            if e.status == EngineStatus.ACTIVE:
+            if e.status == EngineStatus.ACTIVE and not e.is_permanent:
                 by_gpu[e.gpu].append(e)
 
         possible_splits: List[Tuple[LLMEngine, List[MIGProfile]]] = []

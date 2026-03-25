@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import yaml
+import uuid
 from pathlib import Path
 from typing import Dict, Tuple, Set
 
@@ -72,3 +73,15 @@ SIM_CONFIG: SimulationConfig = init_config(base_dir)
 TOKENS_MAP: TokensMapType = init_tokens_map(base_dir)
 
 MIG_RULES = MIGProfileRuleImpl()
+
+# Global set to track used engine IDs to ensure uniqueness
+USED_EIDS: Set[str] = set()
+
+
+def generate_engine_id(agent_name: str, gpu: int, mig_str: str) -> str:
+    """Generates a globally unique engine ID."""
+    while True:
+        eid = f"{agent_name}_GPU_{gpu}_{mig_str}_{uuid.uuid4().hex[:4]}"
+        if eid not in USED_EIDS:
+            USED_EIDS.add(eid)
+            return eid
