@@ -221,12 +221,23 @@ class EnvironmentStateImpl(EnvironmentState):
         self, engines: Dict[str, LLMEngine]
     ) -> Dict[int, List[float]]:
         num_profiles = len(MIGProfile)
-        util: Dict[int, List[float]] = defaultdict(lambda: [0.0] * num_profiles)
+        util_sums: Dict[int, List[float]] = defaultdict(lambda: [0.0] * num_profiles)
+        counts: Dict[int, List[int]] = defaultdict(lambda: [0] * num_profiles)
+
         for engine in engines.values():
             if engine.status == EngineStatus.BOOTING:
                 continue
-            util[engine.gpu][engine.mig_profile.idx] = engine.current_kv_utilization
-        return dict(util)
+            idx = engine.mig_profile.idx
+            util_sums[engine.gpu][idx] += engine.current_kv_utilization
+            counts[engine.gpu][idx] += 1
+
+        result: Dict[int, List[float]] = {}
+        for gpu, sums in util_sums.items():
+            gpu_counts = counts[gpu]
+            result[gpu] = [
+                s / c if c > 0 else 0.0 for s, c in zip(sums, gpu_counts)
+            ]
+        return result
 
     def _get_mig_config_encoding(
         self, engines: Dict[str, LLMEngine]

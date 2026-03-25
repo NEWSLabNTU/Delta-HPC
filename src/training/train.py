@@ -66,13 +66,13 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
 
         # 8. kv_cache_utilization, 10 items
         kv_util = state_data["kv_cache_utilization"]
-        for gpu_idx in [0, 1]:
+        for gpu_idx in [0, 1, 2]:
             lst = kv_util.get(gpu_idx, [0.0] * 5)
             obs_list.extend(lst)
 
         # 9. mig_config_encoding, 10 items
         mig_enc = state_data["mig_config_encoding"]
-        for gpu_idx in [0, 1]:
+        for gpu_idx in [0, 1, 2]:
             lst = mig_enc.get(gpu_idx, [0] * 5)
             obs_list.extend([float(x) for x in lst])
 
