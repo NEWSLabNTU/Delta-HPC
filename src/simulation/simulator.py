@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from sortedcontainers import SortedList
-import uuid
-from typing import Any, List, Dict, Tuple, cast, Mapping
+from typing import Any, List, Dict, Tuple, cast
 
 from src.simulation.models import *
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
+from src.simulation.agent import AgentImpl
 from src.simulation.worker import WorkerImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
@@ -30,7 +30,7 @@ class SimulatorImpl(Simulator):
         self._logger = SimulationLoggerImpl(enabled=not no_log)
 
         self.environment_state = EnvironmentStateImpl(
-            g.SIM_CONFIG.get_rl_action_interval()
+            utils.SIM_CONFIG.get_rl_action_interval()
         )
         self.environment_state.reset_for_next_interval(0.0, self._agents)
 
@@ -56,7 +56,19 @@ class SimulatorImpl(Simulator):
 
     @property
     def action_interval(self) -> float:
-        return g.SIM_CONFIG.get_rl_action_interval()
+        return utils.SIM_CONFIG.get_rl_action_interval()
+
+    @property
+    def pending_arrival_count(self) -> int:
+        return sum(1 for e in self._events if e.event_type == EventType.REQUEST_ARRIVAL)
+
+    @property
+    def latest_arrival_time(self) -> float:
+        max_arr_time = self._current_time
+        for e in self._events:
+            if e.event_type == EventType.REQUEST_ARRIVAL:
+                max_arr_time = max(max_arr_time, e.time)
+        return max_arr_time
 
     def add_arrival_events(self, requests: List[Request]) -> None:
         for req in requests:
@@ -76,13 +88,25 @@ class SimulatorImpl(Simulator):
             if req.agent_id == AgentId.RAG:
                 search_evts.append(
                     SimulationEvent(
-                        time=req.arrival_time + g.SIM_CONFIG.get_rag_overhead(),
+                        time=req.arrival_time + utils.SIM_CONFIG.get_rag_overhead(),
                         event_type=EventType.RAG_SEARCH_COMPLETE,
                         payload={"request": req},
                     )
                 )
 
         self._events.update(search_evts)
+
+    def schedule_resource_manager_triggers(self, max_steps: int) -> None:
+        """Schedules RESOURCE_MANAGER_TRIGGER events at fixed intervals."""
+        for i in range(1, max_steps + 1):
+            t = i * self.action_interval
+            self._events.add(
+                SimulationEvent(
+                    time=t,
+                    event_type=EventType.RESOURCE_MANAGER_TRIGGER,
+                    payload={},
+                )
+            )
 
     def has_active_work(self) -> bool:
         if any(
@@ -317,7 +341,7 @@ class SimulatorImpl(Simulator):
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                possible_splits = g.MIG_RULES.get_possible_splits(agent)
+                possible_splits = utils.MIG_RULES.get_possible_splits(agent)
                 if possible_splits:
                     eng, new_profiles = min(
                         possible_splits,
@@ -338,7 +362,7 @@ class SimulatorImpl(Simulator):
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                possible_merges = g.MIG_RULES.get_possible_merges(agent)
+                possible_merges = utils.MIG_RULES.get_possible_merges(agent)
                 if possible_merges:
                     engs, new_profile = min(
                         possible_merges,
@@ -368,19 +392,23 @@ class SimulatorImpl(Simulator):
         receiver_id = payload["receiver_id"]
         engine = self._engines[engine_id]
 
-        new_model = g.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
+        new_model = utils.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
 
         receiver = self._agents[receiver_id]
 
         engine.update_model(
             new_owner=receiver,
             model_name=new_model,
-            max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[new_model],
-            prefill_params=g.SIM_CONFIG.get_prefill_params(
+            max_batched_tokens=utils.SIM_CONFIG.max_batched_tokens[new_model],
+            prefill_params=utils.SIM_CONFIG.get_prefill_params(
                 receiver_id, engine.mig_profile
             ),
-            tpot_params=g.SIM_CONFIG.get_tpot_params(receiver_id, engine.mig_profile),
-            restart_time=g.SIM_CONFIG.get_restart_time(receiver_id, engine.mig_profile),
+            tpot_params=utils.SIM_CONFIG.get_tpot_params(
+                receiver_id, engine.mig_profile
+            ),
+            restart_time=utils.SIM_CONFIG.get_restart_time(
+                receiver_id, engine.mig_profile
+            ),
         )
 
         boot_payload: BootPayload = {
@@ -409,7 +437,7 @@ class SimulatorImpl(Simulator):
             receiver_id = payload.get("receiver_id")
             target_agent = self._agents[receiver_id] if receiver_id else giver_agent
 
-            new_eid = g.generate_engine_id(
+            new_eid = utils.generate_engine_id(
                 target_agent.agent_id.value, payload["gpu"], new_profile.string
             )
             new_eng = LLMEngineImpl.create(
@@ -441,7 +469,7 @@ class SimulatorImpl(Simulator):
         is_vram_transfer = receiver_id is not None
         if is_vram_transfer:
             assert received_profile is not None
-        new_owners = []
+        new_owners: List[Agent] = []
         temp_has_received = False
         for p in new_profiles:
             new_owner = agent
@@ -451,7 +479,7 @@ class SimulatorImpl(Simulator):
             new_owners.append(new_owner)
 
         new_eids = [
-            g.generate_engine_id(own.agent_id.value, gpu, p.string)
+            utils.generate_engine_id(own.agent_id.value, gpu, p.string)
             for own, p in zip(new_owners, new_profiles)
         ]
 
@@ -520,7 +548,6 @@ class SimulatorImpl(Simulator):
             if still_booting:
                 return  # Wait for remaining sibling engines
 
-        agent.process_waiting_queue(self._current_time)
         for e in agent.engines:
             if (
                 e.status == EngineStatus.ACTIVE
@@ -640,27 +667,63 @@ class SimulatorImpl(Simulator):
         self._events.clear()
         self._agents.clear()
         self._engines.clear()
+        utils.USED_EIDS.clear()
 
         for aid in AgentId:
             self._agents[aid] = AgentImpl(aid)
 
-        for eng_conf in g.SIM_CONFIG.initial_state:
+        for eng_conf in utils.SIM_CONFIG.initial_state:
             mig = MIGProfile.from_string(eng_conf["mig"])
             gpu = int(eng_conf["gpu"])
-            eid = f"GPU_{gpu}_{mig.string}"
-            agent = self._agents[AgentId(eng_conf["agent"])]
+            agent_name = eng_conf["agent"]
+            agent = self._agents[AgentId(agent_name)]
+            eid = utils.generate_engine_id(agent_name, gpu, mig.string)
 
+            is_permanent = eng_conf.get("is-permanent", False)
             eng = LLMEngineImpl.create(
                 gpu=gpu,
                 engine_id=eid,
                 owner=agent,
                 mig_profile=mig,
                 current_time=0.0,
+                is_permanent=is_permanent,
             )
             agent.add_engine(eng)
             self._engines[eid] = eng
 
         self.environment_state.reset_for_next_interval(0.0, self._agents)
+
+    def get_action_mask(self) -> List[bool]:
+        mask: List[bool] = []
+        for action in ResourceManagerAction:
+            if action == ResourceManagerAction.NO_ACTION:
+                mask.append(True)
+                continue
+
+            val = action.value
+            if isinstance(val, VramTransferAction):
+                giver = self._agents[val.giver]
+                active_vram = sum(
+                    e.mig_profile.vram
+                    for e in giver.engines
+                    if e.status == EngineStatus.ACTIVE and not e.is_permanent
+                )
+                mask.append(active_vram >= val.amount)
+            else:  # MIGAction
+                victim = self._agents[val.victim]
+                match val.action:
+                    case "split":
+                        mask.append(
+                            len(utils.MIG_RULES.get_possible_splits(victim)) > 0
+                        )
+                    case "merge":
+                        mask.append(
+                            len(utils.MIG_RULES.get_possible_merges(victim)) > 0
+                        )
+                    case _:
+                        raise ValueError(f"Unknown MIG action: {val.action}")
+        assert len(mask) == len(ResourceManagerAction)
+        return mask
 
     def _peak_next_stopping_evt(self, agent_id: AgentId) -> float | None:
         for evt in self._events:

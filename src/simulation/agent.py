@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from src.simulation.models import *
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
 
 
 class AgentImpl(Agent):
@@ -39,9 +39,7 @@ class AgentImpl(Agent):
         If no active engines exist, queues the request in the agent's waiting queue.
         """
         active_engines = [e for e in self.engines if e.status == EngineStatus.ACTIVE]
-        if not active_engines:
-            self._dispatch_queue.append(request)
-            return None
+        assert len(active_engines) > 0, f"No active engines for agent {self.agent_id}"
 
         regular_active = [e for e in active_engines if not e.is_permanent]
         permanent_active = [e for e in active_engines if e.is_permanent]
@@ -66,21 +64,10 @@ class AgentImpl(Agent):
             )
 
         # Resolve completion_tokens based on the engine's current model
-        model_req_map = g.TOKENS_MAP[self.agent_id][best_engine.model_name]
+        model_req_map = utils.TOKENS_MAP[self.agent_id][best_engine.model_name]
         lookup_id = request.original_id if request.original_id else request.id
         _, completion_tokens = model_req_map[lookup_id]
         request.completion_tokens = completion_tokens
 
         best_engine.add_request(request, current_time)
         return best_engine
-
-    def process_waiting_queue(self, current_time: float) -> None:
-        """Process queued requests if there are active engines."""
-        while self._dispatch_queue:
-            active_engines = [
-                e for e in self.engines if e.status == EngineStatus.ACTIVE
-            ]
-            if not active_engines:
-                break
-            req = self._dispatch_queue.pop(0)
-            self.dispatch(req, current_time)

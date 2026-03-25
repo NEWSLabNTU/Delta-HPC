@@ -89,10 +89,7 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         return reward
 
     def _is_action_valid(self, action: int) -> bool:
-        """
-        TODO: Implement Action Masking logic based on current MIG physical layout.
-        """
-        return True
+        return self.sim.get_action_mask()[action]
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         # 1. Check for Action Validity (Action Masking)

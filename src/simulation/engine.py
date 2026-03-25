@@ -3,7 +3,7 @@ import random
 from typing import List, Dict, Optional
 
 from src.simulation.models import *
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
 from src.simulation.request import RunningRequestsImpl
 
 
@@ -17,7 +17,7 @@ class LLMEngineImpl(LLMEngine):
         current_time: float,
         is_permanent: bool = False,
     ) -> LLMEngineImpl:
-        mname = g.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
+        mname = utils.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
 
         return LLMEngineImpl(
             gpu=gpu,
@@ -25,10 +25,12 @@ class LLMEngineImpl(LLMEngine):
             owner=owner,
             model_name=mname,
             mig_profile=mig_profile,
-            max_batched_tokens=g.SIM_CONFIG.max_batched_tokens[mname],
-            prefill_params=g.SIM_CONFIG.get_prefill_params(owner.agent_id, mig_profile),
-            tpot_params=g.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
-            restart_time=g.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
+            max_batched_tokens=utils.SIM_CONFIG.max_batched_tokens[mname],
+            prefill_params=utils.SIM_CONFIG.get_prefill_params(
+                owner.agent_id, mig_profile
+            ),
+            tpot_params=utils.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
+            restart_time=utils.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
             current_time=current_time,
             is_permanent=is_permanent,
         )
@@ -63,7 +65,7 @@ class LLMEngineImpl(LLMEngine):
         self._tpot_sigma = tpot_params["sigma"]
         self._restart_time = restart_time
         self._max_batched_tokens = max_batched_tokens
-        self._max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+        self._max_kv_cache_tokens = utils.SIM_CONFIG.get_max_kv_cache_tokens(
             owner.agent_id, mig_profile
         )
 
@@ -159,7 +161,7 @@ class LLMEngineImpl(LLMEngine):
 
         self._model_name = model_name
         self._max_batched_tokens = max_batched_tokens
-        self._max_kv_cache_tokens = g.SIM_CONFIG.get_max_kv_cache_tokens(
+        self._max_kv_cache_tokens = utils.SIM_CONFIG.get_max_kv_cache_tokens(
             new_owner.agent_id, self.mig_profile
         )
         self._prefill_alpha = prefill_params["alpha"]

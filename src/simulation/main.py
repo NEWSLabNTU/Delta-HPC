@@ -1,10 +1,9 @@
 import random
 import argparse
-import uuid
-from typing import Dict, List, Set
+from typing import Dict, List
 
 from src.simulation.models import *
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
 from src.simulation.request import RequestImpl
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.engine import LLMEngineImpl
@@ -21,8 +20,8 @@ def load_requests(
     requests: List[Request] = []
 
     for agent_id in AgentId:
-        first_model = next(iter(g.TOKENS_MAP[agent_id]))
-        req_map = g.TOKENS_MAP[agent_id][first_model]
+        first_model = next(iter(utils.TOKENS_MAP[agent_id]))
+        req_map = utils.TOKENS_MAP[agent_id][first_model]
 
         if agent_id == AgentId.CODING:
             # Pick 25,000 requests
@@ -102,12 +101,12 @@ def main():
     for aid in AgentId:
         agents[aid] = AgentImpl(aid)
 
-    for eng_conf in g.SIM_CONFIG.initial_state:
+    for eng_conf in utils.SIM_CONFIG.initial_state:
         mig = MIGProfile.from_string(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
         agent_name = eng_conf["agent"]
         agent = agents[AgentId(agent_name)]
-        eid = g.generate_engine_id(agent_name, gpu, mig.string)
+        eid = utils.generate_engine_id(agent_name, gpu, mig.string)
 
         is_permanent = eng_conf.get("is-permanent", False)
         eng = LLMEngineImpl.create(
@@ -133,20 +132,14 @@ def main():
 
     # Pre-populate triggering events upfront for step advanced mockup
     max_steps = 100
-    for i in range(1, max_steps + 1):
-        t = i * sim.action_interval
-        sim._events.add(
-            SimulationEvent(
-                time=t,
-                event_type=EventType.RESOURCE_MANAGER_TRIGGER,
-                payload={},
-            )
-        )
+    sim.schedule_resource_manager_triggers(max_steps)
 
     print("Running mockup training loop...")
     for step in range(max_steps):
-        # 1. Choose a random action
-        action = ResourceManagerAction.NO_ACTION
+        # 1. Choose a random valid action
+        mask = sim.get_action_mask()
+        valid_actions = [a for a, m in zip(ResourceManagerAction, mask) if m]
+        action = random.choice(valid_actions)
 
         if step > 0:
             sim.handle_resource_manager_trigger(action)
@@ -161,14 +154,9 @@ def main():
         print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
 
         # Count remaining arrival events to replenish proactively
-        remain = sum(
-            1 for e in sim._events if e.event_type == EventType.REQUEST_ARRIVAL
-        )
+        remain = sim.pending_arrival_count
         if remain < 1000:
-            max_arr_time = sim.current_time
-            for e in sim._events:
-                if e.event_type == EventType.REQUEST_ARRIVAL:
-                    max_arr_time = max(max_arr_time, e.time)
+            max_arr_time = sim.latest_arrival_time
             print(
                 f"  [Replenish] Only {remain} arrivals left. Adding batch starting at {max_arr_time:.2f}s"
             )

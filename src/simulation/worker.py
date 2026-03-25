@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Tuple, Dict, Any
 
 from src.simulation.models import *
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
 
 
 class WorkerImpl(Worker):
@@ -24,7 +24,9 @@ class WorkerImpl(Worker):
         exact_matches = [
             e
             for e in giver.engines
-            if e.status == EngineStatus.ACTIVE and e.mig_profile.vram == amount
+            if e.status == EngineStatus.ACTIVE
+            and e.mig_profile.vram == amount
+            and not e.is_permanent
         ]
         if exact_matches:
             engine_to_shift = min(
@@ -44,7 +46,7 @@ class WorkerImpl(Worker):
         # 2. Merge
         merge_candidates = [
             (engs, new_profile)
-            for engs, new_profile in g.MIG_RULES.get_possible_merges(giver)
+            for engs, new_profile in utils.MIG_RULES.get_possible_merges(giver)
             if new_profile.vram == amount
         ]
         if merge_candidates:
@@ -69,7 +71,7 @@ class WorkerImpl(Worker):
         # 3. Split
         split_candidates = [
             (eng, migs)
-            for eng, migs in g.MIG_RULES.get_possible_splits(giver)
+            for eng, migs in utils.MIG_RULES.get_possible_splits(giver)
             if amount in [mig.vram for mig in migs]
         ]
         if split_candidates:

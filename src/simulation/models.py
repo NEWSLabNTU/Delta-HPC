@@ -71,7 +71,7 @@ class MIGProfile(Enum):
     @property
     def idx(self) -> int:
         return list(MIGProfile).index(self)
- 
+
     @classmethod
     def from_string(cls, profile_str: str) -> MIGProfile:
         for p in cls:
@@ -434,9 +434,6 @@ class Agent(ABC):
         self, request: Request, current_time: float
     ) -> Optional[LLMEngine]: ...
 
-    @abstractmethod
-    def process_waiting_queue(self, current_time: float) -> None: ...
-
 
 class LLMEngine(ABC):
     @property
@@ -558,9 +555,15 @@ class Simulator(ABC):
 
     @abstractmethod
     def run(self) -> bool: ...
- 
+
     @abstractmethod
     def reset(self) -> None: ...
+
+    @abstractmethod
+    def get_action_mask(self) -> List[bool]: ...
+
+    @abstractmethod
+    def schedule_resource_manager_triggers(self, max_steps: int) -> None: ...
 
 
 @dataclass

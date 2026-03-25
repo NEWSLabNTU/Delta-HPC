@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from typing import Any, List, Dict, Tuple
 
-import src.simulation.global_vars as g
+import src.simulation.utils as utils
 from src.simulation.models import *
 
 
@@ -78,7 +78,7 @@ class ResourceManager:
         candidates: List[Tuple[str, Any]] = []  # List of (action type, data)
         for agent in agents.values():
             # 1. Look for Merges
-            possible_merges = g.MIG_RULES.get_possible_merges(agent)
+            possible_merges = utils.MIG_RULES.get_possible_merges(agent)
             for engs, new_profile in possible_merges:
                 candidates.append(
                     (
@@ -93,7 +93,7 @@ class ResourceManager:
                 )
 
             # 2. Look for Splits
-            possible_splits = g.MIG_RULES.get_possible_splits(agent)
+            possible_splits = utils.MIG_RULES.get_possible_splits(agent)
             for eng, new_profiles in possible_splits:
                 candidates.append(
                     (
