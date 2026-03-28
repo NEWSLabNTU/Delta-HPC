@@ -424,9 +424,6 @@ class Agent(ABC):
     @abstractmethod
     def completed_requests(self) -> List[Request]: ...
 
-    @property
-    def dispatch_queue(self) -> List[Request]: ...
-
     @abstractmethod
     def add_engine(self, engine: LLMEngine) -> None: ...
 
@@ -548,10 +545,6 @@ class Simulator(ABC):
 
     @property
     @abstractmethod
-    def current_budget(self) -> float: ...
-
-    @property
-    @abstractmethod
     def logger(self) -> SimulationLogger: ...
 
     @property
@@ -651,6 +644,17 @@ class EnvironmentState(ABC):
     @abstractmethod
     def action_interval(self) -> float: ...
 
+    @property
+    @abstractmethod
+    def current_budget(self) -> float: ...
+
+    @current_budget.setter
+    @abstractmethod
+    def current_budget(self, v: float) -> None: ...
+
+    @abstractmethod
+    def refresh_budget(self) -> None: ...
+
     @abstractmethod
     def reset_for_next_interval(
         self, current_time: float, agents: Dict[AgentId, Agent]
@@ -673,7 +677,6 @@ class EnvironmentState(ABC):
         current_time: float,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
-        current_budget: float,
     ) -> EnvironmentStateData: ...
 
 

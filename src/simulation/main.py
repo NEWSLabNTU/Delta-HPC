@@ -130,6 +130,7 @@ def main():
     # For a quicker test we limit requests
     max_steps = 100
     sim.init_event_queues(requests[:1000], max_steps)
+    sim.run()  # advance to the first action interal
 
     print("Running mockup training loop...")
     for step in range(max_steps):
@@ -138,13 +139,12 @@ def main():
         valid_actions = [a for a, m in zip(ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
 
-        if step > 0:
-            sim.handle_resource_manager_trigger(action)
+        sim.handle_resource_manager_trigger(action)
         sim.run()
 
         # 2. Print State
         state_data = sim.environment_state.get_state(
-            sim.current_time, sim.agents, sim.engines, sim.current_budget
+            sim.current_time, sim.agents, sim.engines
         )
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         avg_q = state_data["avg_queue_length"]

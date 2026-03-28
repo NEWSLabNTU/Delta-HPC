@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 from src.simulation.models import *
+from src.training.config import TRAINING_CONFIG
 
 
 @dataclass
@@ -22,10 +23,22 @@ class EnvironmentStateImpl(EnvironmentState):
         self._last_queue_update_time: float = 0.0
         self._reconfig_in_interval: bool = False
         self._interval_requests: List[Request] = []
+        self._current_budget = TRAINING_CONFIG.reconfig_budget
 
     @property
     def action_interval(self) -> float:
         return self._action_interval
+
+    @property
+    def current_budget(self) -> float:
+        return self._current_budget
+
+    @current_budget.setter
+    def current_budget(self, v: float) -> None:
+        self._current_budget = v
+
+    def refresh_budget(self) -> None:
+        self._current_budget = TRAINING_CONFIG.reconfig_budget
 
     def reset_for_next_interval(
         self,
@@ -42,11 +55,8 @@ class EnvironmentStateImpl(EnvironmentState):
             for e in agent.engines:
                 self._interval_requests.extend(e.running_queue.all_requests)
                 self._interval_requests.extend(e.waiting_queue)
-            self._interval_requests.extend(agent.dispatch_queue)
 
-            q_len = len(agent.dispatch_queue) + sum(
-                len(e.waiting_queue) for e in agent.engines
-            )
+            q_len = sum(len(e.waiting_queue) for e in agent.engines)
             run_len = sum(len(e.running_queue) for e in agent.engines)
 
             stats = self._agent_stats[agent_id]
@@ -70,9 +80,7 @@ class EnvironmentStateImpl(EnvironmentState):
         self._last_queue_update_time = current_time
         for agent_id, agent in agents.items():
             run_len = sum(len(e.running_queue) for e in agent.engines)
-            q_len = len(agent.dispatch_queue) + sum(
-                len(e.waiting_queue) for e in agent.engines
-            )
+            q_len = sum(len(e.waiting_queue) for e in agent.engines)
 
             stats = self._agent_stats[agent_id]
             stats.last_queue_length = q_len
@@ -89,7 +97,6 @@ class EnvironmentStateImpl(EnvironmentState):
         current_time: float,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
-        current_budget: float,
     ) -> EnvironmentStateData:
         return {
             "arrival_rate": self._get_arrival_rate(agents, current_time),
@@ -101,7 +108,7 @@ class EnvironmentStateImpl(EnvironmentState):
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(engines),
             "mig_config_encoding": self._get_mig_config_encoding(engines),
-            "current_budget": current_budget,
+            "current_budget": self._current_budget,
             "recovery_flag": self._reconfig_in_interval,
             "requests": self._interval_requests,
         }

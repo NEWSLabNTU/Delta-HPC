@@ -71,8 +71,12 @@ class SimulationLoggerImpl(SimulationLogger):
         lines = [
             f"[{current_time:.4f}] EVENT: ENGINE_STEP | "
             f"Stepping: {stepping_engine.owner.agent_id.value}-{stepping_engine.engine_id} | "
-            f"Next Arrival: {next_arrival_time:.4f}"
         ]
+        if next_arrival_time is not None:
+            lines.append(f"Next Arrival: {next_arrival_time:.4f}")
+        else:
+            lines.append(f"Next Arrival: None")
+
         for aid, agent in agents.items():
             lines.append(f"  Agent: {aid.value}")
             for engine in agent.engines:

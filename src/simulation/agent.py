@@ -10,7 +10,6 @@ class AgentImpl(Agent):
         self._agent_id = agent_id
         self._engines: List[LLMEngine] = []
         self._completed_requests: List[Request] = []
-        self._dispatch_queue: List[Request] = []
 
     @property
     def agent_id(self) -> AgentId:
@@ -23,10 +22,6 @@ class AgentImpl(Agent):
     @property
     def completed_requests(self) -> List[Request]:
         return self._completed_requests
-
-    @property
-    def dispatch_queue(self) -> List[Request]:
-        return self._dispatch_queue
 
     def add_engine(self, engine: LLMEngine):
         self._engines.append(engine)

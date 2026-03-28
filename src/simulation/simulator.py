@@ -33,7 +33,6 @@ class SimulatorImpl(Simulator):
         self.environment_state = EnvironmentStateImpl(
             utils.SIM_CONFIG.get_rl_action_interval()
         )
-        self._reconfig_budget: float = TRAINING_CONFIG.reconfig_budget
         self.environment_state.reset_for_next_interval(0.0, self._agents)
 
     @property
@@ -51,10 +50,6 @@ class SimulatorImpl(Simulator):
     @property
     def current_time(self) -> float:
         return self._current_time
-
-    @property
-    def current_budget(self) -> float:
-        return self._reconfig_budget
 
     @property
     def logger(self) -> SimulationLogger:
@@ -127,15 +122,19 @@ class SimulatorImpl(Simulator):
 
     def has_active_work(self) -> bool:
         if any(
-            e.event_type != EventType.RESOURCE_MANAGER_TRIGGER for e in self._events
+            e.event_type
+            in [
+                EventType.REQUEST_ARRIVAL,
+                EventType.RAG_SEARCH_COMPLETE,
+                EventType.ENGINE_STEP_COMPLETE,
+            ]
+            for e in self._events
         ):
             return True
         if any(
             len(e.waiting_queue) > 0 or len(e.running_queue) > 0
             for e in self._engines.values()
         ):
-            return True
-        if any(len(a.dispatch_queue) > 0 for a in self._agents.values()):
             return True
         return False
 
@@ -411,13 +410,13 @@ class SimulatorImpl(Simulator):
             self._current_time, self._agents
         )
         state_data = self.environment_state.get_state(
-            self._current_time, self._agents, self._engines, self._reconfig_budget
+            self._current_time, self._agents, self._engines
         )
         self._logger.log_environment_state(self._current_time, state_data)
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
-        self._reconfig_budget -= cost
+        self.environment_state.current_budget -= cost
 
         # 2. Perform action
         match action:
@@ -758,7 +757,7 @@ class SimulatorImpl(Simulator):
                         cast(EngineStepPayload, current_event.payload)
                     )
                 case EventType.REFRESH_ACTION_BUDGET:
-                    self._reconfig_budget = TRAINING_CONFIG.reconfig_budget
+                    self.environment_state.refresh_budget()
                     self._events.add(
                         SimulationEvent(
                             time=self._current_time + TRAINING_CONFIG.refresh_period,
@@ -802,7 +801,6 @@ class SimulatorImpl(Simulator):
             self._engines[eid] = eng
 
         self.environment_state.reset_for_next_interval(0.0, self._agents)
-        self._reconfig_budget = TRAINING_CONFIG.reconfig_budget
         self._events.add(
             SimulationEvent(
                 time=0.0,
@@ -844,7 +842,7 @@ class SimulatorImpl(Simulator):
             # Additional budget check
             if mask[-1]:  # Only check if the action is otherwise possible
                 cost = self._predict_action_cost(action)
-                if cost > self._reconfig_budget:
+                if cost > self.environment_state.current_budget:
                     mask[-1] = False
 
         assert len(mask) == len(ResourceManagerAction)
