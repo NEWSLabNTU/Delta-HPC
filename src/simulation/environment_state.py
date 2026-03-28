@@ -105,7 +105,6 @@ class EnvironmentStateImpl(EnvironmentState):
             "mig_config_encoding": self._get_mig_config_encoding(engines),
             "current_budget": self._current_budget,
             "recovery_flag": self._reconfig_in_interval,
-            "requests": self._interval_requests,
         }
 
     def _get_arrival_rate(

@@ -621,7 +621,6 @@ class EnvironmentStateData(TypedDict):
     mig_config_encoding: Dict[int, List[int]]
     current_budget: float
     recovery_flag: bool
-    requests: List[Request]
     avg_running_requests: Dict[AgentId, float]
 
 
