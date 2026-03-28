@@ -78,7 +78,7 @@ class EnvironmentStateImpl(EnvironmentState):
             stats.last_queue_length = q_len
             stats.last_running_requests = run_len
 
-    def register_arrival(self, agent_id: AgentId, time: float, request: Request):
+    def register_arrival(self, request: Request):
         self._interval_requests.append(request)
 
     def register_reconfig(self):
@@ -236,9 +236,7 @@ class EnvironmentStateImpl(EnvironmentState):
         result: Dict[int, List[float]] = {}
         for gpu, sums in util_sums.items():
             gpu_counts = counts[gpu]
-            result[gpu] = [
-                s / c if c > 0 else 0.0 for s, c in zip(sums, gpu_counts)
-            ]
+            result[gpu] = [s / c if c > 0 else 0.0 for s, c in zip(sums, gpu_counts)]
         return result
 
     def _get_mig_config_encoding(

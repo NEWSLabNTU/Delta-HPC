@@ -77,7 +77,7 @@ class SimulatorImpl(Simulator):
         return max_arr_time
 
     def init_event_queues(self, requests: List[Request], max_steps: int) -> None:
-        self._add_arrival_events(requests)
+        self.add_arrival_events(requests)
         self._schedule_resource_manager_triggers(max_steps)
         self._events.add(
             SimulationEvent(
@@ -87,7 +87,7 @@ class SimulatorImpl(Simulator):
             )
         )
 
-    def _add_arrival_events(self, requests: List[Request]) -> None:
+    def add_arrival_events(self, requests: List[Request]) -> None:
         for req in requests:
             self._events.add(
                 SimulationEvent(
@@ -666,7 +666,7 @@ class SimulatorImpl(Simulator):
         req = payload["request"]
         agent_id = req.agent_id
 
-        self.environment_state.register_arrival(agent_id, self._current_time, req)
+        self.environment_state.register_arrival(req)
 
         # If it's a RAG request, wiat til RAG_SEARCH_COMPLETE
         if agent_id == AgentId.RAG:

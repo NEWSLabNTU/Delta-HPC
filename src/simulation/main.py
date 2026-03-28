@@ -159,7 +159,7 @@ def main():
             )
             load_turn += 1
             new_requests = load_requests(start_time=max_arr_time, turn=load_turn)
-            sim._add_arrival_events(new_requests[:1000])
+            sim.add_arrival_events(new_requests[:1000])
 
     print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")
