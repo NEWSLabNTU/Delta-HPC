@@ -547,10 +547,6 @@ class Simulator(ABC):
     @abstractmethod
     def logger(self) -> SimulationLogger: ...
 
-    @property
-    @abstractmethod
-    def action_interval(self) -> float: ...
-
     @abstractmethod
     def init_event_queues(self, requests: List[Request], max_steps: int) -> None: ...
 
@@ -640,10 +636,6 @@ class Worker(ABC):
 
 
 class EnvironmentState(ABC):
-    @property
-    @abstractmethod
-    def action_interval(self) -> float: ...
-
     @property
     @abstractmethod
     def current_budget(self) -> float: ...

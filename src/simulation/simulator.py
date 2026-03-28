@@ -30,9 +30,7 @@ class SimulatorImpl(Simulator):
         self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
 
-        self.environment_state = EnvironmentStateImpl(
-            utils.SIM_CONFIG.get_rl_action_interval()
-        )
+        self.environment_state = EnvironmentStateImpl()
         self.environment_state.reset_for_next_interval(0.0, self._agents)
 
     @property
@@ -54,10 +52,6 @@ class SimulatorImpl(Simulator):
     @property
     def logger(self) -> SimulationLogger:
         return self._logger
-
-    @property
-    def action_interval(self) -> float:
-        return utils.SIM_CONFIG.get_rl_action_interval()
 
     @property
     def pending_arrival_count(self) -> int:
@@ -110,8 +104,8 @@ class SimulatorImpl(Simulator):
 
     def _schedule_resource_manager_triggers(self, max_steps: int) -> None:
         """Schedules RESOURCE_MANAGER_TRIGGER events at fixed intervals."""
-        for i in range(1, max_steps + 1):
-            t = i * self.action_interval
+        for i in range(1, max_steps + 2):  # extra +1 as the stopping condition
+            t = i * TRAINING_CONFIG.action_interval
             self._events.add(
                 SimulationEvent(
                     time=t,

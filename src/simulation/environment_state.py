@@ -17,17 +17,12 @@ class AgentStats:
 
 class EnvironmentStateImpl(EnvironmentState):
 
-    def __init__(self, action_interval: float):
-        self._action_interval = action_interval
+    def __init__(self):
         self._agent_stats: Dict[AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
         self._reconfig_in_interval: bool = False
         self._interval_requests: List[Request] = []
         self._current_budget = TRAINING_CONFIG.reconfig_budget
-
-    @property
-    def action_interval(self) -> float:
-        return self._action_interval
 
     @property
     def current_budget(self) -> float:
@@ -117,7 +112,7 @@ class EnvironmentStateImpl(EnvironmentState):
         self, agents: Dict[AgentId, Agent], current_time: float
     ) -> Dict[AgentId, float]:
         rates: Dict[AgentId, float] = {}
-        start_time = current_time - self.action_interval
+        start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             arr = [
                 r.arrival_time
@@ -125,7 +120,9 @@ class EnvironmentStateImpl(EnvironmentState):
                 if r.agent_id == agent_id and r.arrival_time >= start_time
             ]
             rates[agent_id] = (
-                len(arr) / self.action_interval if self.action_interval > 0 else 0.0
+                len(arr) / TRAINING_CONFIG.action_interval
+                if TRAINING_CONFIG.action_interval > 0
+                else 0.0
             )
         return rates
 
@@ -133,8 +130,8 @@ class EnvironmentStateImpl(EnvironmentState):
         self, agents: Dict[AgentId, Agent], current_time: float
     ) -> Dict[AgentId, float]:
         trends: Dict[AgentId, float] = {}
-        sub_wdw = self.action_interval / 3.0
-        start_time = current_time - self.action_interval
+        sub_wdw = TRAINING_CONFIG.action_interval / 3.0
+        start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             arrivals = [
                 r.arrival_time
@@ -156,7 +153,9 @@ class EnvironmentStateImpl(EnvironmentState):
         for agent_id in agents.keys():
             integral = self._agent_stats[agent_id].queue_length_integral
             avg_q[agent_id] = (
-                integral / self.action_interval if self.action_interval > 0 else 0.0
+                integral / TRAINING_CONFIG.action_interval
+                if TRAINING_CONFIG.action_interval > 0
+                else 0.0
             )
         return avg_q
 
@@ -167,7 +166,9 @@ class EnvironmentStateImpl(EnvironmentState):
         for agent_id in agents.keys():
             integral = self._agent_stats[agent_id].running_requests_integral
             avg_run[agent_id] = (
-                integral / self.action_interval if self.action_interval > 0 else 0.0
+                integral / TRAINING_CONFIG.action_interval
+                if TRAINING_CONFIG.action_interval > 0
+                else 0.0
             )
         return avg_run
 
@@ -183,7 +184,7 @@ class EnvironmentStateImpl(EnvironmentState):
         self, agents: Dict[AgentId, Agent], current_time: float
     ) -> Dict[AgentId, float]:
         p99: Dict[AgentId, float] = {}
-        start_time = current_time - self.action_interval
+        start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             ttfts: List[float] = []
             for r in self._interval_requests:
@@ -207,7 +208,7 @@ class EnvironmentStateImpl(EnvironmentState):
         self, agents: Dict[AgentId, Agent], current_time: float
     ) -> Dict[AgentId, float]:
         avg_tpot: Dict[AgentId, float] = {}
-        start_time = current_time - self.action_interval
+        start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             tpots: List[float] = []
             for r in self._interval_requests:

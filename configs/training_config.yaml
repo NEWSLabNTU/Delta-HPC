@@ -1,3 +1,5 @@
 training:
-  reconfig-budget: 150 # seconds
-  refresh: 15 # minutes
+  action-interval: 120 # seconds
+  reconfig:
+    budget: 150 # seconds
+    refresh: 15 # minutes

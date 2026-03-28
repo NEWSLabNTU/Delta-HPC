@@ -4,7 +4,7 @@ import random
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Literal
+from typing import Dict, List, Any
 
 from src.simulation.models import *
 
@@ -13,8 +13,6 @@ from src.simulation.models import *
 class SimulationConfig:
     # simulation.initial_state
     initial_state: List[Dict[str, Any]]
-    # simulation.resource-manager
-    resource_manager: Dict[Literal["action_interval"], float]
     # simulation.agents: { agent -> { dataset, mig -> { model, restart_time, param } } }
     agents_configs: Dict[str, Any]
     # model: { model_name -> { generate_path, vllm_config } }
@@ -29,14 +27,9 @@ class SimulationConfig:
 
         return cls(
             initial_state=data["simulation"]["initial_state"]["engines"],
-            resource_manager=data["simulation"]["resource-manager"],
             agents_configs=data["simulation"]["agents"],
             model=data["model"],
         )
-
-    def get_rl_action_interval(self) -> float:
-        """Return the action interval."""
-        return self.resource_manager["action_interval"]
 
     def get_model(self, agent: AgentId, mig_profile: MIGProfile) -> str:
         """Return the model name for a given agent + MIG profile."""
