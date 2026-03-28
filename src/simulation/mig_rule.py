@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 
 from src.simulation.models import *
@@ -106,3 +106,32 @@ class MIGProfileRuleImpl(MIGProfileRule):
                         for result_profiles in afters:
                             possible_splits.append((mig_e, list(result_profiles)))
         return possible_splits
+
+    def get_best_split(
+        self, agent: Agent, desired_vram: Optional[float] = None
+    ) -> Tuple[LLMEngine, List[MIGProfile]] | None:
+        possibles = self.get_possible_splits(agent)
+        if desired_vram:
+            possibles = list(
+                filter(lambda c: any(m.vram == desired_vram for m in c[1]), possibles)
+            )
+        if possibles:
+            return min(
+                possibles,
+                key=lambda c: len(c[0].waiting_queue) + len(c[0].running_queue),
+            )
+        return None
+
+    def get_best_merge(
+        self, agent: Agent, desired_vram: Optional[float] = None
+    ) -> Tuple[List[LLMEngine], MIGProfile] | None:
+        possibles = self.get_possible_merges(agent)
+        if desired_vram:
+            possibles = list(filter(lambda c: c[1].vram == desired_vram, possibles))
+        if possibles:
+            return min(
+                possibles,
+                key=lambda c: sum(
+                    len(e.waiting_queue) + len(e.running_queue) for e in c[0]
+                ),
+            )

@@ -138,6 +138,8 @@ def main():
         mask = sim.get_action_mask()
         valid_actions = [a for a, m in zip(ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
+        print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
+        print(f"Action mask: {mask}")
 
         sim.handle_resource_manager_trigger(action)
         sim.run()
@@ -146,7 +148,6 @@ def main():
         state_data = sim.environment_state.get_state(
             sim.current_time, sim.agents, sim.engines
         )
-        print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         avg_q = state_data["avg_queue_length"]
         print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
 

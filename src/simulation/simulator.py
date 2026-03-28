@@ -166,9 +166,7 @@ class SimulatorImpl(Simulator):
     def _handle_resource_manager_trigger_vram_transfer(
         self, vram_transfer: TransferDetails
     ):
-        transfer_decision = self.worker.transfer(
-            self._current_time, vram_transfer, self._agents
-        )
+        transfer_decision = self.worker.transfer(vram_transfer, self._agents)
         if not transfer_decision:
             self._logger.log_discard_vram_transfer(self._current_time, vram_transfer)
             return
@@ -331,9 +329,7 @@ class SimulatorImpl(Simulator):
                 giver_id=val.giver,
                 receiver_id=val.receiver,
             )
-            transfer_decision = self.worker.transfer(
-                self._current_time, vram_transfer, self._agents
-            )
+            transfer_decision = self.worker.transfer(vram_transfer, self._agents)
             if transfer_decision:
                 atype, data = transfer_decision
                 match atype:
@@ -361,13 +357,9 @@ class SimulatorImpl(Simulator):
             victim = self._agents[val.victim]
             match val.action:
                 case "split":
-                    possible = utils.MIG_RULES.get_possible_splits(victim)
-                    if possible:
-                        eng, new_profiles = min(
-                            possible,
-                            key=lambda c: len(c[0].running_queue)
-                            + len(c[0].waiting_queue),
-                        )
+                    best_split = utils.MIG_RULES.get_best_split(victim)
+                    if best_split:
+                        eng, new_profiles = best_split
                         drain_cost = eng.predict_drain_time()
                         boot_cost = max(
                             (
@@ -378,15 +370,9 @@ class SimulatorImpl(Simulator):
                         )
                         cost = drain_cost + boot_cost
                 case "merge":
-                    possible = utils.MIG_RULES.get_possible_merges(victim)
-                    if possible:
-                        engs, new_profile = min(
-                            possible,
-                            key=lambda c: sum(
-                                len(e.running_queue) + len(e.waiting_queue)
-                                for e in c[0]
-                            ),
-                        )
+                    best_merge = utils.MIG_RULES.get_best_merge(victim)
+                    if best_merge:
+                        engs, new_profile = best_merge
                         drain_cost = max(
                             (e.predict_drain_time() for e in engs), default=0.0
                         )
@@ -435,45 +421,39 @@ class SimulatorImpl(Simulator):
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                possible_splits = utils.MIG_RULES.get_possible_splits(agent)
-                if possible_splits:
-                    eng, new_profiles = min(
-                        possible_splits,
-                        key=lambda c: len(c[0].running_queue) + len(c[0].waiting_queue),
-                    )
-                    mig_decision: Tuple[str, Any] = (
-                        "split",
-                        {
-                            "engine": eng,
-                            "new_profiles": new_profiles,
-                            "agent_id": agent_id,
-                            "gpu": eng.gpu,
-                        },
-                    )
-                    self._handle_resource_manager_trigger_mig_decision(mig_decision)
+                best_split = utils.MIG_RULES.get_best_split(agent)
+                assert best_split is not None  # correctness of the action mask
+
+                eng, new_profiles = best_split
+                mig_decision: Tuple[str, Any] = (
+                    "split",
+                    {
+                        "engine": eng,
+                        "new_profiles": new_profiles,
+                        "agent_id": agent_id,
+                        "gpu": eng.gpu,
+                    },
+                )
+                self._handle_resource_manager_trigger_mig_decision(mig_decision)
 
             case ResourceManagerAction.MERGE_CODING | ResourceManagerAction.MERGE_RAG:
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                possible_merges = utils.MIG_RULES.get_possible_merges(agent)
-                if possible_merges:
-                    engs, new_profile = min(
-                        possible_merges,
-                        key=lambda c: sum(
-                            len(e.running_queue) + len(e.waiting_queue) for e in c[0]
-                        ),
-                    )
-                    mig_decision = (
-                        "merge",
-                        {
-                            "engines": engs,
-                            "new_profile": new_profile,
-                            "agent_id": agent_id,
-                            "gpu": engs[0].gpu,
-                        },
-                    )
-                    self._handle_resource_manager_trigger_mig_decision(mig_decision)
+                best_merge = utils.MIG_RULES.get_best_merge(agent)
+                assert best_merge is not None  # correctness of the action mask
+
+                engs, new_profile = best_merge
+                mig_decision = (
+                    "merge",
+                    {
+                        "engines": engs,
+                        "new_profile": new_profile,
+                        "agent_id": agent_id,
+                        "gpu": engs[0].gpu,
+                    },
+                )
+                self._handle_resource_manager_trigger_mig_decision(mig_decision)
 
             case _:
                 raise ValueError(f"Unknown RL action {action}")

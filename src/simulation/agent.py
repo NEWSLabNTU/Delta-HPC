@@ -26,6 +26,10 @@ class AgentImpl(Agent):
     def add_engine(self, engine: LLMEngine):
         self._engines.append(engine)
 
+    def _pick_laziest_engine(self, engines: List[LLMEngine]) -> LLMEngine:
+        # first compare waiting queue, than compare running queue
+        return min(engines, key=lambda e: (len(e.waiting_queue), len(e.running_queue)))
+
     def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngine]:
         """
         Dispatches an incoming request to the best engine based on simple work-balance.
@@ -39,24 +43,20 @@ class AgentImpl(Agent):
         regular_active = [e for e in active_engines if not e.is_permanent]
         permanent_active = [e for e in active_engines if e.is_permanent]
 
-        # Use permanent engine if all regular engines have waiting requests
-        if (
-            permanent_active
-            and not regular_active
-            or (
-                regular_active and all(len(e.waiting_queue) > 0 for e in regular_active)
-            )
-        ):
-            best_engine = min(
-                permanent_active,
-                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
-            )
+        if not regular_active and permanent_active:
+            best_engine = self._pick_laziest_engine(permanent_active)
+        elif regular_active and not permanent_active:
+            best_engine = self._pick_laziest_engine(regular_active)
         else:
-            # Must have regular_active here if use_permanent case is skipped
-            best_engine = min(
-                regular_active,
-                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
-            )
+            # Both got active engines
+            if all(len(e.waiting_queue) > 0 for e in active_engines):
+                # if every engine is buzy, dispatch normally
+                best_engine = self._pick_laziest_engine(active_engines)
+            elif any(len(e.waiting_queue) == 0 for e in regular_active):
+                # regular engine gets assigend first
+                best_engine = self._pick_laziest_engine(regular_active)
+            else:
+                best_engine = self._pick_laziest_engine(permanent_active)
 
         # Resolve completion_tokens based on the engine's current model
         model_req_map = utils.TOKENS_MAP[self.agent_id][best_engine.model_name]

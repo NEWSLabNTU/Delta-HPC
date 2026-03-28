@@ -629,7 +629,6 @@ class Worker(ABC):
     @abstractmethod
     def transfer(
         self,
-        current_time: float,
         details: TransferDetails,
         agents: Dict[AgentId, Agent],
     ) -> Tuple[str, Any] | None: ...

@@ -12,7 +12,6 @@ class WorkerImpl(Worker):
 
     def transfer(
         self,
-        current_time: float,
         details: TransferDetails,
         agents: Dict[AgentId, Agent],
     ) -> Tuple[str, Any] | None:
@@ -44,19 +43,9 @@ class WorkerImpl(Worker):
             )
 
         # 2. Merge
-        merge_candidates = [
-            (engs, new_profile)
-            for engs, new_profile in utils.MIG_RULES.get_possible_merges(giver)
-            if new_profile.vram == amount
-        ]
+        merge_candidates = utils.MIG_RULES.get_best_merge(giver, amount)
         if merge_candidates:
-            # Among qualifying pairs, prefer lowest combined queue load
-            engs, new_profile = min(
-                merge_candidates,
-                key=lambda c: sum(
-                    len(e.running_queue) + len(e.waiting_queue) for e in c[0]
-                ),
-            )
+            engs, new_profile = merge_candidates
             return (
                 "merge",
                 {
@@ -69,23 +58,10 @@ class WorkerImpl(Worker):
             )
 
         # 3. Split
-        split_candidates = [
-            (eng, migs)
-            for eng, migs in utils.MIG_RULES.get_possible_splits(giver)
-            if amount in [mig.vram for mig in migs]
-        ]
+        split_candidates = utils.MIG_RULES.get_best_split(giver, amount)
         if split_candidates:
-            eng, new_migs = min(
-                split_candidates,
-                key=lambda c: (
-                    len(c[0].running_queue) + len(c[0].waiting_queue),
-                    len(c[1]),
-                ),
-            )
-
-            mig_to_transfer = min(
-                filter(lambda m: m.vram == amount, new_migs), key=lambda m: m.size
-            )
+            eng, new_migs = split_candidates
+            mig_to_transfer = min(new_migs, key=lambda m: m.size)
             return (
                 "split",
                 {
