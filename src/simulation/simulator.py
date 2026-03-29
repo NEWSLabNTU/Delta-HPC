@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Tuple, cast
 
@@ -27,8 +28,8 @@ class SimulatorImpl(m.Simulator):
         self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
 
-        self.environment_state = EnvironmentStateImpl()
-        self.environment_state.reset_for_next_interval(0.0, self._agents)
+        self._environment_state = EnvironmentStateImpl()
+        self._environment_state.reset_for_next_interval(0.0, self._agents)
 
     @property
     def agents(self) -> Dict[m.AgentId, m.Agent]:
@@ -49,6 +50,10 @@ class SimulatorImpl(m.Simulator):
     @property
     def logger(self) -> m.SimulationLogger:
         return self._logger
+
+    @property
+    def environment_state(self) -> m.EnvironmentState:
+        return self._environment_state
 
     @property
     def pending_arrival_count(self) -> int:
@@ -166,9 +171,11 @@ class SimulatorImpl(m.Simulator):
         self, vram_transfer: m.TransferDetails
     ):
         transfer_decision = self.worker.transfer(vram_transfer, self._agents)
-        if not transfer_decision:
-            self._logger.log_discard_vram_transfer(self._current_time, vram_transfer)
-            return
+        assert transfer_decision is not None
+        # if not transfer_decision:
+        #     self._logger.log_discard_vram_transfer(self._current_time, vram_transfer)
+        #     return
+        self._environment_state.reconfig_flag = True
 
         action_type, data = transfer_decision
         match action_type:
@@ -269,6 +276,7 @@ class SimulatorImpl(m.Simulator):
     def _handle_resource_manager_trigger_mig_decision(
         self, mig_decision: Tuple[str, Any]
     ):
+        self._environment_state.reconfig_flag = True
         action_type, data = mig_decision
         match action_type:
             case "merge":
@@ -381,21 +389,27 @@ class SimulatorImpl(m.Simulator):
                         cost = drain_cost + boot_cost
                 case _:
                     raise ValueError(f"Unknown MIG action: {val.action}")
+        else:
+            # NO ACTION
+            cost = 0.0
 
         return cost
 
     def handle_resource_manager_trigger(self, action: m.ResourceManagerAction):
-        self.environment_state.record_queue_length_advance(
+        self._environment_state.record_queue_length_advance(
             self._current_time, self._agents
         )
-        state_data = self.environment_state.get_state(
+        state_data = self._environment_state.get_state(
             self._current_time, self._agents, self._engines
         )
         self._logger.log_environment_state(self._current_time, state_data)
+        self._environment_state.reset_for_next_interval(
+            self._current_time, self._agents
+        )
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
-        self.environment_state.current_budget -= cost
+        self._environment_state.current_budget -= cost
 
         # 2. Perform action
         match action:
@@ -461,7 +475,6 @@ class SimulatorImpl(m.Simulator):
             case _:
                 raise ValueError(f"Unknown RL action {action}")
 
-        self.environment_state.reset_for_next_interval(self._current_time, self._agents)
         self._step_draining_or_active_engines()
 
     def _handle_shutdown_complete_reallocate(
@@ -516,9 +529,7 @@ class SimulatorImpl(m.Simulator):
             receiver_id = payload.get("receiver_id")
             target_agent = self._agents[receiver_id] if receiver_id else giver_agent
 
-            new_eid = utils.generate_engine_id(
-                target_agent.agent_id.value, payload["gpu"], new_profile.string
-            )
+            new_eid = utils.generate_engine_id(payload["gpu"], new_profile.string)
             new_eng = LLMEngineImpl.create(
                 payload["gpu"], new_eid, target_agent, new_profile, self._current_time
             )
@@ -549,18 +560,15 @@ class SimulatorImpl(m.Simulator):
         if is_vram_transfer:
             assert received_profile is not None
         new_owners: List[m.Agent] = []
-        temp_has_received = False
+        transfer_received = False
         for p in new_profiles:
             new_owner = agent
-            if is_vram_transfer and p == received_profile and not temp_has_received:
+            if is_vram_transfer and p == received_profile and not transfer_received:
                 new_owner = self._agents[receiver_id]
-                temp_has_received = True
+                transfer_received = True
             new_owners.append(new_owner)
 
-        new_eids = [
-            utils.generate_engine_id(own.agent_id.value, gpu, p.string)
-            for own, p in zip(new_owners, new_profiles)
-        ]
+        new_eids = [utils.generate_engine_id(gpu, p.string) for p in new_profiles]
 
         for new_eid, new_owner, p in zip(new_eids, new_owners, new_profiles):
             new_eng = LLMEngineImpl.create(
@@ -582,7 +590,6 @@ class SimulatorImpl(m.Simulator):
         self,
         payload: m.ShutdownPayload,
     ):
-        self.environment_state.register_reconfig()
         purpose = payload["purpose"]
         match purpose:
             case m.OperationPurpose.REALLOCATE:
@@ -601,12 +608,6 @@ class SimulatorImpl(m.Simulator):
                 raise ValueError(f"Unexpected shutdown purpose {purpose}")
 
     def _handle_boot_complete(self, payload: m.BootPayload) -> None:
-        """Handle ENGINE_BOOT_COMPLETE.
-
-        Activates the engine and processes the agent's waiting queue.
-        Returns early if sibling engines from a split are still booting.
-        """
-        self.environment_state.register_reconfig()
         engine_id = payload["engine_id"]
 
         engine = self._engines[engine_id]
@@ -626,25 +627,13 @@ class SimulatorImpl(m.Simulator):
             )
             if still_booting:
                 return  # Wait for remaining sibling engines
-
-        for e in agent.engines:
-            if (
-                e.status == m.EngineStatus.ACTIVE
-                and len(e.running_queue) == 0
-                and len(e.waiting_queue) > 0
-            ):
-                evt = e.step(
-                    self._current_time,
-                    next_arrival_time=self._peak_next_stopping_evt(agent.agent_id),
-                )
-                if evt:
-                    self._events.add(evt)
+        self._environment_state.reconfig_flag = False  # reconfig action done
 
     def _handle_request_arrival(self, payload: m.RequestArrivalPayload):
         req = payload["request"]
         agent_id = req.agent_id
 
-        self.environment_state.register_arrival(req)
+        self._environment_state.register_arrival(req)
 
         # If it's a RAG request, wiat til RAG_SEARCH_COMPLETE
         if agent_id == m.AgentId.RAG:
@@ -711,7 +700,7 @@ class SimulatorImpl(m.Simulator):
                 return True  # Reached trigger point
 
             current_event = self._events.pop(0)
-            self.environment_state.record_queue_length_advance(
+            self._environment_state.record_queue_length_advance(
                 current_event.time, self._agents
             )
             self._current_time = current_event.time
@@ -738,7 +727,7 @@ class SimulatorImpl(m.Simulator):
                         cast(m.EngineStepPayload, current_event.payload)
                     )
                 case m.EventType.REFRESH_ACTION_BUDGET:
-                    self.environment_state.refresh_budget()
+                    self._environment_state.refresh_budget()
                     self._events.add(
                         m.SimulationEvent(
                             time=self._current_time + TRAINING_CONFIG.refresh_period,
@@ -767,7 +756,7 @@ class SimulatorImpl(m.Simulator):
             gpu = int(eng_conf["gpu"])
             agent_name = eng_conf["agent"]
             agent = self._agents[m.AgentId(agent_name)]
-            eid = utils.generate_engine_id(agent_name, gpu, mig.string)
+            eid = utils.generate_engine_id(gpu, mig.string)
 
             is_permanent = eng_conf.get("is-permanent", False)
             eng = LLMEngineImpl.create(
@@ -781,7 +770,8 @@ class SimulatorImpl(m.Simulator):
             agent.add_engine(eng)
             self._engines[eid] = eng
 
-        self.environment_state.reset_for_next_interval(0.0, self._agents)
+        self._environment_state.reset_for_next_interval(0.0, self._agents)
+        self._environment_state.reconfig_flag = False
         self._events.add(
             m.SimulationEvent(
                 time=0.0,
@@ -791,40 +781,45 @@ class SimulatorImpl(m.Simulator):
         )
 
     def get_action_mask(self) -> List[bool]:
-        mask: List[bool] = []
-        for action in m.ResourceManagerAction:
+        mask: List[bool] = [False] * len(m.ResourceManagerAction)
+        if self.environment_state.reconfig_flag:
+            mask[
+                list(m.ResourceManagerAction).index(m.ResourceManagerAction.NO_ACTION)
+            ] = True
+            return mask
+
+        for act_id, action in enumerate(m.ResourceManagerAction):
             if action == m.ResourceManagerAction.NO_ACTION:
-                mask.append(True)
+                mask[act_id] = True
                 continue
 
             val = action.value
             if isinstance(val, m.VramTransferAction):
                 giver = self._agents[val.giver]
-                active_vram = sum(
-                    e.mig_profile.vram
-                    for e in giver.engines
-                    if e.status == m.EngineStatus.ACTIVE and not e.is_permanent
-                )
-                mask.append(active_vram >= val.amount)
+                active_vram: Dict[int, int] = defaultdict(int)
+                for e in giver.engines:
+                    if e.status == m.EngineStatus.ACTIVE and not e.is_permanent:
+                        active_vram[e.gpu] += e.mig_profile.vram
+                mask[act_id] = any(v >= val.amount for v in active_vram.values())
             else:  # MIGAction
                 victim = self._agents[val.victim]
                 match val.action:
                     case "split":
-                        mask.append(
+                        mask[act_id] = (
                             len(utils.MIG_RULES.get_possible_splits(victim)) > 0
                         )
                     case "merge":
-                        mask.append(
+                        mask[act_id] = (
                             len(utils.MIG_RULES.get_possible_merges(victim)) > 0
                         )
                     case _:
                         raise ValueError(f"Unknown MIG action: {val.action}")
 
             # Additional budget check
-            if mask[-1]:  # Only check if the action is otherwise possible
+            if mask[act_id]:  # Only check if the action is otherwise possible
                 cost = self._predict_action_cost(action)
-                if cost > self.environment_state.current_budget:
-                    mask[-1] = False
+                if cost > self._environment_state.current_budget:
+                    mask[act_id] = False
 
         assert len(mask) == len(m.ResourceManagerAction)
         return mask

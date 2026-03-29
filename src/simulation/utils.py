@@ -78,10 +78,10 @@ MIG_RULES = MIGProfileRuleImpl()
 USED_EIDS: Set[str] = set()
 
 
-def generate_engine_id(agent_name: str, gpu: int, mig_str: str) -> str:
+def generate_engine_id(gpu: int, mig_str: str) -> str:
     """Generates a globally unique engine ID."""
     while True:
-        eid = f"{agent_name}_GPU_{gpu}_{mig_str}_{uuid.uuid4().hex[:4]}"
+        eid = f"GPU_{gpu}_{mig_str}_{uuid.uuid4().hex[:4]}"
         if eid not in USED_EIDS:
             USED_EIDS.add(eid)
             return eid

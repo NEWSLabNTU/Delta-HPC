@@ -19,9 +19,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def __init__(self):
         self._agent_stats: Dict[m.AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
-        self._reconfig_in_interval: bool = False
+        self._reconfig_flag: bool = False
         self._interval_requests: List[m.Request] = []
         self._current_budget = TRAINING_CONFIG.reconfig_budget
+
+        assert len(m.MIGProfile) == 5
+        self._start_mig_profile: Dict[int, m.MIGEncoding] = defaultdict(m.MIGEncoding)
 
     @property
     def current_budget(self) -> float:
@@ -30,6 +33,14 @@ class EnvironmentStateImpl(m.EnvironmentState):
     @current_budget.setter
     def current_budget(self, v: float) -> None:
         self._current_budget = v
+
+    @property
+    def reconfig_flag(self) -> bool:
+        return self._reconfig_flag
+
+    @reconfig_flag.setter
+    def reconfig_flag(self, v: bool):
+        self._reconfig_flag = v
 
     def refresh_budget(self) -> None:
         self._current_budget = TRAINING_CONFIG.reconfig_budget
@@ -44,11 +55,13 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.running_requests_integral = 0.0
 
         self._interval_requests = []
+        self._start_mig_profile.clear()
 
         for agent_id, agent in agents.items():
             for e in agent.engines:
                 self._interval_requests.extend(e.running_queue.all_requests)
                 self._interval_requests.extend(e.waiting_queue)
+                self._start_mig_profile[e.gpu][e.mig_profile.idx] += 1
 
             q_len = sum(len(e.waiting_queue) for e in agent.engines)
             run_len = sum(len(e.running_queue) for e in agent.engines)
@@ -58,7 +71,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.last_queue_length = q_len
             stats.last_running_requests = run_len
 
-        self._reconfig_in_interval = False
         self._last_queue_update_time = current_time
 
     def record_queue_length_advance(
@@ -83,9 +95,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def register_arrival(self, request: m.Request):
         self._interval_requests.append(request)
 
-    def register_reconfig(self):
-        self._reconfig_in_interval = True
-
     def get_state(
         self,
         current_time: float,
@@ -101,9 +110,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "p99_ttft": self._get_p99_ttft(agents, current_time),
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(engines),
-            "mig_config_encoding": self._get_mig_config_encoding(engines),
+            "start_mig_profile": self._start_mig_profile,
+            "current_mig_profile": self._get_mig_config_encoding(engines),
             "current_budget": self._current_budget,
-            "recovery_flag": self._reconfig_in_interval,
+            "recovery_flag": self._reconfig_flag,
+            "requests": self._interval_requests,
         }
 
     def _get_arrival_rate(
@@ -249,9 +260,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def _get_mig_config_encoding(
         self, engines: Dict[str, m.LLMEngine]
-    ) -> Dict[int, List[int]]:
-        num_profiles = len(m.MIGProfile)
-        encoding: Dict[int, List[int]] = defaultdict(lambda: [0] * num_profiles)
+    ) -> Dict[int, m.MIGEncoding]:
+        encoding: Dict[int, m.MIGEncoding] = defaultdict(m.MIGEncoding)
         for engine in engines.values():
             encoding[engine.gpu][engine.mig_profile.idx] += 1
-        return dict(encoding)
+        return encoding

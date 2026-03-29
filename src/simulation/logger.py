@@ -1,6 +1,7 @@
 import json
 import datetime
 from pathlib import Path
+from dataclasses import asdict
 from typing import Dict, List, Optional, Any
 
 import src.simulation.models as m
@@ -30,7 +31,9 @@ class SimulationLoggerImpl(m.SimulationLogger):
                 continue
             if isinstance(v, dict):
                 cleaned_v: Dict[str, Any] = {
-                    str(key.value if hasattr(key, "value") else key): val  # type: ignore
+                    str(key.value if hasattr(key, "value") else key): (  # type: ignore
+                        asdict(val) if isinstance(val, m.MIGEncoding) else val
+                    )  # type: ignore
                     for key, val in v.items()  # type: ignore
                 }
                 state_dict[k] = cleaned_v
@@ -79,8 +82,9 @@ class SimulationLoggerImpl(m.SimulationLogger):
         ]
 
         for aid, agent in agents.items():
-            lines.append(f"  m.Agent: {aid.value}")
+            lines.append(f"  Agent: {aid.value}")
             for engine in agent.engines:
+                assert engine.owner is agent
                 # Log Owner + MIG
                 is_stepping = " [STEPPING]" if engine is stepping_engine else ""
                 p_suffix = " [P]" if engine.is_permanent else ""
@@ -114,6 +118,7 @@ class SimulationLoggerImpl(m.SimulationLogger):
 
                 if not prefill and not decoding:
                     lines.append("      No running requests")
+            lines.append("")
         self.log("\n".join(lines))
 
     def log_request_arrival(
@@ -125,10 +130,10 @@ class SimulationLoggerImpl(m.SimulationLogger):
         """Logs a request arrival event."""
         if not self.enabled:
             return
-        eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
+        eng_str = f"{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: REQUEST_ARRIVAL | "
-            f"ReqId: {req.id} | m.Agent: {req.agent_id.value} | Engine: {eng_str}"
+            f"ReqId: {req.id} | Agent: {req.agent_id.value} | Engine: {eng_str}"
         )
         self.log(msg)
 
@@ -137,7 +142,7 @@ class SimulationLoggerImpl(m.SimulationLogger):
     ):
         if not self.enabled:
             return
-        eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
+        eng_str = f"{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: RAG_SEARCH_COMPLETE | "
             f"ReqId: {req.id} | m.Agent: {req.agent_id.value} | Engine: {eng_str}"

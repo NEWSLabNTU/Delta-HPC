@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Dict, Tuple, Union, TypedDict, Mapping, Literal
+from typing import Any, List, Optional, Dict, Tuple, Union, TypedDict, Literal
 
 from sortedcontainers import SortedList
 
@@ -81,6 +81,45 @@ class MIGProfile(Enum):
 
 
 type MIGConfigType = Tuple[MIGProfile, ...]
+
+
+@dataclass(slots=True)
+class MIGEncoding:
+    p1: int = 0
+    p2: int = 0
+    p3: int = 0
+    p4: int = 0
+    p7: int = 0
+
+    def __getitem__(self, index: int):
+        match index:
+            case 0:
+                return self.p1
+            case 1:
+                return self.p2
+            case 2:
+                return self.p3
+            case 3:
+                return self.p4
+            case 4:
+                return self.p7
+            case _:
+                raise IndexError("MIGEncoding index out of range")
+
+    def __setitem__(self, index: int, value: int):
+        match index:
+            case 0:
+                self.p1 = value
+            case 1:
+                self.p2 = value
+            case 2:
+                self.p3 = value
+            case 3:
+                self.p4 = value
+            case 4:
+                self.p7 = value
+            case _:
+                raise IndexError("MIGEncoding index out of range")
 
 
 class RequestState(Enum):
@@ -391,8 +430,6 @@ ShutdownPayload = Union[
 
 
 class BootPayload(TypedDict):
-    """ENGINE_BOOT_COMPLETE with no extra context (e.g. after a merge)."""
-
     engine_id: str
     purpose: OperationPurpose
     # IDs of all engines spawned by this split (used to detect when all are booted)
@@ -536,7 +573,7 @@ class LLMEngine(ABC):
 class Simulator(ABC):
     @property
     @abstractmethod
-    def agents(self) -> Mapping[AgentId, Agent]: ...
+    def agents(self) -> Dict[AgentId, Agent]: ...
 
     @property
     @abstractmethod
@@ -554,11 +591,20 @@ class Simulator(ABC):
     @abstractmethod
     def logger(self) -> SimulationLogger: ...
 
+    @property
+    @abstractmethod
+    def environment_state(self) -> EnvironmentState: ...
+
     @abstractmethod
     def init_event_queues(self, requests: List[Request], max_steps: int) -> None: ...
 
     @abstractmethod
     def add_arrival_events(self, requests: List[Request]) -> None: ...
+
+    @abstractmethod
+    def handle_resource_manager_trigger(
+        self, action: ResourceManagerAction
+    ) -> None: ...
 
     @abstractmethod
     def run(self) -> bool: ...
@@ -625,10 +671,12 @@ class EnvironmentStateData(TypedDict):
     p99_ttft: Dict[AgentId, float]
     avg_tpot: Dict[AgentId, float]
     kv_cache_utilization: Dict[int, List[float]]
-    mig_config_encoding: Dict[int, List[int]]
+    start_mig_profile: Dict[int, MIGEncoding]
+    current_mig_profile: Dict[int, MIGEncoding]
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, float]
+    requests: List[Request]
 
 
 class Worker(ABC):
@@ -649,6 +697,14 @@ class EnvironmentState(ABC):
     @abstractmethod
     def current_budget(self, v: float) -> None: ...
 
+    @property
+    @abstractmethod
+    def reconfig_flag(self) -> bool: ...
+
+    @reconfig_flag.setter
+    @abstractmethod
+    def reconfig_flag(self, v: bool) -> None: ...
+
     @abstractmethod
     def refresh_budget(self) -> None: ...
 
@@ -664,9 +720,6 @@ class EnvironmentState(ABC):
 
     @abstractmethod
     def register_arrival(self, request: Request) -> None: ...
-
-    @abstractmethod
-    def register_reconfig(self) -> None: ...
 
     @abstractmethod
     def get_state(

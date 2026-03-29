@@ -106,7 +106,7 @@ def main():
         gpu = int(eng_conf["gpu"])
         agent_name = eng_conf["agent"]
         agent = agents[m.AgentId(agent_name)]
-        eid = utils.generate_engine_id(agent_name, gpu, mig.string)
+        eid = utils.generate_engine_id(gpu, mig.string)
 
         is_permanent = eng_conf.get("is-permanent", False)
         eng = LLMEngineImpl.create(
