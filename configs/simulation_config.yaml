@@ -19,9 +19,6 @@ simulation:
         agent: RAGAgent
         is-permanent: true
 
-  resource-manager:
-    action_interval: 120
-
   agents:
     CodingAgent:
       mig:

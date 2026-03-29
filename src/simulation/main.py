@@ -183,6 +183,7 @@ def main():
                 if r.first_token_time is not None
             ]
             avg_ttft = sum(valid_ttfts) / len(valid_ttfts) if valid_ttfts else 0.0
+            p90_ttft = list(sorted(valid_ttfts))[int(0.9 * len(valid_ttfts))]
 
             # TPOT
             valid_tpots = [
@@ -191,6 +192,7 @@ def main():
                 if r.generated_tokens > 0
             ]
             avg_tpot = sum(valid_tpots) / len(valid_tpots) if valid_tpots else 0.0
+            p90_tpot = list(sorted(valid_tpots))[int(0.9 * len(valid_tpots))]
 
             # Queuing Time
             valid_queueing = [
@@ -210,8 +212,10 @@ def main():
 
             print(f"  Avg latency:        {avg_latency:.4f}s")
             print(f"  Avg TTFT:           {avg_ttft:.4f}s")
+            print(f"  P90 TTFT:           {p90_ttft:.4f}s")
             print(f"  Avg Queuing Time:   {avg_queueing:.4f}s")
             print(f"  Avg TPOT:           {avg_tpot:.4f}s")
+            print(f"  P90 TPOT:           {p90_tpot:.4f}s")
             print(f"  Avg Throughput:     {avg_throughput:.4f} tok/s")
 
 
