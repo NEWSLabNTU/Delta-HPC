@@ -6,7 +6,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Any
 
-from src.simulation.models import *
+import src.simulation.models as m
 
 
 @dataclass
@@ -31,27 +31,31 @@ class SimulationConfig:
             model=data["model"],
         )
 
-    def get_model(self, agent: AgentId, mig_profile: MIGProfile) -> str:
+    def get_model(self, agent: m.AgentId, mig_profile: m.MIGProfile) -> str:
         """Return the model name for a given agent + MIG profile."""
         return self.agents_configs[agent.value]["mig"][mig_profile.string]["model"]
 
-    def get_dataset(self, agent: AgentId) -> str:
+    def get_dataset(self, agent: m.AgentId) -> str:
         """Return the dataset path for a given agent."""
         return self.agents_configs[agent.value]["dataset"]
 
-    def get_restart_time(self, agent: AgentId, mig_profile: MIGProfile) -> float:
+    def get_restart_time(self, agent: m.AgentId, mig_profile: m.MIGProfile) -> float:
         """Return the restart time for a given agent + MIG profile."""
         return self.agents_configs[agent.value]["mig"][mig_profile.string][
             "restart_time"
         ]
 
-    def get_prefill_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
+    def get_prefill_params(
+        self, agent: m.AgentId, mig_profile: m.MIGProfile
+    ) -> m.ParamDict:
         """Return prefill regression params for a given agent + MIG profile."""
         return self.agents_configs[agent.value]["mig"][mig_profile.string]["param"][
             "prefill"
         ]
 
-    def get_tpot_params(self, agent: AgentId, mig_profile: MIGProfile) -> ParamDict:
+    def get_tpot_params(
+        self, agent: m.AgentId, mig_profile: m.MIGProfile
+    ) -> m.ParamDict:
         """Return tpot regression params for a given agent + MIG profile."""
         return self.agents_configs[agent.value]["mig"][mig_profile.string]["param"][
             "tpot"
@@ -65,7 +69,7 @@ class SimulationConfig:
         """Return the vllm config file path for a given model."""
         return self.model[model_name]["vllm_config"]
 
-    def get_kv_cache_gb(self, agent: AgentId, mig_profile: MIGProfile) -> float:
+    def get_kv_cache_gb(self, agent: m.AgentId, mig_profile: m.MIGProfile) -> float:
         """Return the kv_cache_GB for a given agent + MIG profile."""
         return self.agents_configs[agent.value]["mig"][mig_profile.string][
             "kv_cache_GB"
@@ -75,7 +79,9 @@ class SimulationConfig:
         """Return the kv_per_token_KB for a given model."""
         return self.model[model_name]["kv_per_token_KB"]
 
-    def get_max_kv_cache_tokens(self, agent: AgentId, mig_profile: MIGProfile) -> int:
+    def get_max_kv_cache_tokens(
+        self, agent: m.AgentId, mig_profile: m.MIGProfile
+    ) -> int:
         """Return the max concurrent KV cache tokens for a given agent + MIG profile."""
         mname = self.get_model(agent, mig_profile)
         kv_cache_gb = self.get_kv_cache_gb(agent, mig_profile)
@@ -84,7 +90,7 @@ class SimulationConfig:
         return int((kv_cache_gb * 1048576) / kv_per_token_kb)
 
     def get_rag_overhead(self) -> float:
-        overheads = self.agents_configs[AgentId.RAG.value]["search-overhead"]
+        overheads = self.agents_configs[m.AgentId.RAG.value]["search-overhead"]
         assert overheads["model"] == "random"  # support random for now
         min_, max_ = overheads["min"], overheads["max"]
         return random.uniform(min_, max_)

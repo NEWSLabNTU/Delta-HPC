@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from typing import Tuple, Dict, Any
 
-from src.simulation.models import *
+import src.simulation.models as m
 import src.simulation.utils as utils
 
 
-class WorkerImpl(Worker):
+class WorkerImpl(m.Worker):
     def __init__(self):
         pass
 
     def transfer(
         self,
-        details: TransferDetails,
-        agents: Dict[AgentId, Agent],
+        details: m.TransferDetails,
+        agents: Dict[m.AgentId, m.Agent],
     ) -> Tuple[str, Any] | None:
         giver = agents[details.giver_id]
         receiver = agents[details.receiver_id]
@@ -23,7 +23,7 @@ class WorkerImpl(Worker):
         exact_matches = [
             e
             for e in giver.engines
-            if e.status == EngineStatus.ACTIVE
+            if e.status == m.EngineStatus.ACTIVE
             and e.mig_profile.vram == amount
             and not e.is_permanent
         ]

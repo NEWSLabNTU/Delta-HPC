@@ -4,7 +4,7 @@ import random
 from typing import Any, List, Dict, Tuple
 
 import src.simulation.utils as utils
-from src.simulation.models import *
+import src.simulation.models as m
 
 
 class ResourceManager:
@@ -16,9 +16,9 @@ class ResourceManager:
     def act(
         self,
         current_time: float,
-        state: EnvironmentStateData,
-        agents: Dict[AgentId, Agent],
-    ) -> Tuple[TransferDetails | None, Tuple[str, Any] | None]:
+        state: m.EnvironmentStateData,
+        agents: Dict[m.AgentId, m.Agent],
+    ) -> Tuple[m.TransferDetails | None, Tuple[str, Any] | None]:
         """
         Periodically checks if it is time to trigger VRAM transfer or MIG split/merge.
         """
@@ -36,8 +36,8 @@ class ResourceManager:
         return vram_transfer_details, mig_decision
 
     def trigger_vram_transfer(
-        self, current_time: float, agents: Dict[AgentId, Agent]
-    ) -> TransferDetails | None:
+        self, current_time: float, agents: Dict[m.AgentId, m.Agent]
+    ) -> m.TransferDetails | None:
         """
         Periodically transfers VRAM between agents.
         Randomly selects an agent. If it has >20GB active VRAM, transfers 10 or 20GB.
@@ -57,7 +57,7 @@ class ResourceManager:
             active_vram = sum(
                 e.mig_profile.vram
                 for e in giver.engines
-                if e.status == EngineStatus.ACTIVE
+                if e.status == m.EngineStatus.ACTIVE
             )
 
             amount = 0
@@ -67,13 +67,13 @@ class ResourceManager:
                 amount = 10
 
             if amount > 0:
-                return TransferDetails(
+                return m.TransferDetails(
                     amount, giver_id=giver.agent_id, receiver_id=receiver.agent_id
                 )
         return None
 
     def trigger_mig(
-        self, current_time: float, agents: Dict[AgentId, Agent]
+        self, current_time: float, agents: Dict[m.AgentId, m.Agent]
     ) -> Tuple[str, Any] | None:
         candidates: List[Tuple[str, Any]] = []  # List of (action type, data)
         for agent in agents.values():

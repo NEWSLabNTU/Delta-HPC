@@ -5,12 +5,12 @@ import uuid
 from pathlib import Path
 from typing import Dict, Tuple, Set
 
-from src.simulation.models import *
+import src.simulation.models as m
 from src.simulation.config import SimulationConfig
 from src.simulation.mig_rule import MIGProfileRuleImpl
 
 type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
-type TokensMapType = Dict[AgentId, ModelsMapType]
+type TokensMapType = Dict[m.AgentId, ModelsMapType]
 
 
 def init_config(base_dir: Path) -> SimulationConfig:
@@ -31,7 +31,7 @@ def init_config(base_dir: Path) -> SimulationConfig:
 def init_tokens_map(base_dir: Path) -> TokensMapType:
     # --- TOKENS_MAP ---
     tokens_map: TokensMapType = {}
-    for agent_id in AgentId:
+    for agent_id in m.AgentId:
         model_map: ModelsMapType = {}
         agent_cfg = SIM_CONFIG.agents_configs[agent_id.value]
         seen_models: Set[str] = set()
@@ -53,7 +53,7 @@ def init_tokens_map(base_dir: Path) -> TokensMapType:
         tokens_map[agent_id] = model_map
 
     # Check that all models have the same set of request IDs per agent
-    for agent_id in AgentId:
+    for agent_id in m.AgentId:
         message_id_sets = [
             set(tokens_map[agent_id][model_name].keys())
             for model_name in tokens_map[agent_id]
@@ -69,7 +69,7 @@ def init_tokens_map(base_dir: Path) -> TokensMapType:
 base_dir = Path(".")
 SIM_CONFIG: SimulationConfig = init_config(base_dir)
 
-# Global token map: { AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
+# Global token map: { m.AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
 TOKENS_MAP: TokensMapType = init_tokens_map(base_dir)
 
 MIG_RULES = MIGProfileRuleImpl()

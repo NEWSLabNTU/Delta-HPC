@@ -3,10 +3,10 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from src.simulation.models import *
+import src.simulation.models as m
 
 
-class SimulationLoggerImpl(SimulationLogger):
+class SimulationLoggerImpl(m.SimulationLogger):
     def __init__(self, log_dir: str = "./logs", enabled: bool = True):
         self.log_dir = Path(log_dir)
         self.enabled = enabled
@@ -20,7 +20,7 @@ class SimulationLoggerImpl(SimulationLogger):
         self.log_file = self.log_dir / f"simulation-{timestamp}.log"
         self.env_log_file = self.log_dir / f"env_state-{timestamp}.jsonl"
 
-    def log_environment_state(self, current_time: float, state: EnvironmentStateData):
+    def log_environment_state(self, current_time: float, state: m.EnvironmentStateData):
         if not self.enabled:
             return
 
@@ -60,8 +60,8 @@ class SimulationLoggerImpl(SimulationLogger):
     def log_engine_step(
         self,
         current_time: float,
-        agents: Dict[AgentId, Agent],
-        stepping_engine: LLMEngine,
+        agents: Dict[m.AgentId, m.Agent],
+        stepping_engine: m.LLMEngine,
         next_arrival_time: Optional[float],
     ):
         """Logs the state of all engines for each agent with detailed progress."""
@@ -74,12 +74,12 @@ class SimulationLoggerImpl(SimulationLogger):
                 f"Stepping: {stepping_engine.owner.agent_id.value}-{stepping_engine.engine_id} | "
                 f"Next Arrival: {next_arrival_time:.4f}"
                 if next_arrival_time
-                else f"Next Arrival: None"
+                else "Next Arrival: None"
             )
         ]
 
         for aid, agent in agents.items():
-            lines.append(f"  Agent: {aid.value}")
+            lines.append(f"  m.Agent: {aid.value}")
             for engine in agent.engines:
                 # Log Owner + MIG
                 is_stepping = " [STEPPING]" if engine is stepping_engine else ""
@@ -94,7 +94,7 @@ class SimulationLoggerImpl(SimulationLogger):
                         f"      Waiting Requests: {len(engine.waiting_queue)} ({req_ids})"
                     )
                 else:
-                    lines.append(f"      Waiting Requests: 0")
+                    lines.append("      Waiting Requests: 0")
 
                 # Prefilling requests
                 prefill = engine.running_queue.prefill_requests
@@ -113,14 +113,14 @@ class SimulationLoggerImpl(SimulationLogger):
                         )
 
                 if not prefill and not decoding:
-                    lines.append(f"      No running requests")
+                    lines.append("      No running requests")
         self.log("\n".join(lines))
 
     def log_request_arrival(
         self,
         current_time: float,
-        req: Request,
-        eng: Optional[LLMEngine],
+        req: m.Request,
+        eng: Optional[m.LLMEngine],
     ):
         """Logs a request arrival event."""
         if not self.enabled:
@@ -128,27 +128,27 @@ class SimulationLoggerImpl(SimulationLogger):
         eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: REQUEST_ARRIVAL | "
-            f"ReqId: {req.id} | Agent: {req.agent_id.value} | Engine: {eng_str}"
+            f"ReqId: {req.id} | m.Agent: {req.agent_id.value} | Engine: {eng_str}"
         )
         self.log(msg)
 
     def log_rag_search_complete(
-        self, current_time: float, req: Request, eng: Optional[LLMEngine]
+        self, current_time: float, req: m.Request, eng: Optional[m.LLMEngine]
     ):
         if not self.enabled:
             return
         eng_str = f"{req.agent_id.value}-{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: RAG_SEARCH_COMPLETE | "
-            f"ReqId: {req.id} | Agent: {req.agent_id.value} | Engine: {eng_str}"
+            f"ReqId: {req.id} | m.Agent: {req.agent_id.value} | Engine: {eng_str}"
         )
         self.log(msg)
 
     def log_vram_transfer(
         self,
         current_time: float,
-        giver_id: AgentId,
-        receiver_id: AgentId,
+        giver_id: m.AgentId,
+        receiver_id: m.AgentId,
         amount: int,
         eids: List[str],
     ):
@@ -158,11 +158,11 @@ class SimulationLoggerImpl(SimulationLogger):
         msg = (
             f"[{current_time:.4f}] EVENT: VRAM_TRANSFER | "
             f"Giver: {giver_id.value} | Receiver: {receiver_id.value} | "
-            f"Amount: {amount}GB | Source Engine: {", ".join(eids)}"
+            f"Amount: {amount}GB | Source Engine: {', '.join(eids)}"
         )
         self.log(msg)
 
-    def log_discard_vram_transfer(self, current_time: float, detail: TransferDetails):
+    def log_discard_vram_transfer(self, current_time: float, detail: m.TransferDetails):
         if not self.enabled:
             return
         msg = (
@@ -186,7 +186,7 @@ class SimulationLoggerImpl(SimulationLogger):
         if not self.enabled:
             return
         self.log(
-            f"[{current_time:.4f}] EVENT: MIG_MERGE_TRIGGER | Engines: {", ".join(eids)} | GPU: {gpu}"
+            f"[{current_time:.4f}] EVENT: MIG_MERGE_TRIGGER | Engines: {', '.join(eids)} | GPU: {gpu}"
         )
 
     def log_mig_split_trigger(self, current_time: float, engine_id: str, gpu: int):

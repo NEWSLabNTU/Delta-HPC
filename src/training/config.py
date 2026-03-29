@@ -2,7 +2,7 @@ import yaml
 from pathlib import Path
 from typing import Literal
 
-from src.simulation.models import *
+import src.simulation.models as m
 
 
 class TrainingConfig:
@@ -27,17 +27,17 @@ class TrainingConfig:
     def refresh_period(self) -> float:
         return self._data["reconfig"]["refresh"] * 60
 
-    def slo(self, agent: AgentId, latency: Literal["ttft", "tpot"]) -> float:
+    def slo(self, agent: m.AgentId, latency: Literal["ttft", "tpot"]) -> float:
         return self._data["reward"]["slo"][agent.value][latency]
 
-    def qf(self, mig: MIGProfile) -> float:
+    def qf(self, mig: m.MIGProfile) -> float:
         return self._data["reward"]["Q"][mig.string]
 
     @property
     def alpha(self) -> float:
         return self._data["reward"]["alpha"]
 
-    def kappa(self, agent: AgentId) -> float:
+    def kappa(self, agent: m.AgentId) -> float:
         return self._data["reward"]["kappa"][agent.value]
 
     def w(self, latency: Literal["ttft", "tpot"]) -> float:

@@ -2,7 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List
 
-from src.simulation.models import *
+import src.simulation.models as m
 from src.training.config import TRAINING_CONFIG
 
 
@@ -15,13 +15,12 @@ class AgentStats:
     interval_start_queue_length: int = 0
 
 
-class EnvironmentStateImpl(EnvironmentState):
-
+class EnvironmentStateImpl(m.EnvironmentState):
     def __init__(self):
-        self._agent_stats: Dict[AgentId, AgentStats] = defaultdict(AgentStats)
+        self._agent_stats: Dict[m.AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
         self._reconfig_in_interval: bool = False
-        self._interval_requests: List[Request] = []
+        self._interval_requests: List[m.Request] = []
         self._current_budget = TRAINING_CONFIG.reconfig_budget
 
     @property
@@ -38,7 +37,7 @@ class EnvironmentStateImpl(EnvironmentState):
     def reset_for_next_interval(
         self,
         current_time: float,
-        agents: Dict[AgentId, Agent],
+        agents: Dict[m.AgentId, m.Agent],
     ):
         for stats in self._agent_stats.values():
             stats.queue_length_integral = 0.0
@@ -63,7 +62,7 @@ class EnvironmentStateImpl(EnvironmentState):
         self._last_queue_update_time = current_time
 
     def record_queue_length_advance(
-        self, current_time: float, agents: Dict[AgentId, Agent]
+        self, current_time: float, agents: Dict[m.AgentId, m.Agent]
     ):
         dt = current_time - self._last_queue_update_time
         if dt > 0:
@@ -81,7 +80,7 @@ class EnvironmentStateImpl(EnvironmentState):
             stats.last_queue_length = q_len
             stats.last_running_requests = run_len
 
-    def register_arrival(self, request: Request):
+    def register_arrival(self, request: m.Request):
         self._interval_requests.append(request)
 
     def register_reconfig(self):
@@ -90,9 +89,9 @@ class EnvironmentStateImpl(EnvironmentState):
     def get_state(
         self,
         current_time: float,
-        agents: Dict[AgentId, Agent],
-        engines: Dict[str, LLMEngine],
-    ) -> EnvironmentStateData:
+        agents: Dict[m.AgentId, m.Agent],
+        engines: Dict[str, m.LLMEngine],
+    ) -> m.EnvironmentStateData:
         return {
             "arrival_rate": self._get_arrival_rate(agents, current_time),
             "arrival_trend": self._get_arrival_trend(agents, current_time),
@@ -108,9 +107,9 @@ class EnvironmentStateImpl(EnvironmentState):
         }
 
     def _get_arrival_rate(
-        self, agents: Dict[AgentId, Agent], current_time: float
-    ) -> Dict[AgentId, float]:
-        rates: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        rates: Dict[m.AgentId, float] = {}
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             arr = [
@@ -126,9 +125,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return rates
 
     def _get_arrival_trend(
-        self, agents: Dict[AgentId, Agent], current_time: float
-    ) -> Dict[AgentId, float]:
-        trends: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        trends: Dict[m.AgentId, float] = {}
         sub_wdw = TRAINING_CONFIG.action_interval / 3.0
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
@@ -146,9 +145,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return trends
 
     def _get_avg_queue_length(
-        self, agents: Dict[AgentId, Agent]
-    ) -> Dict[AgentId, float]:
-        avg_q: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        avg_q: Dict[m.AgentId, float] = {}
         for agent_id in agents.keys():
             integral = self._agent_stats[agent_id].queue_length_integral
             avg_q[agent_id] = (
@@ -159,9 +158,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return avg_q
 
     def _get_avg_running_requests(
-        self, agents: Dict[AgentId, Agent]
-    ) -> Dict[AgentId, float]:
-        avg_run: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        avg_run: Dict[m.AgentId, float] = {}
         for agent_id in agents.keys():
             integral = self._agent_stats[agent_id].running_requests_integral
             avg_run[agent_id] = (
@@ -171,8 +170,10 @@ class EnvironmentStateImpl(EnvironmentState):
             )
         return avg_run
 
-    def _get_queue_delta(self, agents: Dict[AgentId, Agent]) -> Dict[AgentId, int]:
-        delta: Dict[AgentId, int] = {}
+    def _get_queue_delta(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, int]:
+        delta: Dict[m.AgentId, int] = {}
         for agent_id in agents.keys():
             start_q = self._agent_stats[agent_id].interval_start_queue_length
             end_q = self._agent_stats[agent_id].last_queue_length
@@ -180,9 +181,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return delta
 
     def _get_p99_ttft(
-        self, agents: Dict[AgentId, Agent], current_time: float
-    ) -> Dict[AgentId, float]:
-        p99: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        p99: Dict[m.AgentId, float] = {}
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             ttfts: List[float] = []
@@ -204,9 +205,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return p99
 
     def _get_avg_tpot(
-        self, agents: Dict[AgentId, Agent], current_time: float
-    ) -> Dict[AgentId, float]:
-        avg_tpot: Dict[AgentId, float] = {}
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        avg_tpot: Dict[m.AgentId, float] = {}
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             tpots: List[float] = []
@@ -227,14 +228,14 @@ class EnvironmentStateImpl(EnvironmentState):
         return avg_tpot
 
     def _get_kv_cache_utilization(
-        self, engines: Dict[str, LLMEngine]
+        self, engines: Dict[str, m.LLMEngine]
     ) -> Dict[int, List[float]]:
-        num_profiles = len(MIGProfile)
+        num_profiles = len(m.MIGProfile)
         util_sums: Dict[int, List[float]] = defaultdict(lambda: [0.0] * num_profiles)
         counts: Dict[int, List[int]] = defaultdict(lambda: [0] * num_profiles)
 
         for engine in engines.values():
-            if engine.status == EngineStatus.BOOTING:
+            if engine.status == m.EngineStatus.BOOTING:
                 continue
             idx = engine.mig_profile.idx
             util_sums[engine.gpu][idx] += engine.current_kv_utilization
@@ -247,9 +248,9 @@ class EnvironmentStateImpl(EnvironmentState):
         return result
 
     def _get_mig_config_encoding(
-        self, engines: Dict[str, LLMEngine]
+        self, engines: Dict[str, m.LLMEngine]
     ) -> Dict[int, List[int]]:
-        num_profiles = len(MIGProfile)
+        num_profiles = len(m.MIGProfile)
         encoding: Dict[int, List[int]] = defaultdict(lambda: [0] * num_profiles)
         for engine in engines.values():
             encoding[engine.gpu][engine.mig_profile.idx] += 1

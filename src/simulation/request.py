@@ -2,30 +2,29 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from src.simulation.models import *
+import src.simulation.models as m
+from src.simulation.models import MIGProfile
 
 
-class RequestImpl(Request):
+class RequestImpl(m.Request):
     def __init__(
         self,
         id: str,
-        agent_id: AgentId,
+        agent_id: m.AgentId,
         prompt_tokens: int = 0,
-        completion_tokens: int = 0,
         arrival_time: float = 0.0,
         original_id: str = "",
-        decode_time: float = 0.0,
     ):
         self._id = id
         self._agent_id = agent_id
         self._prompt_tokens = prompt_tokens
-        self._completion_tokens = completion_tokens
         self._arrival_time = arrival_time
         self._original_id = original_id
-        self._decode_time = decode_time
 
-        # State
-        self._state = RequestState.PENDING
+        self._mig = None
+        self._completion_tokens = 0
+        self._decode_time = 0.0
+        self._state = m.RequestState.PENDING
         self._prefilled_tokens = 0
         self._generated_tokens = 0
         self._start_time: Optional[float] = None
@@ -37,16 +36,24 @@ class RequestImpl(Request):
         return self._id
 
     @property
-    def agent_id(self) -> AgentId:
+    def mig(self) -> Optional[MIGProfile]:
+        return self._mig
+
+    @mig.setter
+    def mig(self, m: MIGProfile):
+        self._mig = m
+
+    @property
+    def original_id(self) -> str:
+        return self._original_id
+
+    @property
+    def agent_id(self) -> m.AgentId:
         return self._agent_id
 
     @property
     def prompt_tokens(self) -> int:
         return self._prompt_tokens
-
-    @property
-    def original_id(self) -> str:
-        return self._original_id
 
     @property
     def is_finished(self) -> bool:
@@ -85,11 +92,11 @@ class RequestImpl(Request):
         self._decode_time = value
 
     @property
-    def state(self) -> RequestState:
+    def state(self) -> m.RequestState:
         return self._state
 
     @state.setter
-    def state(self, value: RequestState):
+    def state(self, value: m.RequestState):
         self._state = value
 
     @property
@@ -133,25 +140,25 @@ class RequestImpl(Request):
         self._finish_time = value
 
 
-class RunningRequestsImpl(RunningRequests):
+class RunningRequestsImpl(m.RunningRequests):
     def __init__(self):
-        self._prefill_requests: List[Request] = []
-        self._decoding_requests: List[Request] = []
+        self._prefill_requests: List[m.Request] = []
+        self._decoding_requests: List[m.Request] = []
 
     @property
-    def prefill_requests(self) -> List[Request]:
+    def prefill_requests(self) -> List[m.Request]:
         return self._prefill_requests
 
     @prefill_requests.setter
-    def prefill_requests(self, value: List[Request]):
+    def prefill_requests(self, value: List[m.Request]):
         self._prefill_requests = value
 
     @property
-    def decoding_requests(self) -> List[Request]:
+    def decoding_requests(self) -> List[m.Request]:
         return self._decoding_requests
 
     @property
-    def all_requests(self) -> List[Request]:
+    def all_requests(self) -> List[m.Request]:
         return self._prefill_requests + self._decoding_requests
 
     def __len__(self) -> int:

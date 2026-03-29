@@ -1,43 +1,41 @@
 from __future__ import annotations
 from typing import List, Optional
 
-from src.simulation.models import *
+import src.simulation.models as m
 import src.simulation.utils as utils
 
 
-class AgentImpl(Agent):
-    def __init__(self, agent_id: AgentId):
+class AgentImpl(m.Agent):
+    def __init__(self, agent_id: m.AgentId):
         self._agent_id = agent_id
-        self._engines: List[LLMEngine] = []
-        self._completed_requests: List[Request] = []
+        self._engines: List[m.LLMEngine] = []
+        self._completed_requests: List[m.Request] = []
 
     @property
-    def agent_id(self) -> AgentId:
+    def agent_id(self) -> m.AgentId:
         return self._agent_id
 
     @property
-    def engines(self) -> List[LLMEngine]:
+    def engines(self) -> List[m.LLMEngine]:
         return self._engines
 
     @property
-    def completed_requests(self) -> List[Request]:
+    def completed_requests(self) -> List[m.Request]:
         return self._completed_requests
 
-    def add_engine(self, engine: LLMEngine):
+    def add_engine(self, engine: m.LLMEngine):
         self._engines.append(engine)
 
-    def _pick_laziest_engine(self, engines: List[LLMEngine]) -> LLMEngine:
+    def _pick_laziest_engine(self, engines: List[m.LLMEngine]) -> m.LLMEngine:
         # first compare waiting queue, than compare running queue
         return min(engines, key=lambda e: (len(e.waiting_queue), len(e.running_queue)))
 
-    def dispatch(self, request: Request, current_time: float) -> Optional[LLMEngine]:
-        """
-        Dispatches an incoming request to the best engine based on simple work-balance.
-        Finds engines matching the requested model size, and picks the one with the smallest queue length.
-        Sets completion_tokens based on the chosen engine's model before queuing the request.
-        If no active engines exist, queues the request in the agent's waiting queue.
-        """
-        active_engines = [e for e in self.engines if e.status == EngineStatus.ACTIVE]
+    def dispatch(
+        self, request: m.Request, current_time: float
+    ) -> Optional[m.LLMEngine]:
+        active_engines = [e for e in self.engines if e.status == m.EngineStatus.ACTIVE]
+
+        # At least permanent engines should be active
         assert len(active_engines) > 0, f"No active engines for agent {self.agent_id}"
 
         regular_active = [e for e in active_engines if not e.is_permanent]
@@ -63,6 +61,9 @@ class AgentImpl(Agent):
         lookup_id = request.original_id if request.original_id else request.id
         _, completion_tokens = model_req_map[lookup_id]
         request.completion_tokens = completion_tokens
+
+        # Resolve request's MIG instance
+        request.mig = best_engine.mig_profile
 
         best_engine.add_request(request, current_time)
         return best_engine

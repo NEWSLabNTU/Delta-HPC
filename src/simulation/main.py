@@ -2,7 +2,7 @@ import random
 import argparse
 from typing import Dict, List
 
-from src.simulation.models import *
+import src.simulation.models as m
 import src.simulation.utils as utils
 from src.simulation.request import RequestImpl
 from src.simulation.simulator import SimulatorImpl
@@ -12,18 +12,18 @@ from src.simulation.agent import AgentImpl
 
 def load_requests(
     arrival_interval_sec: float = 0.5, start_time: float = 0.0, turn: int = 0
-) -> List[Request]:
+) -> List[m.Request]:
     """
     Loads arriving Requests from the token map. Only prompt_tokens is set here;
     completion_tokens is determined at dispatch time based on the assigned engine's model.
     """
-    requests: List[Request] = []
+    requests: List[m.Request] = []
 
-    for agent_id in AgentId:
+    for agent_id in m.AgentId:
         first_model = next(iter(utils.TOKENS_MAP[agent_id]))
         req_map = utils.TOKENS_MAP[agent_id][first_model]
 
-        if agent_id == AgentId.CODING:
+        if agent_id == m.AgentId.CODING:
             # Pick 25,000 requests
             selected = random.sample(list(req_map.items()), 25000)
             for rid, (prompt_tokens, _) in selected:
@@ -35,9 +35,9 @@ def load_requests(
                         original_id=rid,
                     )
                 )
-        elif agent_id == AgentId.RAG:
+        elif agent_id == m.AgentId.RAG:
             all_items = list(req_map.items())
-            rag_requests: List[Request] = []
+            rag_requests: List[m.Request] = []
 
             # Duplicate each row
             for rid, (prompt_tokens, _) in all_items:
@@ -96,16 +96,16 @@ def main():
     requests = load_requests(turn=load_turn)
     print(f"Loaded {len(requests)} requests.")
 
-    agents: Dict[AgentId, Agent] = {}
-    engines: Dict[str, LLMEngine] = {}
-    for aid in AgentId:
+    agents: Dict[m.AgentId, m.Agent] = {}
+    engines: Dict[str, m.LLMEngine] = {}
+    for aid in m.AgentId:
         agents[aid] = AgentImpl(aid)
 
     for eng_conf in utils.SIM_CONFIG.initial_state:
-        mig = MIGProfile.from_string(eng_conf["mig"])
+        mig = m.MIGProfile.from_string(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
         agent_name = eng_conf["agent"]
-        agent = agents[AgentId(agent_name)]
+        agent = agents[m.AgentId(agent_name)]
         eid = utils.generate_engine_id(agent_name, gpu, mig.string)
 
         is_permanent = eng_conf.get("is-permanent", False)
@@ -136,7 +136,7 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
-        valid_actions = [a for a, m in zip(ResourceManagerAction, mask) if m]
+        valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         print(f"Action mask: {mask}")
@@ -165,7 +165,7 @@ def main():
     print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")
 
-    for agent_id in AgentId:
+    for agent_id in m.AgentId:
         reqs = sim.agents[agent_id].completed_requests
         print(f"\nAgent {agent_id.value}: {len(reqs)} requests completed.")
         if reqs:

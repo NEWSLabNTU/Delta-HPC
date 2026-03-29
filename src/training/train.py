@@ -5,7 +5,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 from typing import Dict, Any, Tuple, Optional
 
-from src.simulation.models import *
+import src.simulation.models as m
 
 
 class MIGResourceEnv(gym.Env[np.ndarray, int]):
@@ -14,7 +14,7 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
     Follows a 90-second fixed-interval Discrete-Time MDP.
     """
 
-    def __init__(self, simulator: Simulator) -> None:
+    def __init__(self, simulator: m.Simulator) -> None:
         super(MIGResourceEnv, self).__init__()
 
         """
@@ -98,8 +98,8 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
             return self._get_obs(), -1.0, False, False, {"invalid_action": True}
 
         # 2. Simulate interval logic
-        # Map integer action index to ResourceManagerAction Enum
-        enum_action = list(ResourceManagerAction)[action]
+        # Map integer action index to m.ResourceManagerAction Enum
+        enum_action = list(m.ResourceManagerAction)[action]
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
 

@@ -132,6 +132,13 @@ class Request(ABC):
 
     @property
     @abstractmethod
+    def mig(self) -> Optional[MIGProfile]: ...
+
+    @mig.setter
+    def mig(self, m: MIGProfile) -> None: ...
+
+    @property
+    @abstractmethod
     def prompt_tokens(self) -> int: ...
 
     @property
