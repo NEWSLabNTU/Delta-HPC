@@ -20,11 +20,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self._agent_stats: Dict[m.AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
         self._reconfig_flag: bool = False
-        self._interval_requests: List[m.Request] = []
+        self._interval_requests: Dict[m.AgentId, List[m.Request]] = defaultdict(list)
         self._current_budget = TRAINING_CONFIG.reconfig_budget
-
-        assert len(m.MIGProfile) == 5
-        self._start_mig_profile: Dict[int, m.MIGEncoding] = defaultdict(m.MIGEncoding)
 
     @property
     def current_budget(self) -> float:
@@ -54,14 +51,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.queue_length_integral = 0.0
             stats.running_requests_integral = 0.0
 
-        self._interval_requests = []
-        self._start_mig_profile.clear()
+        self._interval_requests.clear()
 
         for agent_id, agent in agents.items():
-            for e in agent.engines:
-                self._interval_requests.extend(e.running_queue.all_requests)
-                self._interval_requests.extend(e.waiting_queue)
-                self._start_mig_profile[e.gpu][e.mig_profile.idx] += 1
+            for eng in agent.engines:
+                self._interval_requests[agent_id].extend(eng.waiting_queue)
+                self._interval_requests[agent_id].extend(eng.running_queue.all_requests)
 
             q_len = sum(len(e.waiting_queue) for e in agent.engines)
             run_len = sum(len(e.running_queue) for e in agent.engines)
@@ -93,7 +88,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.last_running_requests = run_len
 
     def register_arrival(self, request: m.Request):
-        self._interval_requests.append(request)
+        self._interval_requests[request.agent_id].append(request)
 
     def get_state(
         self,
@@ -110,7 +105,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "p99_ttft": self._get_p99_ttft(agents, current_time),
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(engines),
-            "start_mig_profile": self._start_mig_profile,
             "current_mig_profile": self._get_mig_config_encoding(engines),
             "current_budget": self._current_budget,
             "recovery_flag": self._reconfig_flag,
@@ -125,7 +119,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id in agents.keys():
             arr = [
                 r.arrival_time
-                for r in self._interval_requests
+                for r in self._interval_requests[agent_id]
                 if r.agent_id == agent_id and r.arrival_time >= start_time
             ]
             rates[agent_id] = (
@@ -144,7 +138,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id in agents.keys():
             arrivals = [
                 r.arrival_time
-                for r in self._interval_requests
+                for r in self._interval_requests[agent_id]
                 if r.agent_id == agent_id and r.arrival_time >= start_time
             ]
             counts = [0, 0, 0]
@@ -198,7 +192,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             ttfts: List[float] = []
-            for r in self._interval_requests:
+            for r in self._interval_requests[agent_id]:
                 if (
                     r.agent_id == agent_id
                     and r.first_token_time is not None
@@ -222,7 +216,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         start_time = current_time - TRAINING_CONFIG.action_interval
         for agent_id in agents.keys():
             tpots: List[float] = []
-            for r in self._interval_requests:
+            for r in self._interval_requests[agent_id]:
                 if (
                     r.agent_id == agent_id
                     and r.start_time is not None

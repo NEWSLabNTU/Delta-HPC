@@ -8,8 +8,9 @@ from src.simulation.request import RunningRequestsImpl
 
 
 class LLMEngineImpl(m.LLMEngine):
-    @staticmethod
+    @classmethod
     def create(
+        cls,
         gpu: int,
         engine_id: str,
         owner: m.Agent,
@@ -19,7 +20,7 @@ class LLMEngineImpl(m.LLMEngine):
     ) -> LLMEngineImpl:
         mname = utils.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
 
-        return LLMEngineImpl(
+        return cls(
             gpu=gpu,
             engine_id=engine_id,
             owner=owner,

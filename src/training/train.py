@@ -1,17 +1,24 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import CheckpointCallback
-from typing import Dict, Any, Tuple, Optional
+import numpy.typing as npt
+from typing import Dict, Any, List, Tuple, Optional, cast
 
 import src.simulation.models as m
+from src.simulation.utils import load_requests
+from src.training.rewards import compute_reward
+from src.simulation.agent import AgentImpl
+from src.simulation.engine import LLMEngineImpl
+from src.simulation.simulator import SimulatorImpl
+import src.simulation.utils as utils
 
 
-class MIGResourceEnv(gym.Env[np.ndarray, int]):
+class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], np.intp]):
     """
     Custom Environment for RL-based MIG Resource Management.
-    Follows a 90-second fixed-interval Discrete-Time MDP.
+    Follows a fixed-interval Discrete-Time MDP.
     """
 
     def __init__(self, simulator: m.Simulator) -> None:
@@ -30,24 +37,24 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
         8. Merge A2’s 2 smaller MIG
         """
         self.sim = simulator
-        self.action_space: spaces.Discrete = spaces.Discrete(9)
+        self.action_space = spaces.Discrete(9)
 
         # State Space: Flattened dictionary metrics
-        self.observation_space: spaces.Box = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(35,), dtype=np.float32
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(46,), dtype=np.float32
         )
 
         # Internal state tracking
         self.current_step: int = 0
         self.max_steps: int = 1000
+        self.load_turn: int = 0
 
-    def _get_obs(self) -> np.ndarray:
-        state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines
-        )
+    def action_masks(self) -> npt.NDArray[np.bool_]:
+        return np.array(self.sim.get_action_mask(), dtype=np.bool_)
 
-        obs_list = []
-        agents_ordered = sorted(self.sim.agents.keys())
+    def _get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:
+        obs_list: List[float] = []
+        agents_ordered = sorted(self.sim.agents.keys(), key=lambda a: a.value)
 
         # 1-7. Agent Metrics, 14 items
         metrics = [
@@ -60,56 +67,79 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
             "avg_tpot",
         ]
         for metric in metrics:
-            data = state_data[metric]
+            data = cast(Dict[m.AgentId, float], state_data[metric])
             for aid in agents_ordered:
-                obs_list.append(float(data.get(aid, 0.0)))
+                obs_list.append(float(data[aid]))
 
-        # 8. kv_cache_utilization, 10 items
+        # 8. kv_cache_utilization, 15 items
         kv_util = state_data["kv_cache_utilization"]
         for gpu_idx in [0, 1, 2]:
             lst = kv_util.get(gpu_idx, [0.0] * 5)
             obs_list.extend(lst)
 
-        # 9. mig_config_encoding, 10 items
-        mig_enc = state_data["mig_config_encoding"]
+        # 9. current_mig_profile
+        mig_enc = state_data["current_mig_profile"]
         for gpu_idx in [0, 1, 2]:
-            lst = mig_enc.get(gpu_idx, [0] * 5)
-            obs_list.extend([float(x) for x in lst])
+            lst = mig_enc[gpu_idx]
+            # handle if elements are MIGEncoding or simple ints
+            obs_list.extend(
+                [
+                    float(lst.p1),
+                    float(lst.p2),
+                    float(lst.p3),
+                    float(lst.p4),
+                    float(lst.p7),
+                ]
+            )
 
         # 10. recovery_flag: 1 item
         obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)
 
+        # 11. current_budget: 1 item
+        obs_list.append(float(state_data["current_budget"]))
+
         return np.array(obs_list, dtype=np.float32)
 
-    def _calculate_reward(self, action: int, obs: np.ndarray) -> float:
-        """
-        TODO: Implement the Reward Function logic here.
-        """
-        reward: float = 0.0
-        return reward
+    def _calculate_reward(
+        self, action: int, reqs: Dict[m.AgentId, List[m.Request]]
+    ) -> float:
+        enum_action = list(m.ResourceManagerAction)[action]
+        return compute_reward(reqs, enum_action)
 
     def _is_action_valid(self, action: int) -> bool:
         return self.sim.get_action_mask()[action]
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def step(
+        self, action: int
+    ) -> Tuple[npt.NDArray[np.float32], float, bool, bool, Dict[str, Any]]:
         # 1. Check for Action Validity (Action Masking)
         if not self._is_action_valid(action):
-            # Penalize invalid actions and stay in the same state
-            return self._get_obs(), -1.0, False, False, {"invalid_action": True}
+            raise ValueError(f"Invalid action: {action}")
 
         # 2. Simulate interval logic
         # Map integer action index to m.ResourceManagerAction Enum
         enum_action = list(m.ResourceManagerAction)[action]
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
+        state_data = self.sim.environment_state.get_state(
+            self.sim.current_time, self.sim.agents, self.sim.engines
+        )
 
         # 3. Compute new state and reward
-        obs: np.ndarray = self._get_obs()
-        reward: float = self._calculate_reward(action, obs)
+        obs = self._get_obs(state_data)
+        reward: float = self._calculate_reward(action, state_data["requests"])
 
         self.current_step += 1
         terminated: bool = self.current_step >= self.max_steps
         truncated: bool = False
+
+        # 4. Replenish requests if necessary like in main.py
+        remain = self.sim.pending_arrival_count
+        if remain < 1000:
+            max_arr_time = self.sim.latest_arrival_time
+            self.load_turn += 1
+            new_requests = load_requests(start_time=max_arr_time, turn=self.load_turn)
+            self.sim.add_arrival_events(new_requests)
 
         return obs, reward, terminated, truncated, {}
 
@@ -118,18 +148,60 @@ class MIGResourceEnv(gym.Env[np.ndarray, int]):
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         super().reset(seed=seed)
         self.current_step = 0
-        # Reset hardware to initial MIG profile if in a real environment
+        self.load_turn = 0
+
+        # Reset hardware simulation state
         self.sim.reset()
-        # TODO: Replanish requests
-        return self._get_obs(), {}
+
+        # Replenish requests to initialize simulator
+        requests = load_requests(turn=self.load_turn)
+        self.sim.init_simulator(requests, self.max_steps)
+        self.sim.run()  # advance to the first action interval
+
+        state_data = self.sim.environment_state.get_state(
+            self.sim.current_time, self.sim.agents, self.sim.engines
+        )
+        return self._get_obs(state_data), {}
 
 
 def train() -> None:
-    # 1. Initialize the Environment
-    env: MIGResourceEnv = MIGResourceEnv()
+    # 1. Initialize Simulator similar to main.py
+    agents: Dict[m.AgentId, m.Agent] = {}
+    engines: Dict[str, m.LLMEngine] = {}
+    for aid in m.AgentId:
+        agents[aid] = AgentImpl(aid)
 
-    # 2. Define PPO Hyperparameters
-    model: PPO = PPO(
+    for eng_conf in utils.SIM_CONFIG.initial_state:
+        mig = m.MIGProfile.from_string(eng_conf["mig"])
+        gpu = int(eng_conf["gpu"])
+        agent_name = eng_conf["agent"]
+        agent = agents[m.AgentId(agent_name)]
+        eid = utils.generate_engine_id(gpu, mig.string)
+
+        is_permanent = eng_conf.get("is-permanent", False)
+        eng = LLMEngineImpl.create(
+            gpu=gpu,
+            engine_id=eid,
+            owner=agent,
+            mig_profile=mig,
+            current_time=0.0,
+            is_permanent=is_permanent,
+        )
+
+        agent.add_engine(eng)
+        engines[eid] = eng
+
+    sim = SimulatorImpl(
+        agents=agents,
+        engines=engines,
+        no_log=True,
+    )
+
+    # 1. Initialize the Environment
+    env = MIGResourceEnv(sim)
+
+    # 2. Define MaskablePPO Hyperparameters
+    model: MaskablePPO = MaskablePPO(
         "MlpPolicy",
         env,
         verbose=1,
@@ -145,16 +217,16 @@ def train() -> None:
 
     # 3. Setup Checkpoints
     checkpoint_callback: CheckpointCallback = CheckpointCallback(
-        save_freq=5000, save_path="./logs/", name_prefix="mig_rl_model"
+        save_freq=5000, save_path="./ckpts/"
     )
 
-    # 4. Start Training
-    print("Starting Training...")
-    model.learn(total_timesteps=100000, callback=checkpoint_callback)
+    # 4. Start Training (commented out per user request as env is incomplete)
+    print("Training Setup Complete (Not Run).")
+    # model.learn(total_timesteps=100000, callback=checkpoint_callback)
 
     # 5. Save the final model
-    model.save("ppo_mig_resource_manager")
-    print("Training Complete. Model Saved.")
+    # model.save("ppo_mig_resource_manager")
+    # print("Training Complete. Model Saved.")
 
 
 if __name__ == "__main__":

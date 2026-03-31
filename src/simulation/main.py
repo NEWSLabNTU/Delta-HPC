@@ -4,86 +4,12 @@ from typing import Dict, List
 
 import src.simulation.models as m
 import src.simulation.utils as utils
-from src.simulation.request import RequestImpl
+from src.simulation.utils import load_requests
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.agent import AgentImpl
 
-
-def load_requests(
-    arrival_interval_sec: float = 0.5, start_time: float = 0.0, turn: int = 0
-) -> List[m.Request]:
-    """
-    Loads arriving Requests from the token map. Only prompt_tokens is set here;
-    completion_tokens is determined at dispatch time based on the assigned engine's model.
-    """
-    requests: List[m.Request] = []
-
-    for agent_id in m.AgentId:
-        first_model = next(iter(utils.TOKENS_MAP[agent_id]))
-        req_map = utils.TOKENS_MAP[agent_id][first_model]
-
-        if agent_id == m.AgentId.CODING:
-            # Pick 25,000 requests
-            selected = random.sample(list(req_map.items()), 25000)
-            for rid, (prompt_tokens, _) in selected:
-                requests.append(
-                    RequestImpl(
-                        id=f"{rid}_t{turn}",
-                        agent_id=agent_id,
-                        prompt_tokens=prompt_tokens,
-                        original_id=rid,
-                    )
-                )
-        elif agent_id == m.AgentId.RAG:
-            all_items = list(req_map.items())
-            rag_requests: List[m.Request] = []
-
-            # Duplicate each row
-            for rid, (prompt_tokens, _) in all_items:
-                rag_requests.append(
-                    RequestImpl(
-                        id=f"{rid}_dup1_t{turn}",
-                        agent_id=agent_id,
-                        prompt_tokens=prompt_tokens,
-                        original_id=rid,
-                    )
-                )
-            for rid, (prompt_tokens, _) in all_items:
-                rag_requests.append(
-                    RequestImpl(
-                        id=f"{rid}_dup2_t{turn}",
-                        agent_id=agent_id,
-                        prompt_tokens=prompt_tokens,
-                        original_id=rid,
-                    )
-                )
-
-            # Fill to 25,000
-            needed = 25000 - len(rag_requests)
-            if needed > 0:
-                extra = random.sample(all_items, needed)
-                for i, (rid, (prompt_tokens, _)) in enumerate(extra):
-                    rag_requests.append(
-                        RequestImpl(
-                            id=f"{rid}_extra_{i}_t{turn}",
-                            agent_id=agent_id,
-                            prompt_tokens=prompt_tokens,
-                            original_id=rid,
-                        )
-                    )
-            elif needed < 0:
-                rag_requests = rag_requests[:25000]
-
-            requests.extend(rag_requests)
-
-    random.seed(42)
-    random.shuffle(requests)
-
-    for i, req in enumerate(requests):
-        req.arrival_time = start_time + i * arrival_interval_sec
-
-    return requests
+from src.training.rewards import compute_reward
 
 
 def main():
@@ -129,7 +55,7 @@ def main():
 
     # For a quicker test we limit requests
     max_steps = 100
-    sim.init_event_queues(requests[:1000], max_steps)
+    sim.init_simulator(requests, max_steps)
     sim.run()  # advance to the first action interal
 
     print("Running mockup training loop...")
@@ -151,6 +77,9 @@ def main():
         avg_q = state_data["avg_queue_length"]
         print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
 
+        reward = compute_reward(state_data["requests"], action)
+        print(f"  Reward: {reward:.4f}")
+
         # Count remaining arrival events to replenish proactively
         remain = sim.pending_arrival_count
         if remain < 1000:
@@ -160,7 +89,7 @@ def main():
             )
             load_turn += 1
             new_requests = load_requests(start_time=max_arr_time, turn=load_turn)
-            sim.add_arrival_events(new_requests[:1000])
+            sim.add_arrival_events(new_requests)
 
     print("\n====== Simulation Finished ======")
     print(f"Total simulated time: {sim.current_time:.2f} seconds")

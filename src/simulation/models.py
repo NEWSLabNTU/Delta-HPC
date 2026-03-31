@@ -171,10 +171,10 @@ class Request(ABC):
 
     @property
     @abstractmethod
-    def mig(self) -> Optional[MIGProfile]: ...
+    def serving_engine(self) -> Optional[LLMEngine]: ...
 
-    @mig.setter
-    def mig(self, m: MIGProfile) -> None: ...
+    @serving_engine.setter
+    def serving_engine(self, e: LLMEngine) -> None: ...
 
     @property
     @abstractmethod
@@ -542,9 +542,10 @@ class LLMEngine(ABC):
     @abstractmethod
     def add_request(self, request: Request, current_time: float) -> None: ...
 
-    @staticmethod
+    @classmethod
     @abstractmethod
     def create(
+        cls,
         gpu: int,
         engine_id: str,
         owner: Agent,
@@ -596,7 +597,7 @@ class Simulator(ABC):
     def environment_state(self) -> EnvironmentState: ...
 
     @abstractmethod
-    def init_event_queues(self, requests: List[Request], max_steps: int) -> None: ...
+    def init_simulator(self, requests: List[Request], max_steps: int) -> None: ...
 
     @abstractmethod
     def add_arrival_events(self, requests: List[Request]) -> None: ...
@@ -671,12 +672,11 @@ class EnvironmentStateData(TypedDict):
     p99_ttft: Dict[AgentId, float]
     avg_tpot: Dict[AgentId, float]
     kv_cache_utilization: Dict[int, List[float]]
-    start_mig_profile: Dict[int, MIGEncoding]
     current_mig_profile: Dict[int, MIGEncoding]
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, float]
-    requests: List[Request]
+    requests: Dict[AgentId, List[Request]]
 
 
 class Worker(ABC):

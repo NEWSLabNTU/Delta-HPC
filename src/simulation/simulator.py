@@ -69,17 +69,6 @@ class SimulatorImpl(m.Simulator):
                 max_arr_time = max(max_arr_time, e.time)
         return max_arr_time
 
-    def init_event_queues(self, requests: List[m.Request], max_steps: int) -> None:
-        self.add_arrival_events(requests)
-        self._schedule_resource_manager_triggers(max_steps)
-        self._events.add(
-            m.SimulationEvent(
-                time=0.0,
-                event_type=m.EventType.REFRESH_ACTION_BUDGET,
-                payload={},
-            )
-        )
-
     def add_arrival_events(self, requests: List[m.Request]) -> None:
         for req in requests:
             self._events.add(
@@ -106,8 +95,11 @@ class SimulatorImpl(m.Simulator):
 
         self._events.update(search_evts)
 
-    def _schedule_resource_manager_triggers(self, max_steps: int) -> None:
-        """Schedules RESOURCE_MANAGER_TRIGGER events at fixed intervals."""
+    def init_simulator(self, requests: List[m.Request], max_steps: int) -> None:
+        # Fill up requests
+        self.add_arrival_events(requests)
+
+        # Add RL action events
         for i in range(1, max_steps + 2):  # extra +1 as the stopping condition
             t = i * TRAINING_CONFIG.action_interval
             self._events.add(
@@ -117,6 +109,19 @@ class SimulatorImpl(m.Simulator):
                     payload={},
                 )
             )
+
+        # Add budget refresh events
+        self._events.add(
+            m.SimulationEvent(
+                time=0.0,
+                event_type=m.EventType.REFRESH_ACTION_BUDGET,
+                payload={},
+            )
+        )
+
+        # Activate engines
+        for e in self._engines.values():
+            e.activate(self._current_time)
 
     def has_active_work(self) -> bool:
         if any(

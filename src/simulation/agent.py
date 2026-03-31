@@ -62,8 +62,8 @@ class AgentImpl(m.Agent):
         _, completion_tokens = model_req_map[lookup_id]
         request.completion_tokens = completion_tokens
 
-        # Resolve request's MIG instance
-        request.mig = best_engine.mig_profile
+        # Resolve request's serving engine
+        request.serving_engine = best_engine
 
         best_engine.add_request(request, current_time)
         return best_engine

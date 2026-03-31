@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import List, Optional
 
 import src.simulation.models as m
-from src.simulation.models import MIGProfile
 
 
 class RequestImpl(m.Request):
@@ -21,7 +20,7 @@ class RequestImpl(m.Request):
         self._arrival_time = arrival_time
         self._original_id = original_id
 
-        self._mig = None
+        self._serving_engine = None
         self._completion_tokens = 0
         self._decode_time = 0.0
         self._state = m.RequestState.PENDING
@@ -36,12 +35,12 @@ class RequestImpl(m.Request):
         return self._id
 
     @property
-    def mig(self) -> Optional[MIGProfile]:
-        return self._mig
+    def serving_engine(self) -> Optional[m.LLMEngine]:
+        return self._serving_engine
 
-    @mig.setter
-    def mig(self, m: MIGProfile):
-        self._mig = m
+    @serving_engine.setter
+    def serving_engine(self, e: m.LLMEngine):
+        self._serving_engine = e
 
     @property
     def original_id(self) -> str:

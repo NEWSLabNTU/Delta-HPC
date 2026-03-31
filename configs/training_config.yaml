@@ -5,28 +5,17 @@ training:
     refresh: 15 # minutes
   reward:
     # Reward function:
-    # R_t = \sum_{i=1}^{n} \left[ Q_i \cdot r_{i,success} - \alpha_i \cdot \Phi(L_i, SLO_i) \right] - \Omega(a_t)
-    # where Phi function is:
-    # \Phi(L_i, SLO_i) = 1 - \exp\left( -\frac{1}{\kappa} \sum_{j \in \text{Req}_i} \left[ w_{T} \cdot \max(0, \text{TTFT}_j - \text{SLO}_{T}) + w_{P} \cdot \max(0, \text{TPOT}_j - \text{SLO}_{P}) \right] \right)
-    # and Omega (reconfiguration penalty):
-    # \Omega(a_t) = \Gamma \cdot \mathbb{1}(a_t \neq \text{None})
-    slo: # seconds
-      CodingAgent:
-        ttft: 0.2
-        tpot: 0.03
-      RAGAgent:
-        ttft: 0.4
-        tpot: 0.03
-    Q: # quality factor
-      7g.40gb: 1.0
-      4g.20gb: 0.4
-      3g.20gb: 0.4
-      2g.10gb: 0.15
-      1g.10gb: 0.15
-    alpha: 1.0 # relative weight of latency penalty
-    kappa: # agent's sensitivity to latency
-      CodingAgent: 0.66
-      RAGAgent: 0.9
+    # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
+    # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
+    Q: # quality-incentive factor
+      7g.40gb: 2.0
+      4g.20gb: 1.5
+      3g.20gb: 1.5
+      2g.10gb: 1.0
+      1g.10gb: 1.0
+    alpha:
+      CodingAgent: 1.1
+      RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
     gamma: 0.5 # reconfiguration penalty

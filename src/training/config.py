@@ -27,18 +27,11 @@ class TrainingConfig:
     def refresh_period(self) -> float:
         return self._data["reconfig"]["refresh"] * 60
 
-    def slo(self, agent: m.AgentId, latency: Literal["ttft", "tpot"]) -> float:
-        return self._data["reward"]["slo"][agent.value][latency]
-
     def qf(self, mig: m.MIGProfile) -> float:
         return self._data["reward"]["Q"][mig.string]
 
-    @property
-    def alpha(self) -> float:
-        return self._data["reward"]["alpha"]
-
-    def kappa(self, agent: m.AgentId) -> float:
-        return self._data["reward"]["kappa"][agent.value]
+    def alpha(self, agent: m.AgentId) -> float:
+        return self._data["reward"]["alpha"][agent.value]
 
     def w(self, latency: Literal["ttft", "tpot"]) -> float:
         k = f"w_{latency}"

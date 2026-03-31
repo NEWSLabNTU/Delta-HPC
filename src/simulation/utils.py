@@ -3,11 +3,13 @@ import json
 import yaml
 import uuid
 from pathlib import Path
-from typing import Dict, Tuple, Set
+from typing import Dict, Tuple, Set, List
+import random
 
 import src.simulation.models as m
 from src.simulation.config import SimulationConfig
 from src.simulation.mig_rule import MIGProfileRuleImpl
+from src.simulation.request import RequestImpl
 
 type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
 type TokensMapType = Dict[m.AgentId, ModelsMapType]
@@ -85,3 +87,79 @@ def generate_engine_id(gpu: int, mig_str: str) -> str:
         if eid not in USED_EIDS:
             USED_EIDS.add(eid)
             return eid
+
+
+def load_requests(
+    arrival_interval_sec: float = 0.5, start_time: float = 0.0, turn: int = 0
+) -> List[m.Request]:
+    """
+    Loads arriving Requests from the token map. Only prompt_tokens is set here;
+    completion_tokens is determined at dispatch time based on the assigned engine's model.
+    """
+    requests: List[m.Request] = []
+
+    for agent_id in m.AgentId:
+        first_model = next(iter(TOKENS_MAP[agent_id]))
+        req_map = TOKENS_MAP[agent_id][first_model]
+
+        if agent_id == m.AgentId.CODING:
+            # Pick 25,000 requests
+            selected = random.sample(list(req_map.items()), 25000)
+            for rid, (prompt_tokens, _) in selected:
+                requests.append(
+                    RequestImpl(
+                        id=f"{rid}_t{turn}",
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+        elif agent_id == m.AgentId.RAG:
+            all_items = list(req_map.items())
+            rag_requests: List[m.Request] = []
+
+            # Duplicate each row
+            for rid, (prompt_tokens, _) in all_items:
+                rag_requests.append(
+                    RequestImpl(
+                        id=f"{rid}_dup1_t{turn}",
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+            for rid, (prompt_tokens, _) in all_items:
+                rag_requests.append(
+                    RequestImpl(
+                        id=f"{rid}_dup2_t{turn}",
+                        agent_id=agent_id,
+                        prompt_tokens=prompt_tokens,
+                        original_id=rid,
+                    )
+                )
+
+            # Fill to 25,000
+            needed = 25000 - len(rag_requests)
+            if needed > 0:
+                extra = random.sample(all_items, needed)
+                for i, (rid, (prompt_tokens, _)) in enumerate(extra):
+                    rag_requests.append(
+                        RequestImpl(
+                            id=f"{rid}_extra_{i}_t{turn}",
+                            agent_id=agent_id,
+                            prompt_tokens=prompt_tokens,
+                            original_id=rid,
+                        )
+                    )
+            elif needed < 0:
+                rag_requests = rag_requests[:25000]
+
+            requests.extend(rag_requests)
+
+    random.seed(42)
+    random.shuffle(requests)
+
+    for i, req in enumerate(requests):
+        req.arrival_time = start_time + i * 0.25
+
+    return requests

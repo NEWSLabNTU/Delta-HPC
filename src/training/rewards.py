@@ -1,0 +1,50 @@
+from typing import Dict, List
+
+import src.simulation.models as m
+from src.training.config import TRAINING_CONFIG
+
+
+def compute_reward(
+    requests: Dict[m.AgentId, List[m.Request]],
+    action: m.ResourceManagerAction,
+    epsilon: float = 1e-9,
+) -> float:
+    """
+    Computes the RL agent's reward based on latency and reconfiguration cost.
+    """
+    gamma = TRAINING_CONFIG.gamma
+    w_t = TRAINING_CONFIG.w("ttft")
+    w_p = TRAINING_CONFIG.w("tpot")
+
+    # Omega(a_t): Penalty for taking an action
+    omega = gamma if action != m.ResourceManagerAction.NO_ACTION else 0.0
+
+    total_penalty = 0.0
+
+    for agent_id, agent_requests in requests.items():
+        alpha_k = TRAINING_CONFIG.alpha(agent_id)
+
+        sum_latency = 0.0
+        count = len(agent_requests)
+
+        for req in agent_requests:
+            ttft = 0.0
+            if req.first_token_time is not None:
+                ttft = req.first_token_time - req.arrival_time
+
+            tpot = 0.0
+            if req.generated_tokens > 0:
+                tpot = req.decode_time / req.generated_tokens
+
+            # Quality factor Q based on the MIG instance the request was run on
+            q_j = 1.0  # Default fallback if somehow no serving engine
+            if req.serving_engine is not None:
+                q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
+
+            composite_latency = (w_t * ttft + w_p * tpot) / q_j
+            sum_latency += composite_latency
+
+        psi_k = sum_latency / (count + epsilon)
+        total_penalty += alpha_k * psi_k
+
+    return -(total_penalty + omega)
