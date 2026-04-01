@@ -19,4 +19,4 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 0.5 # reconfiguration penalty
+    gamma: 0.3 # reconfiguration penalty

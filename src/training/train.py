@@ -1,6 +1,4 @@
-import sys
 import time
-from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -12,10 +10,11 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.monitor import Monitor
 import numpy.typing as npt
-from typing import Dict, Any, List, Tuple, Optional, cast, TextIO
+from typing import Dict, Any, List, Tuple, Optional, cast
 
 import src.simulation.models as m
 from src.simulation.request_loader import RequestLoader
+from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
 from src.training.rewards import compute_reward
 from src.simulation.agent import AgentImpl
@@ -61,18 +60,13 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.max_steps: int = 1024
         self.load_turn: int = 0
         self.episode_count: int = 0
-        self.current_log_file: Optional[Path] = None
+        self._logger = TrainingLogger()
         self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
         self._current_action_mask: List[bool] = list(self.action_masks())
 
-    def _print_current_sim(self, file: Optional[TextIO] = None) -> None:
-        if file is None:
-            file = sys.stdout
-        for aid, ag in self.sim.agents.items():
-            print(f"Agent {aid.value}:", file=file)
-            for eng in ag.engines:
-                print(f"  {eng.engine_id}", file=file)
-            print("", file=file)
+    @property
+    def logger(self) -> TrainingLogger:
+        return self._logger
 
     def action_masks(self, phase: Optional[int] = None) -> npt.NDArray[np.bool_]:
         if phase is None:
@@ -153,7 +147,6 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         enum_action = list(m.ResourceManagerAction)[action]
         # 1. Check for Action Validity (Action Masking)
         if not self._is_action_valid(action):
-            self._print_current_sim()
             raise ValueError(f"Invalid action: {action}")
 
         # 2. Simulate interval logic
@@ -162,14 +155,14 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         state_data = self.sim.environment_state.get_state(
             self.sim.current_time, self.sim.agents, self.sim.engines
         )
-
-        if self.current_log_file is not None:
-            with open(self.current_log_file, "a") as f:
-                f.write(f"--- Step {self.current_step} ---\n")
-                f.write(f"Action: {enum_action.name}\n")
-                f.write(f"Current budget: {state_data['current_budget']}\n")
-                f.write("Simulation State (After-Action):\n")
-                self._print_current_sim(file=f)
+        self._logger.log_step(
+            self.current_step,
+            enum_action.name,
+            state_data["current_budget"],
+            self.request_loader.current_rates,
+            self.request_loader.current_pattern,
+            self.sim.agents,
+        )
 
         # 3. Compute new state and reward
         obs = self._get_obs(state_data)
@@ -178,10 +171,8 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.current_step += 1
         terminated = self.current_step >= self.max_steps
         truncated = False
-        if terminated:
-            self._print_current_sim()
 
-        # 4. Replenish requests if necessary like in main.py
+        # 4. Replenish requests if necessary
         remain = self.sim.pending_arrival_count
         if remain < 1000:
             max_arr_time = self.sim.latest_arrival_time
@@ -201,17 +192,11 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.load_turn = 0
         self.episode_count += 1
 
-        log_dir = Path(f"logs/train/{TIMESTAMP}")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self.current_log_file = log_dir / f"ep{self.episode_count}.log"
-
-        with open(self.current_log_file, "w") as f:
-            f.write(f"=== Episode {self.episode_count}===\n\n")
-
         # Reset hardware simulation state
         self.sim.reset()
 
         # Replenish requests to initialize simulator
+        self._logger.start_episode(self.episode_count)
         self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
         requests = self.request_loader.generate_requests(turn=self.load_turn)
         self.sim.init_simulator(requests, self.max_steps)
@@ -223,30 +208,16 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         return self._get_obs(state_data), {}
 
 
-class RewardLoggerCallback(BaseCallback):
-    def __init__(self, check_freq: int, verbose: int = 1):
+class LogCleanupCallback(BaseCallback):
+    def __init__(self, env_logger: TrainingLogger, verbose: int = 0):
         super().__init__(verbose)
-        self.check_freq = check_freq
-        self.episode_rewards: List[float] = []
-        self.current_episode_reward: float = 0
+        self._env_logger = env_logger
 
     def _on_step(self) -> bool:
-        reward = float(self.locals["rewards"][0])
-        self.current_episode_reward += reward
-
-        if self.locals["dones"][0]:
-            self.episode_rewards.append(self.current_episode_reward)
-            self.current_episode_reward = 0
-
-        if self.n_calls % self.check_freq == 0:
-            if len(self.episode_rewards) > 0:
-                mean_reward = np.mean(self.episode_rewards[-10:])
-                print(
-                    f"Step: {self.num_timesteps} | Mean Ep Reward (last 10): {mean_reward:.2f}"
-                )
-            else:
-                print(f"Step: {self.num_timesteps} | Last Step Reward: {reward:.4f}")
         return True
+
+    def _on_training_end(self) -> None:
+        self._env_logger.close()
 
 
 def train() -> None:
@@ -283,8 +254,9 @@ def train() -> None:
     )
 
     # 1. Initialize the Environment
-    env = MIGResourceEnv(sim)
-    env = Monitor(env)  # type: ignore # Track episode rewards and lengths
+    raw_env = MIGResourceEnv(sim)
+    # Track episode rewards and lengths
+    env: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
 
     # 2. Define MaskablePPO Hyperparameters
     model: MaskablePPO = MaskablePPO(
@@ -307,8 +279,8 @@ def train() -> None:
     checkpoint_callback = CheckpointCallback(
         save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
     )
-    reward_logger = RewardLoggerCallback(check_freq=1024)
-    callbacks = CallbackList([checkpoint_callback, reward_logger])
+    log_cleanup_callback = LogCleanupCallback(raw_env.logger)
+    callbacks = CallbackList([checkpoint_callback, log_cleanup_callback])
 
     # 4. Start Training
     print("Training Setup Complete")
