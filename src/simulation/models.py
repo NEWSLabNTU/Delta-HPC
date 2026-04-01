@@ -596,6 +596,14 @@ class Simulator(ABC):
     @abstractmethod
     def environment_state(self) -> EnvironmentState: ...
 
+    @property
+    @abstractmethod
+    def pending_arrival_count(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def latest_arrival_time(self) -> float: ...
+
     @abstractmethod
     def init_simulator(self, requests: List[Request], max_steps: int) -> None: ...
 

@@ -64,9 +64,9 @@ class SimulatorImpl(m.Simulator):
     @property
     def latest_arrival_time(self) -> float:
         max_arr_time = self._current_time
-        for e in self._events:
+        for e in reversed(self._events):
             if e.event_type == m.EventType.REQUEST_ARRIVAL:
-                max_arr_time = max(max_arr_time, e.time)
+                return e.time
         return max_arr_time
 
     def add_arrival_events(self, requests: List[m.Request]) -> None:

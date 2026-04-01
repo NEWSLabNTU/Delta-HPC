@@ -1,4 +1,5 @@
 training:
+  phase: 1
   action-interval: 120 # seconds
   reconfig:
     budget: 150 # seconds

@@ -1,10 +1,10 @@
-import random
 import argparse
-from typing import Dict, List
+from typing import Dict
 
 import src.simulation.models as m
 import src.simulation.utils as utils
-from src.simulation.utils import load_requests
+from src.simulation.request_loader import RequestLoader
+from src.training.config import TRAINING_CONFIG
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.agent import AgentImpl
@@ -19,7 +19,8 @@ def main():
 
     print("Loading config and datasets...")
     load_turn = 0
-    requests = load_requests(turn=load_turn)
+    request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
+    requests = request_loader.generate_requests(turn=load_turn)
     print(f"Loaded {len(requests)} requests.")
 
     agents: Dict[m.AgentId, m.Agent] = {}
@@ -54,7 +55,7 @@ def main():
     )
 
     # For a quicker test we limit requests
-    max_steps = 100
+    max_steps = 200
     sim.init_simulator(requests, max_steps)
     sim.run()  # advance to the first action interal
 
@@ -62,8 +63,13 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
+        if TRAINING_CONFIG.phase == 1:
+            for i in range(1, 5):
+                mask[i] = False
+
         valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
-        action = random.choice(valid_actions)
+        # action = random.choice(valid_actions)
+        action = m.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         print(f"Action mask: {mask}")
 
@@ -88,7 +94,9 @@ def main():
                 f"  [Replenish] Only {remain} arrivals left. Adding batch starting at {max_arr_time:.2f}s"
             )
             load_turn += 1
-            new_requests = load_requests(start_time=max_arr_time, turn=load_turn)
+            new_requests = request_loader.generate_requests(
+                start_time=max_arr_time, turn=load_turn
+            )
             sim.add_arrival_events(new_requests)
 
     print("\n====== Simulation Finished ======")

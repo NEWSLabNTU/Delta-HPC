@@ -16,6 +16,10 @@ class TrainingConfig:
         return cls(config_path)
 
     @property
+    def phase(self) -> int:
+        return self._data.get("phase", 0)
+
+    @property
     def action_interval(self) -> float:
         return self._data["action-interval"]
 
