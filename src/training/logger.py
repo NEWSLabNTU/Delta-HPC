@@ -17,7 +17,9 @@ class TrainingLogger:
     ):
         self.enabled = enabled
         self.log_frequency = log_frequency  # Log every N steps
-        self.log_dir = Path(log_dir)
+        self.log_dir = (
+            Path(log_dir) / "train" / datetime.now().strftime("%Y%m%d_%H%M%S")
+        )
         self.file = None
         self._ensure_dir()
 
@@ -31,8 +33,7 @@ class TrainingLogger:
             return
 
         self.close()  # Ensure previous is closed
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"episode_{episode_idx}_{timestamp}.log"
+        filename = f"episode_{episode_idx}.log"
         filepath = self.log_dir / filename
         self.file = open(filepath, "w", buffering=1)  # Line-buffered
 
@@ -52,11 +53,12 @@ class TrainingLogger:
             return
 
         # Use a list to accumulate strings (more efficient than += for large strings)
+        rts = {a.name: r for a, r in rates.items()}
         lines = [
             f"--- Step {step} ---\n",
             f"Action: {action_name}\n",
             f"Budget: {budget}\n",
-            f"Rates: {rates} (Pattern: {pattern})\n",
+            f"Rates: {rts} (Pattern: {pattern})\n",
             "Simulation State (After-Action):\n",
         ]
 

@@ -674,7 +674,7 @@ class TransferDetails:
 
 class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
-    arrival_trend: Dict[AgentId, float]
+    arrival_rate_trend: Dict[AgentId, float]
     avg_queue_length: Dict[AgentId, float]
     queue_delta: Dict[AgentId, int]
     p99_ttft: Dict[AgentId, float]

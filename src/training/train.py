@@ -91,7 +91,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # 1-7. Agent Metrics, 14 items
         metrics = [
             "arrival_rate",
-            "arrival_trend",
+            "arrival_rate_trend",
             "avg_queue_length",
             "avg_running_requests",
             "queue_delta",
