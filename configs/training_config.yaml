@@ -1,17 +1,46 @@
 training:
   phase: 1
-  action-interval: 120 # seconds
+  action-interval: 120.0 # seconds
+  arrival_rate_history_length: 5
+  PPO:
+    episode_length: 1024
+    learning_rate: 0.0003
+    batch_size: 64
+    n_epochs: 5
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.02
+    net_arch:
+      pi: [128, 128]
+      vf: [256, 256]
+  patterns:
+    busy:
+      duration: [1200.0, 2400.0]
+      rate:
+        CodingAgent: [3.0, 5.0]
+        RAGAgent: [8.0, 10.0]
+    idle:
+      duration: [1200.0, 2400.0]
+      rate:
+        CodingAgent: [0.0, 0.5]
+        RAGAgent: [0.5, 2.0]
+    balanced:
+      duration: [3600.0, 5400.0]
+      rate:
+        CodingAgent: [1.0, 2.0]
+        RAGAgent: [3.0, 4.0]
   reconfig:
-    budget: 150 # seconds
-    refresh: 15 # minutes
+    budget: 150.0 # seconds
+    refresh: 15.0 # minutes
   reward:
     # Reward function:
     # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
     # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
     Q: # quality-incentive factor
-      7g.40gb: 2.5
-      4g.20gb: 1.5
-      3g.20gb: 1.5
+      7g.40gb: 3.0
+      4g.20gb: 2.0
+      3g.20gb: 2.0
       2g.10gb: 1.0
       1g.10gb: 1.0
     alpha:
@@ -19,4 +48,6 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 0.3 # reconfiguration penalty
+    gamma: 2.5 # reconfiguration penalty
+    scaling: 0.1
+    clipping: -30.0

@@ -43,7 +43,6 @@ class TrainingLogger:
         action_name: str,
         budget: float,
         rates: Dict[m.AgentId, float],
-        pattern: int,
         agents: Dict[m.AgentId, m.Agent],
     ):
         if not self.enabled or self.file is None:
@@ -58,14 +57,13 @@ class TrainingLogger:
             f"--- Step {step} ---\n",
             f"Action: {action_name}\n",
             f"Budget: {budget}\n",
-            f"Rates: {rts} (Pattern: {pattern})\n",
+            f"Rates: {rts}\n",
             "Simulation State (After-Action):\n",
         ]
 
         # Build the agent/engine mapping
         for aid, ag in agents.items():
-            agent_id = getattr(aid, "value", aid)
-            lines.append(f"Agent {agent_id}:\n")
+            lines.append(f"Agent {aid.name}:\n")
 
             for eng in ag.engines:
                 lines.append(f"  {eng.engine_id}\n")

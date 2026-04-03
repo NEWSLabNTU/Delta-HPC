@@ -14,6 +14,11 @@ class AgentStats:
     last_running_requests: int = 0
     interval_start_queue_length: int = 0
     last_arrival_rate: Optional[float] = None
+    arrival_rate_history: Tuple[float, ...] = field(
+        default_factory=lambda: tuple(
+            [0.0] * TRAINING_CONFIG.arrival_rate_history_length
+        )
+    )
     interval_requests: List[m.Request] = field(default_factory=list)
 
 
@@ -54,6 +59,9 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 stats.last_arrival_rate = None
             else:
                 stats.last_arrival_rate = rates[agent_id]
+                stats.arrival_rate_history = (
+                    rates[agent_id],
+                ) + stats.arrival_rate_history[:-1]
             stats.queue_length_integral = 0.0
             stats.running_requests_integral = 0.0
             stats.interval_requests.clear()
@@ -61,7 +69,9 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id, agent in agents.items():
             for eng in agent.engines:
                 self._agent_stats[agent_id].interval_requests.extend(eng.waiting_queue)
-                self._agent_stats[agent_id].interval_requests.extend(eng.running_queue.all_requests)
+                self._agent_stats[agent_id].interval_requests.extend(
+                    eng.running_queue.all_requests
+                )
 
             q_len = sum(len(e.waiting_queue) for e in agent.engines)
             run_len = sum(len(e.running_queue) for e in agent.engines)
@@ -105,6 +115,10 @@ class EnvironmentStateImpl(m.EnvironmentState):
         return {
             "arrival_rate": rates,
             "arrival_rate_trend": trends,
+            "arrival_rate_history": {
+                aid: stats.arrival_rate_history
+                for aid, stats in self._agent_stats.items()
+            },
             "avg_queue_length": self._get_avg_queue_length(agents),
             "avg_running_requests": self._get_avg_running_requests(agents),
             "queue_delta": self._get_queue_delta(agents),
@@ -114,7 +128,9 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "current_mig_profile": self._get_mig_config_encoding(engines),
             "current_budget": self._current_budget,
             "recovery_flag": self._reconfig_flag,
-            "requests": {aid: self._agent_stats[aid].interval_requests for aid in agents.keys()},
+            "requests": {
+                aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
+            },
         }
 
     def _get_arrival_rate(
@@ -130,11 +146,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 for r in stats.interval_requests
                 if r.agent_id == agent_id and r.arrival_time >= start_time
             ]
-            current_rate = (
-                len(arr) / TRAINING_CONFIG.action_interval
-                if TRAINING_CONFIG.action_interval > 0
-                else 0.0
-            )
+            current_rate = len(arr) / TRAINING_CONFIG.action_interval
             rates[agent_id] = current_rate
             if stats.last_arrival_rate is not None:
                 trends[agent_id] = current_rate - stats.last_arrival_rate

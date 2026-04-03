@@ -117,6 +117,7 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
             possibles = list(
                 filter(lambda c: any(m.vram == desired_vram for m in c[1]), possibles)
             )
+        possibles.sort(key=lambda c: len(c[1]))
         if possibles:
             return min(
                 possibles,
@@ -130,6 +131,7 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         possibles = self.get_possible_merges(agent)
         if desired_vram:
             possibles = list(filter(lambda c: c[1].vram == desired_vram, possibles))
+        possibles.sort(key=lambda c: len(c[0]))
         if possibles:
             return min(
                 possibles,

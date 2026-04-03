@@ -20,7 +20,9 @@ def main():
     print("Loading config and datasets...")
     load_turn = 0
     request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
-    requests = request_loader.generate_requests(turn=load_turn)
+    requests = []
+    for aid in m.AgentId:
+        requests.extend(request_loader.generate_requests(agent_id=aid, turn=load_turn))
     print(f"Loaded {len(requests)} requests.")
 
     agents: Dict[m.AgentId, m.Agent] = {}
@@ -87,15 +89,14 @@ def main():
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively
-        remain = sim.pending_arrival_count
-        if remain < 1000:
-            max_arr_time = sim.latest_arrival_time
+        for agent_id in sim.need_requests_replenish():
+            max_arr_time = sim.latest_arrival_time(agent_id)
             print(
-                f"  [Replenish] Only {remain} arrivals left. Adding batch starting at {max_arr_time:.2f}s"
+                f"  [Replenish] Agent {agent_id.value} adding batch starting at {max_arr_time:.2f}s"
             )
             load_turn += 1
             new_requests = request_loader.generate_requests(
-                start_time=max_arr_time, turn=load_turn
+                agent_id=agent_id, start_time=max_arr_time, turn=load_turn
             )
             sim.add_arrival_events(new_requests)
 

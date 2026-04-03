@@ -8,6 +8,7 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     BaseCallback,
 )
+import torch
 from stable_baselines3.common.monitor import Monitor
 import numpy.typing as npt
 from typing import Dict, Any, List, Tuple, Optional, cast
@@ -51,13 +52,24 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.action_space = spaces.Discrete(9)
 
         # State Space: Flattened dictionary metrics
+        history_len = TRAINING_CONFIG.arrival_rate_history_length
+        # Agents: 7 * 2 = 14
+        # KV Util: 5 * 3 = 15
+        # Profile: 5 * 3 = 15
+        # Flags/Budget: 2
+        # History: history_len * 2
+        base_features = 14 + 15 + 15 + 2
+
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(46,), dtype=np.float32
+            low=-np.inf,
+            high=np.inf,
+            shape=(base_features + 2 * history_len,),
+            dtype=np.float32,
         )
 
         # Internal state tracking
         self.current_step: int = 0
-        self.max_steps: int = 1024
+        self.max_steps: int = TRAINING_CONFIG.episode_length
         self.load_turn: int = 0
         self.episode_count: int = 0
         self._logger = TrainingLogger()
@@ -103,7 +115,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             for aid in agents_ordered:
                 obs_list.append(float(data[aid]))
 
-        # 8. kv_cache_utilization, 15 items
+        # 8. arrival_rate_history, 10 items
+        history_data = state_data["arrival_rate_history"]
+        for aid in agents_ordered:
+            obs_list.extend(history_data[aid])
+
+        # 9. kv_cache_utilization, 15 items
         kv_util = state_data["kv_cache_utilization"]
         for gpu_idx in [0, 1, 2]:
             lst = kv_util.get(gpu_idx, [0.0] * 5)
@@ -159,8 +176,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             self.current_step,
             enum_action.name,
             state_data["current_budget"],
-            self.request_loader.current_rates,
-            self.request_loader.current_pattern,
+            state_data["arrival_rate"],
             self.sim.agents,
         )
 
@@ -173,12 +189,11 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         truncated = False
 
         # 4. Replenish requests if necessary
-        remain = self.sim.pending_arrival_count
-        if remain < 1000:
-            max_arr_time = self.sim.latest_arrival_time
+        for agent_id in self.sim.need_requests_replenish():
+            max_arr_time = self.sim.latest_arrival_time(agent_id)
             self.load_turn += 1
             new_requests = self.request_loader.generate_requests(
-                start_time=max_arr_time, turn=self.load_turn
+                agent_id=agent_id, start_time=max_arr_time, turn=self.load_turn
             )
             self.sim.add_arrival_events(new_requests)
 
@@ -198,7 +213,11 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # Replenish requests to initialize simulator
         self._logger.start_episode(self.episode_count)
         self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
-        requests = self.request_loader.generate_requests(turn=self.load_turn)
+        requests = []
+        for aid in m.AgentId:
+            requests.extend(
+                self.request_loader.generate_requests(agent_id=aid, turn=self.load_turn)
+            )
         self.sim.init_simulator(requests, self.max_steps)
         self.sim.run()  # advance to the first action interval
 
@@ -258,19 +277,30 @@ def train() -> None:
     # Track episode rewards and lengths
     env: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
 
+    policy_kwargs = dict(
+        activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO
+        net_arch=dict(
+            # Actor: Policy network layers
+            pi=TRAINING_CONFIG.rl_net_arch_pi,
+            # Critic: Value network layers (bigger to handle the latency magnitude)
+            vf=TRAINING_CONFIG.rl_net_arch_vf,
+        ),
+    )
+
     # 2. Define MaskablePPO Hyperparameters
     model: MaskablePPO = MaskablePPO(
         "MlpPolicy",
         env,
+        policy_kwargs=policy_kwargs,
         verbose=1,
-        learning_rate=3e-4,
-        n_steps=1024,
-        batch_size=64,
-        n_epochs=5,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.2,
-        ent_coef=0.01,
+        learning_rate=TRAINING_CONFIG.rl_learning_rate,
+        n_steps=TRAINING_CONFIG.episode_length,
+        batch_size=TRAINING_CONFIG.rl_batch_size,
+        n_epochs=TRAINING_CONFIG.rl_n_epochs,
+        gamma=TRAINING_CONFIG.rl_gamma,
+        gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
+        clip_range=TRAINING_CONFIG.rl_clip_range,
+        ent_coef=TRAINING_CONFIG.rl_ent_coef,
         device="cuda",
         tensorboard_log=f"./tboard/{TIMESTAMP}",
     )

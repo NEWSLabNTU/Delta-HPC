@@ -55,19 +55,23 @@ class SimulatorImpl(m.Simulator):
     def environment_state(self) -> m.EnvironmentState:
         return self._environment_state
 
-    @property
-    def pending_arrival_count(self) -> int:
-        return sum(
-            1 for e in self._events if e.event_type == m.EventType.REQUEST_ARRIVAL
-        )
-
-    @property
-    def latest_arrival_time(self) -> float:
-        max_arr_time = self._current_time
-        for e in reversed(self._events):
+    def need_requests_replenish(self) -> List[m.AgentId]:
+        counts = {aid: 0 for aid in m.AgentId}
+        for e in self._events:
             if e.event_type == m.EventType.REQUEST_ARRIVAL:
+                counts[e.payload["request"].agent_id] += 1
+            if all(c >= 1000 for c in counts.values()):
+                break
+        return [aid for aid, c in counts.items() if c < 1000]
+
+    def latest_arrival_time(self, agent_id: m.AgentId) -> float:
+        for e in reversed(self._events):
+            if (
+                e.event_type == m.EventType.REQUEST_ARRIVAL
+                and e.payload["request"].agent_id == agent_id
+            ):
                 return e.time
-        return max_arr_time
+        return self._current_time
 
     def add_arrival_events(self, requests: List[m.Request]) -> None:
         for req in requests:

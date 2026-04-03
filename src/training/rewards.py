@@ -47,4 +47,7 @@ def compute_reward(
         psi_k = sum_latency / (count + epsilon)
         total_penalty += alpha_k * psi_k
 
-    return -(total_penalty + omega)
+    total_reward = (-(total_penalty + omega)) * TRAINING_CONFIG.scaling_factor
+    total_reward = max(total_reward, TRAINING_CONFIG.clip_threshold)
+
+    return total_reward

@@ -596,13 +596,11 @@ class Simulator(ABC):
     @abstractmethod
     def environment_state(self) -> EnvironmentState: ...
 
-    @property
     @abstractmethod
-    def pending_arrival_count(self) -> int: ...
+    def need_requests_replenish(self) -> List[AgentId]: ...
 
-    @property
     @abstractmethod
-    def latest_arrival_time(self) -> float: ...
+    def latest_arrival_time(self, agent_id: AgentId) -> float: ...
 
     @abstractmethod
     def init_simulator(self, requests: List[Request], max_steps: int) -> None: ...
@@ -675,6 +673,7 @@ class TransferDetails:
 class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
     arrival_rate_trend: Dict[AgentId, float]
+    arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
     avg_queue_length: Dict[AgentId, float]
     queue_delta: Dict[AgentId, int]
     p99_ttft: Dict[AgentId, float]
