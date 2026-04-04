@@ -3,13 +3,11 @@ import json
 import yaml
 import uuid
 from pathlib import Path
-from typing import Dict, Tuple, Set, List
-import random
+from typing import Dict, Tuple, Set
 
 import src.simulation.models as m
 from src.simulation.config import SimulationConfig
 from src.simulation.mig_rule import MIGProfileRuleImpl
-from src.simulation.request import RequestImpl
 
 type ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
 type TokensMapType = Dict[m.AgentId, ModelsMapType]
@@ -87,4 +85,3 @@ def generate_engine_id(gpu: int, mig_str: str) -> str:
         if eid not in USED_EIDS:
             USED_EIDS.add(eid)
             return eid
-

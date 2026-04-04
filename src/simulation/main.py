@@ -1,5 +1,6 @@
+import random
 import argparse
-from typing import Dict
+from typing import Dict, List
 
 import src.simulation.models as m
 import src.simulation.utils as utils
@@ -20,7 +21,7 @@ def main():
     print("Loading config and datasets...")
     load_turn = 0
     request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
-    requests = []
+    requests: List[m.Request] = []
     for aid in m.AgentId:
         requests.extend(request_loader.generate_requests(agent_id=aid, turn=load_turn))
     print(f"Loaded {len(requests)} requests.")
@@ -70,10 +71,15 @@ def main():
                 mask[i] = False
 
         valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
-        # action = random.choice(valid_actions)
-        action = m.ResourceManagerAction.NO_ACTION
+        action = random.choice(valid_actions)
+        # action = m.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
-        print(f"Action mask: {mask}")
+        for aid in m.AgentId:
+            print(
+                f" Agent {aid.value}: {[e.engine_id for e in sim.agents[aid].engines]}"
+            )
+        for i, msk in enumerate(mask):
+            print(f"  {list(m.ResourceManagerAction)[i].name}: {msk}")
 
         sim.handle_resource_manager_trigger(action)
         sim.run()

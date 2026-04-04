@@ -25,21 +25,21 @@ def compute_reward(
         alpha_k = TRAINING_CONFIG.alpha(agent_id)
 
         sum_latency = 0.0
-        count = len(agent_requests)
+        count = 0
 
         for req in agent_requests:
-            ttft = 0.0
-            if req.first_token_time is not None:
-                ttft = req.first_token_time - req.arrival_time
+            if req.first_token_time is None:
+                continue
+            count += 1
 
-            tpot = 0.0
-            if req.generated_tokens > 0:
-                tpot = req.decode_time / req.generated_tokens
+            ttft = req.first_token_time - req.arrival_time
+
+            assert req.generated_tokens > 0
+            tpot = req.decode_time / req.generated_tokens
 
             # Quality factor Q based on the MIG instance the request was run on
-            q_j = 1.0  # Default fallback if somehow no serving engine
-            if req.serving_engine is not None:
-                q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
+            assert req.serving_engine is not None
+            q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
 
             composite_latency = (w_t * ttft + w_p * tpot) / q_j
             sum_latency += composite_latency

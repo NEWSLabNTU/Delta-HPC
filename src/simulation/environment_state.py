@@ -19,7 +19,7 @@ class AgentStats:
             [0.0] * TRAINING_CONFIG.arrival_rate_history_length
         )
     )
-    interval_requests: List[m.Request] = field(default_factory=list)
+    interval_requests: List[m.Request] = field(default_factory=list[m.Request])
 
 
 class EnvironmentStateImpl(m.EnvironmentState):
@@ -29,6 +29,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self._reconfig_flag: bool = False
         self._current_budget = TRAINING_CONFIG.reconfig_budget
         self._last_action_downtime: float = 0.0
+        self._steps_since_split: int = 5
+        self._steps_since_merge: int = 5
 
     @property
     def current_budget(self) -> float:
@@ -53,6 +55,22 @@ class EnvironmentStateImpl(m.EnvironmentState):
     @last_action_downtime.setter
     def last_action_downtime(self, v: float) -> None:
         self._last_action_downtime = v
+
+    @property
+    def steps_since_split(self) -> int:
+        return self._steps_since_split
+
+    @steps_since_split.setter
+    def steps_since_split(self, v: int) -> None:
+        self._steps_since_split = v
+
+    @property
+    def steps_since_merge(self) -> int:
+        return self._steps_since_merge
+
+    @steps_since_merge.setter
+    def steps_since_merge(self, v: int) -> None:
+        self._steps_since_merge = v
 
     def refresh_budget(self) -> None:
         self._current_budget = TRAINING_CONFIG.reconfig_budget
@@ -161,6 +179,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "requests": {
                 aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
             },
+            "last_split": min(self._steps_since_split, 5) / 5.0,
+            "last_merge": min(self._steps_since_merge, 5) / 5.0,
         }
 
     def _get_arrival_rate(
@@ -178,10 +198,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
             ]
             current_rate = len(arr) / TRAINING_CONFIG.action_interval
             rates[agent_id] = current_rate
-            if stats.last_arrival_rate is not None:
-                trends[agent_id] = current_rate - stats.last_arrival_rate
+            if stats.last_arrival_rate is None or stats.last_arrival_rate == 0.0:
+                trends[agent_id] = 1.0 if current_rate > 0.0 else 0.0
             else:
-                trends[agent_id] = 0.0
+                trends[agent_id] = (
+                    current_rate - stats.last_arrival_rate
+                ) / stats.last_arrival_rate
         return rates, trends
 
     def _get_avg_queue_length(

@@ -1,5 +1,5 @@
 import random
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 import src.simulation.models as m
 from src.training.models import AgentPattern
@@ -63,62 +63,49 @@ class RequestLoader:
         else:
             items = random.sample(all_items, 25000)
 
-        if self.phase == 0:
-            # Standard phase 0 logic (constant spacing)
-            for idx, (rid, (prompt_tokens, _)) in enumerate(items):
-                req = RequestImpl(
-                    id=f"{rid}_{agent_id.value}_t{turn}_i{idx}",
-                    agent_id=agent_id,
-                    prompt_tokens=prompt_tokens,
-                    original_id=rid,
-                )
-                req.arrival_time = start_time + idx * 0.25
-                requests.append(req)
-            return requests
+        assert self.phase == 1
 
-        elif self.phase == 1:
-            # Phase 1: dynamic time-based sampling using Poisson arrivals
-            # Reset random seed behavior so patterns are truly stochastic
-            random.seed()
+        # Phase 1: dynamic time-based sampling using Poisson arrivals
+        # Reset random seed behavior so patterns are truly stochastic
+        random.seed()
 
-            current_time = start_time
+        current_time = start_time
 
-            # Initialize the pattern end times properly relative to start_time
-            if start_time == 0.0:
+        # Initialize the pattern end times properly relative to start_time
+        if start_time == 0.0:
+            self.agent_pattern_end_times[agent_id] = (
+                current_time + self._get_pattern_duration(self.agent_patterns[agent_id])
+            )
+
+        while len(requests) < 25000:
+            # Rotate pattern if time crossed
+            if current_time >= self.agent_pattern_end_times[agent_id]:
+                patterns = list(AgentPattern)
+                if self.agent_patterns[agent_id] in patterns:
+                    patterns.remove(self.agent_patterns[agent_id])
+                new_pattern = random.choice(patterns)
+
+                self.agent_patterns[agent_id] = new_pattern
                 self.agent_pattern_end_times[agent_id] = (
-                    current_time
-                    + self._get_pattern_duration(self.agent_patterns[agent_id])
+                    current_time + self._get_pattern_duration(new_pattern)
+                )
+                self.current_rates[agent_id] = self._get_rate_for_pattern(
+                    new_pattern, agent_id
                 )
 
-            while len(requests) < 25000:
-                # Rotate pattern if time crossed
-                if current_time >= self.agent_pattern_end_times[agent_id]:
-                    patterns = list(AgentPattern)
-                    if self.agent_patterns[agent_id] in patterns:
-                        patterns.remove(self.agent_patterns[agent_id])
-                    new_pattern = random.choice(patterns)
+            rate = self.current_rates[agent_id]
+            current_time += random.expovariate(rate)
 
-                    self.agent_patterns[agent_id] = new_pattern
-                    self.agent_pattern_end_times[agent_id] = (
-                        current_time + self._get_pattern_duration(new_pattern)
-                    )
-                    self.current_rates[agent_id] = self._get_rate_for_pattern(
-                        new_pattern, agent_id
-                    )
+            idx = len(requests)
+            rid, (prompt_tokens, _) = items[idx]
 
-                rate = self.current_rates[agent_id]
-                current_time += random.expovariate(rate)
+            req = RequestImpl(
+                id=f"{rid}_{agent_id.value}_t{turn}_i{idx}",
+                agent_id=agent_id,
+                prompt_tokens=prompt_tokens,
+                original_id=rid,
+            )
+            req.arrival_time = current_time
+            requests.append(req)
 
-                idx = len(requests)
-                rid, (prompt_tokens, _) = items[idx]
-
-                req = RequestImpl(
-                    id=f"{rid}_{agent_id.value}_t{turn}_i{idx}",
-                    agent_id=agent_id,
-                    prompt_tokens=prompt_tokens,
-                    original_id=rid,
-                )
-                req.arrival_time = current_time
-                requests.append(req)
-
-            return requests
+        return requests

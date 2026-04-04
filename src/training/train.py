@@ -49,16 +49,16 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         8. Merge A2’s 2 smaller MIG
         """
         self.sim = simulator
-        self.action_space = spaces.Discrete(9)
+        self.action_space = spaces.Discrete(25)
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 8 * 2 = 16 (includes mig_total_ratio)
         # KV Util: 5 * 3 = 15
         # Profile: 5 * 3 = 15
-        # Flags/Budget/Downtime: 3
+        # Flags/Budget/Downtime/Splits/Merges: 5
         # History: history_len * 2
-        base_features = 16 + 15 + 15 + 3
+        base_features = 16 + 15 + 15 + 5
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -151,6 +151,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # 12. downtime_ratio: 1 item
         obs_list.append(float(state_data["downtime_ratio"]))
 
+        # 13. last_split: 1 item
+        obs_list.append(float(state_data["last_split"]))
+        
+        # 14. last_merge: 1 item
+        obs_list.append(float(state_data["last_merge"]))
+
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
@@ -217,7 +223,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # Replenish requests to initialize simulator
         self._logger.start_episode(self.episode_count)
         self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
-        requests = []
+        requests: List[m.Request] = []
         for aid in m.AgentId:
             requests.extend(
                 self.request_loader.generate_requests(agent_id=aid, turn=self.load_turn)

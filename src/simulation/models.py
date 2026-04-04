@@ -630,10 +630,27 @@ class VramTransferAction:
     amount: int
 
 
+MIG_4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
+MIG_3_2_2 = (
+    MIGProfile.MIG_3G_20GB,
+    MIGProfile.MIG_2G_10GB,
+    MIGProfile.MIG_2G_10GB,
+)
+MIG_2_2_2_1 = (
+    MIGProfile.MIG_2G_10GB,
+    MIGProfile.MIG_2G_10GB,
+    MIGProfile.MIG_2G_10GB,
+    MIGProfile.MIG_1G_10GB,
+)
+MIG_2_2 = (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_2G_10GB)
+MIG_2_1 = (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_1G_10GB)
+
+
 @dataclass
 class MigAction:
-    action: str  # "split" or "merge"
+    action: Literal["split", "merge"]
     victim: AgentId
+    profiles: Tuple[MIGProfile, ...]
 
 
 class ResourceManagerAction(Enum):
@@ -653,11 +670,90 @@ class ResourceManagerAction(Enum):
         giver=AgentId.RAG, receiver=AgentId.CODING, amount=20
     )
 
-    # 5-8: MIG
-    SPLIT_CODING = MigAction(action="split", victim=AgentId.CODING)
-    SPLIT_RAG = MigAction(action="split", victim=AgentId.RAG)
-    MERGE_CODING = MigAction(action="merge", victim=AgentId.CODING)
-    MERGE_RAG = MigAction(action="merge", victim=AgentId.RAG)
+    # 5-24: MIG per agent
+    # Splits Coding
+    SPLIT_7_TO_4_3_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_3,
+    )
+    SPLIT_7_TO_3_2_2_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_3_2_2,
+    )
+    SPLIT_7_TO_2_2_2_1_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_2_2_1,
+    )
+    SPLIT_4_TO_2_2_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_2,
+    )
+    SPLIT_3_TO_2_1_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_1,
+    )
+
+    # Splits RAG
+    SPLIT_7_TO_4_3_RAG = MigAction("split", AgentId.RAG, profiles=MIG_4_3)
+    SPLIT_7_TO_3_2_2_RAG = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_3_2_2,
+    )
+    SPLIT_7_TO_2_2_2_1_RAG = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_2_2_1,
+    )
+    SPLIT_4_TO_2_2_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_2)
+    SPLIT_3_TO_2_1_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_1)
+
+    # Merges Coding
+    MERGE_4_3_TO_7_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_4_3,
+    )
+    MERGE_3_2_2_TO_7_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_3_2_2,
+    )
+    MERGE_2_2_2_1_TO_7_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_2_2_1,
+    )
+    MERGE_2_2_TO_4_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_2,
+    )
+    MERGE_2_1_TO_3_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_1,
+    )
+
+    # Merges RAG
+    MERGE_4_3_TO_7_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_4_3)
+    MERGE_3_2_2_TO_7_RAG = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_3_2_2,
+    )
+    MERGE_2_2_2_1_TO_7_RAG = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_2_2_2_1,
+    )
+    MERGE_2_2_TO_4_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_2)
+    MERGE_2_1_TO_3_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_1)
 
 
 # --- Management Interfaces ---
@@ -675,7 +771,7 @@ class EnvironmentStateData(TypedDict):
     arrival_rate_trend: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
     avg_queue_length: Dict[AgentId, float]
-    queue_delta: Dict[AgentId, int]
+    queue_delta: Dict[AgentId, float]
     p99_ttft: Dict[AgentId, float]
     avg_tpot: Dict[AgentId, float]
     kv_cache_utilization: Dict[int, List[float]]
@@ -686,6 +782,8 @@ class EnvironmentStateData(TypedDict):
     downtime_ratio: float
     mig_total_ratio: Dict[AgentId, float]
     requests: Dict[AgentId, List[Request]]
+    last_split: float
+    last_merge: float
 
 
 class Worker(ABC):
@@ -722,6 +820,22 @@ class EnvironmentState(ABC):
     @abstractmethod
     def last_action_downtime(self, v: float) -> None: ...
 
+    @property
+    @abstractmethod
+    def steps_since_split(self) -> int: ...
+
+    @steps_since_split.setter
+    @abstractmethod
+    def steps_since_split(self, v: int) -> None: ...
+
+    @property
+    @abstractmethod
+    def steps_since_merge(self) -> int: ...
+
+    @steps_since_merge.setter
+    @abstractmethod
+    def steps_since_merge(self, v: int) -> None: ...
+
     @abstractmethod
     def refresh_budget(self) -> None: ...
 
@@ -757,3 +871,23 @@ class MIGProfileRule(ABC):
     def get_possible_splits(
         self, agent: Agent
     ) -> List[Tuple[LLMEngine, List[MIGProfile]]]: ...
+
+    @abstractmethod
+    def get_best_specific_split(
+        self, agent: Agent, target_profiles: Tuple[MIGProfile, ...]
+    ) -> Tuple[LLMEngine, List[MIGProfile]] | None: ...
+
+    @abstractmethod
+    def get_best_specific_merge(
+        self, agent: Agent, target_profiles: Tuple[MIGProfile, ...]
+    ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...
+
+    @abstractmethod
+    def get_best_split(
+        self, agent: Agent, desired_vram: Optional[float] = None
+    ) -> Tuple[LLMEngine, List[MIGProfile]] | None: ...
+
+    @abstractmethod
+    def get_best_merge(
+        self, agent: Agent, desired_vram: Optional[float] = None
+    ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...

@@ -66,6 +66,8 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
                 by_gpu[e.gpu].append(e)
 
         possible_merges: List[Tuple[List[m.LLMEngine], m.MIGProfile]] = []
+        import itertools
+
         for engines in by_gpu.values():
             by_mig: Dict[m.MIGProfile, List[m.LLMEngine]] = defaultdict(list)
             for e in engines:
@@ -73,18 +75,19 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
 
             for befores, after in self._merge_rules.items():
                 needed = Counter(befores)
-                selected_engs: List[m.LLMEngine] = []
 
                 if all(
                     len(by_mig[profile]) >= count for profile, count in needed.items()
                 ):
-                    for mig, cnt in needed.items():
-                        eng_by_load_inc = sorted(
-                            by_mig[mig],
-                            key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+                    profile_combinations = []
+                    for profile, count in needed.items():
+                        profile_combinations.append(
+                            list(itertools.combinations(by_mig[profile], count))
                         )
-                        selected_engs.extend(eng_by_load_inc[:cnt])
-                    possible_merges.append((selected_engs, after))
+
+                    for combo_tuple in itertools.product(*profile_combinations):
+                        selected_engs = [eng for combo in combo_tuple for eng in combo]
+                        possible_merges.append((selected_engs, after))
 
         return possible_merges
 
@@ -109,13 +112,45 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
                             possible_splits.append((mig_e, list(result_profiles)))
         return possible_splits
 
+    def get_best_specific_split(
+        self, agent: m.Agent, target_profiles: Tuple[m.MIGProfile, ...]
+    ) -> Tuple[m.LLMEngine, List[m.MIGProfile]] | None:
+        possibles = self.get_possible_splits(agent)
+        possibles = [c for c in possibles if tuple(c[1]) == target_profiles]
+        possibles.sort(key=lambda c: len(c[1]))
+        if possibles:
+            return min(
+                possibles,
+                key=lambda c: len(c[0].waiting_queue) + len(c[0].running_queue),
+            )
+        return None
+
+    def get_best_specific_merge(
+        self, agent: m.Agent, target_profiles: Tuple[m.MIGProfile, ...]
+    ) -> Tuple[List[m.LLMEngine], m.MIGProfile] | None:
+        possibles = self.get_possible_merges(agent)
+        possibles = [
+            c
+            for c in possibles
+            if Counter(e.mig_profile for e in c[0]) == Counter(target_profiles)
+        ]
+        possibles.sort(key=lambda c: len(c[0]))
+        if possibles:
+            return min(
+                possibles,
+                key=lambda c: sum(
+                    len(e.waiting_queue) + len(e.running_queue) for e in c[0]
+                ),
+            )
+        return None
+
     def get_best_split(
         self, agent: m.Agent, desired_vram: Optional[float] = None
     ) -> Tuple[m.LLMEngine, List[m.MIGProfile]] | None:
         possibles = self.get_possible_splits(agent)
         if desired_vram:
             possibles = list(
-                filter(lambda c: any(m.vram == desired_vram for m in c[1]), possibles)
+                filter(lambda c: any(p.vram == desired_vram for p in c[1]), possibles)
             )
         possibles.sort(key=lambda c: len(c[1]))
         if possibles:
@@ -139,3 +174,4 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
                     len(e.waiting_queue) + len(e.running_queue) for e in c[0]
                 ),
             )
+        return None

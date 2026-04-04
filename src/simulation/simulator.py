@@ -59,6 +59,7 @@ class SimulatorImpl(m.Simulator):
         counts = {aid: 0 for aid in m.AgentId}
         for e in self._events:
             if e.event_type == m.EventType.REQUEST_ARRIVAL:
+                e.payload = cast(m.RequestArrivalPayload, e.payload)
                 counts[e.payload["request"].agent_id] += 1
             if all(c >= 1000 for c in counts.values()):
                 break
@@ -66,11 +67,10 @@ class SimulatorImpl(m.Simulator):
 
     def latest_arrival_time(self, agent_id: m.AgentId) -> float:
         for e in reversed(self._events):
-            if (
-                e.event_type == m.EventType.REQUEST_ARRIVAL
-                and e.payload["request"].agent_id == agent_id
-            ):
-                return e.time
+            if e.event_type == m.EventType.REQUEST_ARRIVAL:
+                e.payload = cast(m.RequestArrivalPayload, e.payload)
+                if e.payload["request"].agent_id == agent_id:
+                    return e.time
         return self._current_time
 
     def add_arrival_events(self, requests: List[m.Request]) -> None:
@@ -373,7 +373,9 @@ class SimulatorImpl(m.Simulator):
             victim = self._agents[val.victim]
             match val.action:
                 case "split":
-                    best_split = utils.MIG_RULES.get_best_split(victim)
+                    best_split = utils.MIG_RULES.get_best_specific_split(
+                        victim, val.profiles
+                    )
                     if best_split:
                         eng, new_profiles = best_split
                         drain_cost = eng.predict_drain_time()
@@ -386,7 +388,9 @@ class SimulatorImpl(m.Simulator):
                         )
                         cost = drain_cost + boot_cost
                 case "merge":
-                    best_merge = utils.MIG_RULES.get_best_merge(victim)
+                    best_merge = utils.MIG_RULES.get_best_specific_merge(
+                        victim, val.profiles
+                    )
                     if best_merge:
                         engs, new_profile = best_merge
                         drain_cost = max(
@@ -416,6 +420,14 @@ class SimulatorImpl(m.Simulator):
             self._current_time, self._agents
         )
 
+        self._environment_state.steps_since_split += 1
+        self._environment_state.steps_since_merge += 1
+        if action != m.ResourceManagerAction.NO_ACTION and isinstance(action.value, m.MigAction):
+            if action.value.action == "split":
+                self._environment_state.steps_since_split = 0
+            elif action.value.action == "merge":
+                self._environment_state.steps_since_merge = 0
+
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
         self._environment_state.current_budget -= cost
@@ -440,13 +452,13 @@ class SimulatorImpl(m.Simulator):
                 )
                 self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
 
-            case (
-                m.ResourceManagerAction.SPLIT_CODING | m.ResourceManagerAction.SPLIT_RAG
-            ):
+            case action if action.value.action == "split":
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                best_split = utils.MIG_RULES.get_best_split(agent)
+                best_split = utils.MIG_RULES.get_best_specific_split(
+                    agent, m_action.profiles
+                )
                 assert best_split is not None  # correctness of the action mask
 
                 eng, new_profiles = best_split
@@ -461,13 +473,13 @@ class SimulatorImpl(m.Simulator):
                 )
                 self._handle_resource_manager_trigger_mig_decision(mig_decision)
 
-            case (
-                m.ResourceManagerAction.MERGE_CODING | m.ResourceManagerAction.MERGE_RAG
-            ):
+            case action if action.value.action == "merge":
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
-                best_merge = utils.MIG_RULES.get_best_merge(agent)
+                best_merge = utils.MIG_RULES.get_best_specific_merge(
+                    agent, m_action.profiles
+                )
                 assert best_merge is not None  # correctness of the action mask
 
                 engs, new_profile = best_merge
@@ -782,6 +794,8 @@ class SimulatorImpl(m.Simulator):
 
         self._environment_state.reset_for_next_interval(0.0, self._agents)
         self._environment_state.reconfig_flag = False
+        self._environment_state.steps_since_split = 5
+        self._environment_state.steps_since_merge = 5
         self._events.add(
             m.SimulationEvent(
                 time=0.0,
@@ -816,11 +830,17 @@ class SimulatorImpl(m.Simulator):
                 match val.action:
                     case "split":
                         mask[act_id] = (
-                            len(utils.MIG_RULES.get_possible_splits(victim)) > 0
+                            utils.MIG_RULES.get_best_specific_split(
+                                victim, val.profiles
+                            )
+                            is not None
                         )
                     case "merge":
                         mask[act_id] = (
-                            len(utils.MIG_RULES.get_possible_merges(victim)) > 0
+                            utils.MIG_RULES.get_best_specific_merge(
+                                victim, val.profiles
+                            )
+                            is not None
                         )
                     case _:
                         raise ValueError(f"Unknown MIG action: {val.action}")
