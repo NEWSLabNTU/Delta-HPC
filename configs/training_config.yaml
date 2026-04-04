@@ -24,12 +24,12 @@ training:
       vf: [512, 512]
   patterns:
     busy:
-      duration: [1200.0, 2400.0]
+      duration: [2400.0, 3600.0]
       rate:
-        CodingAgent: [3.0, 4.0]
-        RAGAgent: [5.0, 6.0]
+        CodingAgent: [4.0, 5.0]
+        RAGAgent: [6.0, 7.0]
     idle:
-      duration: [1200.0, 2400.0]
+      duration: [2400.0, 3600.0]
       rate:
         CodingAgent: [0.1, 0.5]
         RAGAgent: [0.5, 2.0]
@@ -37,7 +37,7 @@ training:
       duration: [3600.0, 5400.0]
       rate:
         CodingAgent: [1.0, 2.0]
-        RAGAgent: [3.0, 4.0]
+        RAGAgent: [2.0, 3.0]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes
