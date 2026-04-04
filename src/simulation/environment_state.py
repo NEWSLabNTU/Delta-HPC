@@ -28,6 +28,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self._last_queue_update_time: float = 0.0
         self._reconfig_flag: bool = False
         self._current_budget = TRAINING_CONFIG.reconfig_budget
+        self._last_action_downtime: float = 0.0
 
     @property
     def current_budget(self) -> float:
@@ -44,6 +45,14 @@ class EnvironmentStateImpl(m.EnvironmentState):
     @reconfig_flag.setter
     def reconfig_flag(self, v: bool):
         self._reconfig_flag = v
+
+    @property
+    def last_action_downtime(self) -> float:
+        return self._last_action_downtime
+
+    @last_action_downtime.setter
+    def last_action_downtime(self, v: float) -> None:
+        self._last_action_downtime = v
 
     def refresh_budget(self) -> None:
         self._current_budget = TRAINING_CONFIG.reconfig_budget
@@ -113,20 +122,41 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> m.EnvironmentStateData:
         rates, trends = self._get_arrival_rate(agents, current_time)
         return {
-            "arrival_rate": rates,
+            "arrival_rate": {
+                k: v / TRAINING_CONFIG.norm_arrival_rate for k, v in rates.items()
+            },
             "arrival_rate_trend": trends,
             "arrival_rate_history": {
-                aid: stats.arrival_rate_history
+                aid: tuple(
+                    r / TRAINING_CONFIG.norm_arrival_rate
+                    for r in stats.arrival_rate_history
+                )
                 for aid, stats in self._agent_stats.items()
             },
-            "avg_queue_length": self._get_avg_queue_length(agents),
-            "avg_running_requests": self._get_avg_running_requests(agents),
-            "queue_delta": self._get_queue_delta(agents),
-            "p99_ttft": self._get_p99_ttft(agents, current_time),
+            "avg_queue_length": {
+                k: v / TRAINING_CONFIG.norm_avg_queue_length
+                for k, v in self._get_avg_queue_length(agents).items()
+            },
+            "avg_running_requests": {
+                k: v / TRAINING_CONFIG.norm_avg_running_requests
+                for k, v in self._get_avg_running_requests(agents).items()
+            },
+            "queue_delta": {
+                k: v / TRAINING_CONFIG.norm_queue_delta
+                for k, v in self._get_queue_delta(agents).items()
+            },
+            "p99_ttft": {
+                k: v / TRAINING_CONFIG.norm_p99_ttft
+                for k, v in self._get_p99_ttft(agents, current_time).items()
+            },
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(engines),
             "current_mig_profile": self._get_mig_config_encoding(engines),
-            "current_budget": self._current_budget,
+            "current_budget": self._current_budget
+            / TRAINING_CONFIG.norm_current_budget,
+            "downtime_ratio": self._last_action_downtime
+            / TRAINING_CONFIG.action_interval,
+            "mig_total_ratio": self._get_mig_total_ratio(agents),
             "recovery_flag": self._reconfig_flag,
             "requests": {
                 aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
@@ -264,3 +294,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for engine in engines.values():
             encoding[engine.gpu][engine.mig_profile.idx] += 1
         return encoding
+
+    def _get_mig_total_ratio(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        ratio: Dict[m.AgentId, float] = {}
+        for agent_id, agent in agents.items():
+            total_size = sum(e.mig_profile.size for e in agent.engines)
+            ratio[agent_id] = total_size / TRAINING_CONFIG.norm_mig_total_ratio
+        return ratio

@@ -683,6 +683,8 @@ class EnvironmentStateData(TypedDict):
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, float]
+    downtime_ratio: float
+    mig_total_ratio: Dict[AgentId, float]
     requests: Dict[AgentId, List[Request]]
 
 
@@ -711,6 +713,14 @@ class EnvironmentState(ABC):
     @reconfig_flag.setter
     @abstractmethod
     def reconfig_flag(self, v: bool) -> None: ...
+
+    @property
+    @abstractmethod
+    def last_action_downtime(self) -> float: ...
+
+    @last_action_downtime.setter
+    @abstractmethod
+    def last_action_downtime(self, v: float) -> None: ...
 
     @abstractmethod
     def refresh_budget(self) -> None: ...

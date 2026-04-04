@@ -25,6 +25,34 @@ class TrainingConfig:
         return self._data.get("arrival_rate_history_length", 5)
 
     @property
+    def norm_arrival_rate(self) -> float:
+        return float(self._data.get("normalization", {}).get("arrival_rate", 10.0))
+
+    @property
+    def norm_avg_queue_length(self) -> float:
+        return float(self._data.get("normalization", {}).get("avg_queue_length", 500.0))
+
+    @property
+    def norm_queue_delta(self) -> float:
+        return float(self._data.get("normalization", {}).get("queue_delta", 200.0))
+
+    @property
+    def norm_p99_ttft(self) -> float:
+        return float(self._data.get("normalization", {}).get("p99_ttft", 50.0))
+
+    @property
+    def norm_avg_running_requests(self) -> float:
+        return float(self._data.get("normalization", {}).get("avg_running_requests", 100.0))
+
+    @property
+    def norm_current_budget(self) -> float:
+        return float(self._data.get("normalization", {}).get("current_budget", 150.0))
+
+    @property
+    def norm_mig_total_ratio(self) -> float:
+        return float(self._data.get("normalization", {}).get("mig_total_ratio", 7.0))
+
+    @property
     def episode_length(self) -> int:
         return self._data["PPO"]["episode_length"]
 

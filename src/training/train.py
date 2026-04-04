@@ -53,12 +53,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
-        # Agents: 7 * 2 = 14
+        # Agents: 8 * 2 = 16 (includes mig_total_ratio)
         # KV Util: 5 * 3 = 15
         # Profile: 5 * 3 = 15
-        # Flags/Budget: 2
+        # Flags/Budget/Downtime: 3
         # History: history_len * 2
-        base_features = 14 + 15 + 15 + 2
+        base_features = 16 + 15 + 15 + 3
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -100,10 +100,11 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list: List[float] = []
         agents_ordered = sorted(self.sim.agents.keys(), key=lambda a: a.value)
 
-        # 1-7. Agent Metrics, 14 items
+        # 1-8. Agent Metrics, 16 items
         metrics = [
             "arrival_rate",
             "arrival_rate_trend",
+            "mig_total_ratio",
             "avg_queue_length",
             "avg_running_requests",
             "queue_delta",
@@ -146,6 +147,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # 11. current_budget: 1 item
         obs_list.append(float(state_data["current_budget"]))
+
+        # 12. downtime_ratio: 1 item
+        obs_list.append(float(state_data["downtime_ratio"]))
 
         return np.array(obs_list, dtype=np.float32)
 

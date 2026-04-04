@@ -2,28 +2,36 @@ training:
   phase: 1
   action-interval: 120.0 # seconds
   arrival_rate_history_length: 5
+  normalization:
+    arrival_rate: 10.0
+    avg_queue_length: 100.0
+    queue_delta: 50.0
+    p99_ttft: 50.0
+    avg_running_requests: 100.0
+    current_budget: 150.0
+    mig_total_ratio: 7.0
   PPO:
     episode_length: 1024
-    learning_rate: 0.0003
+    learning_rate: 0.00015
     batch_size: 64
-    n_epochs: 5
+    n_epochs: 10
     gamma: 0.99
     gae_lambda: 0.95
     clip_range: 0.2
-    ent_coef: 0.02
+    ent_coef: 0.03
     net_arch:
       pi: [128, 128]
-      vf: [256, 256]
+      vf: [512, 512]
   patterns:
     busy:
       duration: [1200.0, 2400.0]
       rate:
-        CodingAgent: [3.0, 5.0]
-        RAGAgent: [8.0, 10.0]
+        CodingAgent: [3.0, 4.0]
+        RAGAgent: [5.0, 6.0]
     idle:
       duration: [1200.0, 2400.0]
       rate:
-        CodingAgent: [0.0, 0.5]
+        CodingAgent: [0.1, 0.5]
         RAGAgent: [0.5, 2.0]
     balanced:
       duration: [3600.0, 5400.0]

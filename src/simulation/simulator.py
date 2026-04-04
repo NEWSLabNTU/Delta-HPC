@@ -419,6 +419,7 @@ class SimulatorImpl(m.Simulator):
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
         self._environment_state.current_budget -= cost
+        self._environment_state.last_action_downtime = cost
 
         # 2. Perform action
         match action:
