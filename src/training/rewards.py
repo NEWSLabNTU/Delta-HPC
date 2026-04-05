@@ -7,6 +7,7 @@ from src.training.config import TRAINING_CONFIG
 def compute_reward(
     requests: Dict[m.AgentId, List[m.Request]],
     action: m.ResourceManagerAction,
+    current_time: float,
     epsilon: float = 1e-9,
 ) -> float:
     """
@@ -28,17 +29,18 @@ def compute_reward(
         count = 0
 
         for req in agent_requests:
-            if req.first_token_time is None:
+            if req.serving_engine is None:
                 continue
             count += 1
 
-            ttft = req.first_token_time - req.arrival_time
+            if req.first_token_time is None:
+                ttft = current_time - req.arrival_time
+                tpot = 0.0
+            else:
+                assert req.generated_tokens > 0
+                ttft = req.first_token_time - req.arrival_time
+                tpot = req.decode_time / req.generated_tokens
 
-            assert req.generated_tokens > 0
-            tpot = req.decode_time / req.generated_tokens
-
-            # Quality factor Q based on the MIG instance the request was run on
-            assert req.serving_engine is not None
             q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
 
             composite_latency = (w_t * ttft + w_p * tpot) / q_j

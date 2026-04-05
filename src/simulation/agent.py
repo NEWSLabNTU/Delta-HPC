@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import deque
 from typing import List, Optional
 
 import src.simulation.models as m
@@ -9,7 +10,7 @@ class AgentImpl(m.Agent):
     def __init__(self, agent_id: m.AgentId):
         self._agent_id = agent_id
         self._engines: List[m.LLMEngine] = []
-        self._completed_requests: List[m.Request] = []
+        self._completed_requests: deque[m.Request] = deque(maxlen=500)
 
     @property
     def agent_id(self) -> m.AgentId:
@@ -20,7 +21,7 @@ class AgentImpl(m.Agent):
         return self._engines
 
     @property
-    def completed_requests(self) -> List[m.Request]:
+    def completed_requests(self) -> deque[m.Request]:
         return self._completed_requests
 
     def add_engine(self, engine: m.LLMEngine):

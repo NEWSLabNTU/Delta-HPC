@@ -18,39 +18,39 @@ class TrainingConfig:
 
     @property
     def phase(self) -> int:
-        return self._data.get("phase", 0)
+        return self._data["phase"]
 
     @property
     def arrival_rate_history_length(self) -> int:
-        return self._data.get("arrival_rate_history_length", 5)
+        return self._data["arrival_rate_history_length"]
 
     @property
     def norm_arrival_rate(self) -> float:
-        return float(self._data.get("normalization", {}).get("arrival_rate", 10.0))
+        return float(self._data["normalization"]["arrival_rate"])
 
     @property
     def norm_avg_queue_length(self) -> float:
-        return float(self._data.get("normalization", {}).get("avg_queue_length", 500.0))
+        return float(self._data["normalization"]["avg_queue_length"])
 
     @property
     def norm_queue_delta(self) -> float:
-        return float(self._data.get("normalization", {}).get("queue_delta", 200.0))
+        return float(self._data["normalization"]["queue_delta"])
 
     @property
     def norm_p99_ttft(self) -> float:
-        return float(self._data.get("normalization", {}).get("p99_ttft", 50.0))
+        return float(self._data["normalization"]["p99_ttft"])
 
     @property
     def norm_avg_running_requests(self) -> float:
-        return float(self._data.get("normalization", {}).get("avg_running_requests", 100.0))
+        return float(self._data["normalization"]["avg_running_requests"])
 
     @property
     def norm_current_budget(self) -> float:
-        return float(self._data.get("normalization", {}).get("current_budget", 150.0))
+        return float(self._data["normalization"]["current_budget"])
 
     @property
     def norm_mig_total_ratio(self) -> float:
-        return float(self._data.get("normalization", {}).get("mig_total_ratio", 7.0))
+        return float(self._data["normalization"]["mig_total_ratio"])
 
     @property
     def episode_length(self) -> int:

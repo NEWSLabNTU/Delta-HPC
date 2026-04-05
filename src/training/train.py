@@ -53,17 +53,16 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
-        # Agents: 8 * 2 = 16 (includes mig_total_ratio)
-        # KV Util: 5 * 3 = 15
-        # Profile: 5 * 3 = 15
-        # Flags/Budget/Downtime/Splits/Merges: 5
-        # History: history_len * 2
-        base_features = 16 + 15 + 15 + 5
+        # Agents: 2 agents
+        # Per Agent: 9 scalar metrics + history_len + 5 KV util + 5 avg latency + 1 mig instance + 5 mig geometry = 24 + history_len
+        per_agent_features = 27 + history_len
+        # Global Flags/Budget/Downtime/Splits/Merges: 5
+        total_features = 2 * per_agent_features + 3
 
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
-            shape=(base_features + 2 * history_len,),
+            shape=(total_features,),
             dtype=np.float32,
         )
 
@@ -100,70 +99,60 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list: List[float] = []
         agents_ordered = sorted(self.sim.agents.keys(), key=lambda a: a.value)
 
-        # 1-8. Agent Metrics, 16 items
         metrics = [
             "arrival_rate",
             "arrival_rate_trend",
             "mig_total_ratio",
             "avg_queue_length",
+            "avg_queue_length_trend",
             "avg_running_requests",
             "queue_delta",
             "p99_ttft",
             "avg_tpot",
         ]
-        for metric in metrics:
-            data = cast(Dict[m.AgentId, float], state_data[metric])
-            for aid in agents_ordered:
+
+        for aid in agents_ordered:
+            # 9 Scalar Metrics
+            for metric in metrics:
+                data = cast(Dict[m.AgentId, float], state_data[metric]) # type: ignore
                 obs_list.append(float(data[aid]))
 
-        # 8. arrival_rate_history, 10 items
-        history_data = state_data["arrival_rate_history"]
-        for aid in agents_ordered:
-            obs_list.extend(history_data[aid])
+            # history_len size array
+            history = cast(Dict[m.AgentId, Tuple[float, ...]], state_data["arrival_rate_history"])
+            obs_list.extend(history[aid])
 
-        # 9. kv_cache_utilization, 15 items
-        kv_util = state_data["kv_cache_utilization"]
-        for gpu_idx in [0, 1, 2]:
-            lst = kv_util.get(gpu_idx, [0.0] * 5)
-            obs_list.extend(lst)
+            # 5 KV Cache Utilization
+            kv_util = cast(Dict[m.AgentId, Tuple[float, float, float, float, float]], state_data["kv_cache_utilization"])
+            obs_list.extend(kv_util[aid])
 
-        # 9. current_mig_profile
-        mig_enc = state_data["current_mig_profile"]
-        for gpu_idx in [0, 1, 2]:
-            lst = mig_enc[gpu_idx]
-            # handle if elements are MIGEncoding or simple ints
-            obs_list.extend(
-                [
-                    float(lst.p1),
-                    float(lst.p2),
-                    float(lst.p3),
-                    float(lst.p4),
-                    float(lst.p7),
-                ]
-            )
+            # 5 Avg Composite Latency
+            latency = cast(Dict[m.AgentId, Tuple[float, float, float, float, float]], state_data["avg_composite_latency"])
+            obs_list.extend(latency[aid])
 
-        # 10. recovery_flag: 1 item
+            # 1 MIG Instance count
+            n_mig = state_data["n_mig_instance"][aid]
+            obs_list.append(float(n_mig))
+
+            # 5 MIG Geometry
+            geometry = state_data["mig_geometry"][aid]
+            obs_list.extend([float(x) for x in geometry])
+
+            # 2 action counters
+            obs_list.append(float(state_data["last_split"][aid]))
+            obs_list.append(float(state_data["last_merge"][aid]))
+
+        # Global Metrics: 3
         obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)
-
-        # 11. current_budget: 1 item
         obs_list.append(float(state_data["current_budget"]))
-
-        # 12. downtime_ratio: 1 item
         obs_list.append(float(state_data["downtime_ratio"]))
-
-        # 13. last_split: 1 item
-        obs_list.append(float(state_data["last_split"]))
-        
-        # 14. last_merge: 1 item
-        obs_list.append(float(state_data["last_merge"]))
 
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
-        self, action: int, reqs: Dict[m.AgentId, List[m.Request]]
+        self, action: int, reqs: Dict[m.AgentId, List[m.Request]], current_time: float
     ) -> float:
         enum_action = list(m.ResourceManagerAction)[action]
-        return compute_reward(reqs, enum_action)
+        return compute_reward(reqs, enum_action, current_time)
 
     def _is_action_valid(self, action: int) -> bool:
         return self._current_action_mask[action]
@@ -192,7 +181,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # 3. Compute new state and reward
         obs = self._get_obs(state_data)
-        reward = self._calculate_reward(action, state_data["requests"])
+        reward = self._calculate_reward(
+            action, state_data["requests"], self.sim.current_time
+        )
 
         self.current_step += 1
         terminated = self.current_step >= self.max_steps

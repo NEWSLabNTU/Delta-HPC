@@ -7,7 +7,7 @@ training:
     avg_queue_length: 100.0
     queue_delta: 50.0
     p99_ttft: 50.0
-    avg_running_requests: 100.0
+    avg_running_requests: 20.0
     current_budget: 150.0
     mig_total_ratio: 7.0
   PPO:

@@ -91,7 +91,7 @@ def main():
         avg_q = state_data["avg_queue_length"]
         print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
 
-        reward = compute_reward(state_data["requests"], action)
+        reward = compute_reward(state_data["requests"], action, sim.current_time)
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively
@@ -110,7 +110,9 @@ def main():
     print(f"Total simulated time: {sim.current_time:.2f} seconds")
 
     for agent_id in m.AgentId:
-        reqs = sim.agents[agent_id].completed_requests
+        reqs = sim.agents[
+            agent_id
+        ].completed_requests  # this now only has last 500 requests
         print(f"\nAgent {agent_id.value}: {len(reqs)} requests completed.")
         if reqs:
             # Latency

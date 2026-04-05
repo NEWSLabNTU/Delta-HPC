@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from enum import Enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -466,7 +467,7 @@ class Agent(ABC):
 
     @property
     @abstractmethod
-    def completed_requests(self) -> List[Request]: ...
+    def completed_requests(self) -> deque[Request]: ...
 
     @abstractmethod
     def add_engine(self, engine: LLMEngine) -> None: ...
@@ -771,19 +772,22 @@ class EnvironmentStateData(TypedDict):
     arrival_rate_trend: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
     avg_queue_length: Dict[AgentId, float]
+    avg_queue_length_trend: Dict[AgentId, float]
     queue_delta: Dict[AgentId, float]
     p99_ttft: Dict[AgentId, float]
     avg_tpot: Dict[AgentId, float]
-    kv_cache_utilization: Dict[int, List[float]]
-    current_mig_profile: Dict[int, MIGEncoding]
+    kv_cache_utilization: Dict[AgentId, Tuple[float, float, float, float, float]]
+    avg_composite_latency: Dict[AgentId, Tuple[float, float, float, float, float]]
+    n_mig_instance: Dict[AgentId, int]
+    mig_geometry: Dict[AgentId, Tuple[int, int, int, int, int]]
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, float]
     downtime_ratio: float
     mig_total_ratio: Dict[AgentId, float]
     requests: Dict[AgentId, List[Request]]
-    last_split: float
-    last_merge: float
+    last_split: Dict[AgentId, float]
+    last_merge: Dict[AgentId, float]
 
 
 class Worker(ABC):
@@ -822,19 +826,19 @@ class EnvironmentState(ABC):
 
     @property
     @abstractmethod
-    def steps_since_split(self) -> int: ...
+    def steps_since_split(self) -> Dict[AgentId, int]: ...
 
     @steps_since_split.setter
     @abstractmethod
-    def steps_since_split(self, v: int) -> None: ...
+    def steps_since_split(self, v: Dict[AgentId, int]) -> None: ...
 
     @property
     @abstractmethod
-    def steps_since_merge(self) -> int: ...
+    def steps_since_merge(self) -> Dict[AgentId, int]: ...
 
     @steps_since_merge.setter
     @abstractmethod
-    def steps_since_merge(self, v: int) -> None: ...
+    def steps_since_merge(self, v: Dict[AgentId, int]) -> None: ...
 
     @abstractmethod
     def refresh_budget(self) -> None: ...

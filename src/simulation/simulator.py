@@ -420,13 +420,16 @@ class SimulatorImpl(m.Simulator):
             self._current_time, self._agents
         )
 
-        self._environment_state.steps_since_split += 1
-        self._environment_state.steps_since_merge += 1
+        for aid in self._agents.keys():
+            self._environment_state.steps_since_split[aid] += 1
+            self._environment_state.steps_since_merge[aid] += 1
+
         if action != m.ResourceManagerAction.NO_ACTION and isinstance(action.value, m.MigAction):
+            aid = action.value.victim
             if action.value.action == "split":
-                self._environment_state.steps_since_split = 0
+                self._environment_state.steps_since_split[aid] = 0
             elif action.value.action == "merge":
-                self._environment_state.steps_since_merge = 0
+                self._environment_state.steps_since_merge[aid] = 0
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
@@ -794,8 +797,8 @@ class SimulatorImpl(m.Simulator):
 
         self._environment_state.reset_for_next_interval(0.0, self._agents)
         self._environment_state.reconfig_flag = False
-        self._environment_state.steps_since_split = 5
-        self._environment_state.steps_since_merge = 5
+        self._environment_state.steps_since_split = {aid: 5 for aid in self._agents.keys()}
+        self._environment_state.steps_since_merge = {aid: 5 for aid in self._agents.keys()}
         self._events.add(
             m.SimulationEvent(
                 time=0.0,
