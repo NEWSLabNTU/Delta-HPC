@@ -147,62 +147,35 @@ class EnvironmentStateImpl(m.EnvironmentState):
         agents: Dict[m.AgentId, m.Agent],
         engines: Dict[str, m.LLMEngine],
     ) -> m.EnvironmentStateData:
-        rates, trends = self._get_arrival_rate(agents, current_time)
-        avg_q_lengths, avg_q_trends = self._get_avg_queue_length(agents)
         return {
-            "arrival_rate": {
-                k: v / TRAINING_CONFIG.norm_arrival_rate for k, v in rates.items()
-            },
-            "arrival_rate_trend": trends,
-            "arrival_rate_history": {
-                aid: tuple(
-                    r / TRAINING_CONFIG.norm_arrival_rate
-                    for r in stats.arrival_rate_history
-                )
-                for aid, stats in self._agent_stats.items()
-            },
-            "avg_queue_length": {
-                k: v / TRAINING_CONFIG.norm_avg_queue_length
-                for k, v in avg_q_lengths.items()
-            },
-            "avg_queue_length_trend": avg_q_trends,
-            "avg_running_requests": {
-                k: v / TRAINING_CONFIG.norm_avg_running_requests
-                for k, v in self._get_avg_running_requests(agents).items()
-            },
-            "queue_delta": {
-                k: v / TRAINING_CONFIG.norm_queue_delta
-                for k, v in self._get_queue_delta(agents).items()
-            },
-            "p99_ttft": {
-                k: v / TRAINING_CONFIG.norm_p99_ttft
-                for k, v in self._get_p99_ttft(agents, current_time).items()
-            },
+            "arrival_rate": self._get_normalized_arrival_rate(agents, current_time),
+            "arrival_rate_trend": self._get_arrival_rate_trend(agents, current_time),
+            "arrival_rate_history": self._get_normalized_arrival_rate_history(agents),
+            "avg_queue_length": self._get_normalized_avg_queue_length(agents),
+            "avg_queue_length_trend": self._get_avg_queue_length_trend(agents),
+            "avg_running_requests": self._get_avg_running_requests(agents),
+            "queue_delta": self._get_queue_delta(agents),
+            "p99_ttft": self._get_p99_ttft(agents, current_time),
             "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(agents),
             "avg_composite_latency": self._get_avg_composite_latency(agents),
             "n_mig_instance": self._get_n_mig_instance(agents),
             "mig_geometry": self._get_mig_geometry(agents),
-            "current_budget": self._current_budget
-            / TRAINING_CONFIG.norm_current_budget,
-            "downtime_ratio": self._last_action_downtime
-            / TRAINING_CONFIG.action_interval,
+            "current_budget": self._get_current_budget(),
+            "downtime_ratio": self._get_downtime_ratio(),
             "mig_total_ratio": self._get_mig_total_ratio(agents),
             "recovery_flag": self._reconfig_flag,
+            "last_split": self._get_last_split(agents),
+            "last_merge": self._get_last_merge(agents),
             "requests": {
                 aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
-            },
-            "last_split": {
-                aid: min(self._steps_since_split[aid], 5) / 5.0 for aid in agents.keys()
-            },
-            "last_merge": {
-                aid: min(self._steps_since_merge[aid], 5) / 5.0 for aid in agents.keys()
             },
         }
 
     def _get_arrival_rate(
         self, agents: Dict[m.AgentId, m.Agent], current_time: float
     ) -> Tuple[Dict[m.AgentId, float], Dict[m.AgentId, float]]:
+        """Returns raw (un-normalized) arrival rates and trends. Used internally."""
         rates: Dict[m.AgentId, float] = {}
         trends: Dict[m.AgentId, float] = {}
         start_time = current_time - TRAINING_CONFIG.action_interval
@@ -223,9 +196,34 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 ) / stats.last_arrival_rate
         return rates, trends
 
+    def _get_normalized_arrival_rate(
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        rates, _ = self._get_arrival_rate(agents, current_time)
+        return {k: v / TRAINING_CONFIG.norm_arrival_rate for k, v in rates.items()}
+
+    def _get_arrival_rate_trend(
+        self, agents: Dict[m.AgentId, m.Agent], current_time: float
+    ) -> Dict[m.AgentId, float]:
+        _, trends = self._get_arrival_rate(agents, current_time)
+        return trends
+
+    def _get_normalized_arrival_rate_history(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
+        return {
+            aid: tuple(
+                r / TRAINING_CONFIG.norm_arrival_rate
+                for r in stats.arrival_rate_history
+            )
+            for aid, stats in self._agent_stats.items()
+            if aid in agents
+        }
+
     def _get_avg_queue_length(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Tuple[Dict[m.AgentId, float], Dict[m.AgentId, float]]:
+        """Returns raw (un-normalized) avg queue lengths and trends. Used internally."""
         avg_q: Dict[m.AgentId, float] = {}
         trends: Dict[m.AgentId, float] = {}
         for agent_id in agents.keys():
@@ -248,27 +246,40 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 trends[agent_id] = 1.0 if current_avg > 0.0 else 0.0
         return avg_q, trends
 
+    def _get_normalized_avg_queue_length(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        avg_qs, _ = self._get_avg_queue_length(agents)
+        return {k: v / TRAINING_CONFIG.norm_avg_queue_length for k, v in avg_qs.items()}
+
+    def _get_avg_queue_length_trend(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        _, trends = self._get_avg_queue_length(agents)
+        return trends
+
     def _get_avg_running_requests(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
         avg_run: Dict[m.AgentId, float] = {}
         for agent_id in agents.keys():
             integral = self._agent_stats[agent_id].running_requests_integral
-            avg_run[agent_id] = (
+            raw = (
                 integral / TRAINING_CONFIG.action_interval
                 if TRAINING_CONFIG.action_interval > 0
                 else 0.0
             )
+            avg_run[agent_id] = raw / TRAINING_CONFIG.norm_avg_running_requests
         return avg_run
 
     def _get_queue_delta(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, int]:
-        delta: Dict[m.AgentId, int] = {}
+    ) -> Dict[m.AgentId, float]:
+        delta: Dict[m.AgentId, float] = {}
         for agent_id in agents.keys():
             start_q = self._agent_stats[agent_id].interval_start_queue_length
             end_q = self._agent_stats[agent_id].last_queue_length
-            delta[agent_id] = end_q - start_q
+            delta[agent_id] = (end_q - start_q) / TRAINING_CONFIG.norm_queue_delta
         return delta
 
     def _get_p99_ttft(
@@ -292,7 +303,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 ttfts.sort()
                 idx = int(0.99 * len(ttfts))
                 idx = min(idx, len(ttfts) - 1)
-                p99[agent_id] = ttfts[idx]
+                p99[agent_id] = ttfts[idx] / TRAINING_CONFIG.norm_p99_ttft
         return p99
 
     def _get_avg_tpot(
@@ -406,7 +417,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             instances = sum(
                 1 for e in agent.engines if e.status != m.EngineStatus.BOOTING
             )
-            stats[agent_id] = instances
+            stats[agent_id] = instances / TRAINING_CONFIG.norm_mig_geometry
         return stats
 
     def _get_mig_geometry(
@@ -430,3 +441,25 @@ class EnvironmentStateImpl(m.EnvironmentState):
             total_size = sum(e.mig_profile.size for e in agent.engines)
             ratio[agent_id] = total_size / TRAINING_CONFIG.norm_mig_total_ratio
         return ratio
+
+    def _get_current_budget(self) -> float:
+        return self._current_budget / TRAINING_CONFIG.norm_current_budget
+
+    def _get_downtime_ratio(self) -> float:
+        return self._last_action_downtime / TRAINING_CONFIG.action_interval
+
+    def _get_last_split(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm = TRAINING_CONFIG.norm_last_action
+        return {
+            aid: min(self._steps_since_split[aid], norm) / norm for aid in agents.keys()
+        }
+
+    def _get_last_merge(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm = TRAINING_CONFIG.norm_last_action
+        return {
+            aid: min(self._steps_since_merge[aid], norm) / norm for aid in agents.keys()
+        }
