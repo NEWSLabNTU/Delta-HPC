@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional
@@ -23,6 +24,12 @@ class AgentStats:
     mig_composite_latencies: Dict[int, deque] = field(
         default_factory=lambda: {mig.idx: deque(maxlen=100) for mig in m.MIGProfile}
     )
+    steps_since_split: int = 5
+    steps_since_merge: int = 5
+    steps_since_give: int = 5
+    steps_since_receive: int = 5
+    last_give_amount: float = 0.0
+    last_receive_amount: float = 0.0
 
 
 class EnvironmentStateImpl(m.EnvironmentState):
@@ -32,8 +39,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self._reconfig_flag: bool = False
         self._current_budget = TRAINING_CONFIG.reconfig_budget
         self._last_action_downtime: float = 0.0
-        self._steps_since_split: Dict[m.AgentId, int] = {aid: 5 for aid in m.AgentId}
-        self._steps_since_merge: Dict[m.AgentId, int] = {aid: 5 for aid in m.AgentId}
 
     @property
     def current_budget(self) -> float:
@@ -59,24 +64,30 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def last_action_downtime(self, v: float) -> None:
         self._last_action_downtime = v
 
-    @property
-    def steps_since_split(self) -> Dict[m.AgentId, int]:
-        return self._steps_since_split
-
-    @steps_since_split.setter
-    def steps_since_split(self, v: Dict[m.AgentId, int]) -> None:
-        self._steps_since_split = v
-
-    @property
-    def steps_since_merge(self) -> Dict[m.AgentId, int]:
-        return self._steps_since_merge
-
-    @steps_since_merge.setter
-    def steps_since_merge(self, v: Dict[m.AgentId, int]) -> None:
-        self._steps_since_merge = v
-
     def refresh_budget(self) -> None:
         self._current_budget = TRAINING_CONFIG.reconfig_budget
+
+    def advance_all_last_action(self) -> None:
+        for stats in self._agent_stats.values():
+            stats.steps_since_split += 1
+            stats.steps_since_merge += 1
+            stats.steps_since_give += 1
+            stats.steps_since_receive += 1
+
+    def reset_last_action(
+        self, agent_id: m.AgentId, event_type: str, amount: float = 0.0
+    ) -> None:
+        stats = self._agent_stats[agent_id]
+        if event_type == "split":
+            stats.steps_since_split = 0
+        elif event_type == "merge":
+            stats.steps_since_merge = 0
+        elif event_type == "give":
+            stats.steps_since_give = 0
+            stats.last_give_amount = amount
+        elif event_type == "receive":
+            stats.steps_since_receive = 0
+            stats.last_receive_amount = amount
 
     def reset_for_next_interval(
         self,
@@ -155,28 +166,103 @@ class EnvironmentStateImpl(m.EnvironmentState):
         agents: Dict[m.AgentId, m.Agent],
         engines: Dict[str, m.LLMEngine],
     ) -> m.EnvironmentStateData:
-        return {
-            "arrival_rate": self._get_normalized_arrival_rate(agents, current_time),
-            "arrival_rate_trend": self._get_arrival_rate_trend(agents, current_time),
+        # 1. Collect all metrics via (normalized) getters
+        arrival_rate = self._get_normalized_arrival_rate(agents, current_time)
+        arrival_rate_trend = self._get_arrival_rate_trend(agents, current_time)
+        avg_queue_length = self._get_normalized_avg_queue_length(agents)
+        avg_queue_length_trend = self._get_avg_queue_length_trend(agents)
+
+        run_reqs = self._get_avg_running_requests(agents)
+        kv = self._get_kv_cache_utilization(agents)
+        latent_proportions, raw_latent_totals = self._get_avg_composite_latency(agents)
+        n_mig = self._get_n_mig_instance(agents)
+        vram = self._get_total_vram_ratio(agents)
+        sm = self._get_total_sm_ratio(agents)
+
+        # 2. Create the state dictionary
+        state_data: m.EnvironmentStateData = {
+            "arrival_rate": arrival_rate,
+            "arrival_rate_trend": arrival_rate_trend,
             "arrival_rate_history": self._get_normalized_arrival_rate_history(agents),
-            "avg_queue_length": self._get_normalized_avg_queue_length(agents),
-            "avg_queue_length_trend": self._get_avg_queue_length_trend(agents),
-            "avg_running_requests": self._get_avg_running_requests(agents),
-            "kv_cache_utilization": self._get_kv_cache_utilization(agents),
-            "avg_composite_latency": self._get_avg_composite_latency(agents),
-            "n_mig_instance": self._get_n_mig_instance(agents),
+            "avg_queue_length": avg_queue_length,
+            "avg_queue_length_trend": avg_queue_length_trend,
+            "avg_running_requests": run_reqs,
+            "kv_cache_utilization": kv,
+            "avg_composite_latency": latent_proportions,
+            "n_mig_instance": n_mig,
             "mig_geometry": self._get_mig_geometry(agents),
             "current_budget": self._get_current_budget(),
             "downtime_ratio": self._get_downtime_ratio(),
-            "total_sm_ratio": self._get_total_sm_ratio(agents),
-            "total_vram_ratio": self._get_total_vram_ratio(agents),
+            "total_sm_ratio": sm,
+            "total_vram_ratio": vram,
             "recovery_flag": self._reconfig_flag,
             "last_split": self._get_last_split(agents),
             "last_merge": self._get_last_merge(agents),
+            "last_give": self._get_last_give(agents),
+            "last_receive": self._get_last_receive(agents),
+            "last_give_amount": self._get_last_give_amount(agents),
+            "last_receive_amount": self._get_last_receive_amount(agents),
             "requests": {
                 aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
             },
+            # 3. Global agent ratios
+            **self._calculate_global_agent_ratios(
+                arrival_rate,
+                avg_queue_length,
+                run_reqs,
+                kv,
+                raw_latent_totals,
+                n_mig,
+                vram,
+                sm,
+            ),
         }
+        return state_data
+
+    def _calculate_global_agent_ratios(
+        self,
+        rates: Dict[m.AgentId, float],
+        avg_qs: Dict[m.AgentId, Tuple[float, ...]],
+        run_reqs: Dict[m.AgentId, Tuple[float, ...]],
+        kv: Dict[m.AgentId, Tuple[float, ...]],
+        raw_latent_totals: Dict[m.AgentId, float],
+        n_mig: Dict[m.AgentId, int],
+        vram: Dict[m.AgentId, float],
+        sm: Dict[m.AgentId, float],
+    ) -> Dict[str, float]:
+        def get_total(data_dict, aid):
+            val = data_dict[aid]
+            return sum(val) if isinstance(val, (tuple, list)) else float(val)
+
+        metrics = {
+            "agent_arrival_rate_ratio": rates,
+            "agent_avg_queue_len_ratio": avg_qs,
+            "agent_avg_running_req_ratio": run_reqs,
+            "agent_avg_kv_cache_ratio": kv,
+            "agent_n_mig_ratio": n_mig,
+            "agent_vram_ratio": vram,
+            "agent_sm_ratio": sm,
+        }
+
+        ratios = {}
+        epsilon = 1e-6
+        for key, data in metrics.items():
+            c_val = get_total(data, m.AgentId.CODING)
+            r_val = get_total(data, m.AgentId.RAG)
+            ratios[key] = (c_val - r_val) / (c_val + r_val + epsilon)
+
+        # 4. Special Case: Latency (Log-Normalized symmetric ratio)
+        max_exp = TRAINING_CONFIG.norm_avg_composite_latency
+        denom = math.log10(1 + max_exp)
+        l_c_raw = raw_latent_totals[m.AgentId.CODING]
+        l_r_raw = raw_latent_totals[m.AgentId.RAG]
+        l_c_norm = math.log10(1 + l_c_raw) / denom
+        l_r_norm = math.log10(1 + l_r_raw) / denom
+        ratios["agent_avg_composite_latency_ratio"] = (l_c_norm - l_r_norm) / (
+            l_c_norm + l_r_norm + epsilon
+        )
+
+        return ratios
 
     def _get_arrival_rate(
         self, agents: Dict[m.AgentId, m.Agent], current_time: float
@@ -248,30 +334,17 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 if stats.last_avg_queue_lengths is None:
                     current_trends.append(0.0)
                 elif stats.last_avg_queue_lengths[i] > 0.0:
-                    current_trends.append(
-                        (current_avg - stats.last_avg_queue_lengths[i])
-                        / stats.last_avg_queue_lengths[i]
-                    )
+                    trd = (
+                        current_avg - stats.last_avg_queue_lengths[i]
+                    ) / stats.last_avg_queue_lengths[i]
+                    trd = min(trd, 2.0)  # clamp in [-2, 2]
+                    trd = max(trd, -2.0)
+                    current_trends.append(trd)
                 else:
                     current_trends.append(1.0 if current_avg > 0.0 else 0.0)
             avg_q[agent_id] = tuple(current_avgs)
             trends[agent_id] = tuple(current_trends)
         return avg_q, trends
-
-    def _get_normalized_avg_queue_length(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, ...]]:
-        avg_qs, _ = self._get_avg_queue_length(agents)
-        return {
-            k: tuple(v_i / TRAINING_CONFIG.norm_avg_queue_length for v_i in v)
-            for k, v in avg_qs.items()
-        }
-
-    def _get_avg_queue_length_trend(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, ...]]:
-        _, trends = self._get_avg_queue_length(agents)
-        return trends
 
     def _get_avg_running_requests(
         self, agents: Dict[m.AgentId, m.Agent]
@@ -320,8 +393,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def _get_avg_composite_latency(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float, float]]:
+    ) -> Tuple[
+        Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+        Dict[m.AgentId, float],
+    ]:
         result: Dict[m.AgentId, Tuple[float, float, float, float, float, float]] = {}
+        raw_totals: Dict[m.AgentId, float] = {}
         w_t = TRAINING_CONFIG.w("ttft")
         w_p = TRAINING_CONFIG.w("tpot")
 
@@ -363,13 +440,32 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
             # Normalize to percentages (proportion of total)
             total = sum(raw_avgs)
+            raw_totals[agent_id] = total
             if total > 0.0:
                 pct_avgs = tuple(v / total for v in raw_avgs)
             else:
                 pct_avgs = tuple(0.0 for _ in raw_avgs)
 
             result[agent_id] = pct_avgs  # type: ignore
-        return result
+        return result, raw_totals
+
+    def _get_normalized_avg_queue_length(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
+        avg_qs, _ = self._get_avg_queue_length(agents)
+        max_expected = TRAINING_CONFIG.norm_avg_queue_length
+        denom = math.log10(1 + max_expected)
+
+        res = {}
+        for aid, components in avg_qs.items():
+            res[aid] = tuple(math.log10(1 + q) / denom for q in components)
+        return res
+
+    def _get_avg_queue_length_trend(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
+        _, trends = self._get_avg_queue_length(agents)
+        return trends
 
     def _get_n_mig_instance(
         self, agents: Dict[m.AgentId, m.Agent]
@@ -424,7 +520,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._steps_since_split[aid], norm) / norm for aid in agents.keys()
+            aid: min(self._agent_stats[aid].steps_since_split, norm) / norm
+            for aid in agents.keys()
         }
 
     def _get_last_merge(
@@ -432,5 +529,56 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._steps_since_merge[aid], norm) / norm for aid in agents.keys()
+            aid: min(self._agent_stats[aid].steps_since_merge, norm) / norm
+            for aid in agents.keys()
         }
+
+    def _get_last_give(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm = TRAINING_CONFIG.norm_last_action
+        return {
+            aid: min(self._agent_stats[aid].steps_since_give, norm) / norm
+            for aid in agents.keys()
+        }
+
+    def _get_last_receive(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm = TRAINING_CONFIG.norm_last_action
+        return {
+            aid: min(self._agent_stats[aid].steps_since_receive, norm) / norm
+            for aid in agents.keys()
+        }
+
+    def _get_last_give_amount(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm_action = TRAINING_CONFIG.norm_last_action
+        norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
+        res = {}
+        for aid in agents.keys():
+            stats = self._agent_stats[aid]
+            # 0 if counter is 0 or normalized counter is 1.0
+            norm_val = min(stats.steps_since_give, norm_action) / norm_action
+            if norm_val == 1.0 or stats.steps_since_give == 0:
+                res[aid] = 0.0
+            else:
+                res[aid] = stats.last_give_amount / norm_amount
+        return res
+
+    def _get_last_receive_amount(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        norm_action = TRAINING_CONFIG.norm_last_action
+        norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
+        res = {}
+        for aid in agents.keys():
+            stats = self._agent_stats[aid]
+            # 0 if counter is 0 or normalized counter is 1.0
+            norm_val = min(stats.steps_since_receive, norm_action) / norm_action
+            if norm_val == 1.0 or stats.steps_since_receive == 0:
+                res[aid] = 0.0
+            else:
+                res[aid] = stats.last_receive_amount / norm_amount
+        return res

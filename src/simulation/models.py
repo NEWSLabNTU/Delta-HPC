@@ -790,6 +790,19 @@ class EnvironmentStateData(TypedDict):
     requests: Dict[AgentId, List[Request]]
     last_split: Dict[AgentId, float]
     last_merge: Dict[AgentId, float]
+    last_give: Dict[AgentId, float]
+    last_receive: Dict[AgentId, float]
+    last_give_amount: Dict[AgentId, float]
+    last_receive_amount: Dict[AgentId, float]
+    # Agent Ratios (CODING / RAG)
+    agent_arrival_rate_ratio: float
+    agent_avg_queue_len_ratio: float
+    agent_avg_running_req_ratio: float
+    agent_avg_kv_cache_ratio: float
+    agent_avg_composite_latency_ratio: float
+    agent_n_mig_ratio: float
+    agent_vram_ratio: float
+    agent_sm_ratio: float
 
 
 class Worker(ABC):
@@ -826,21 +839,13 @@ class EnvironmentState(ABC):
     @abstractmethod
     def last_action_downtime(self, v: float) -> None: ...
 
-    @property
     @abstractmethod
-    def steps_since_split(self) -> Dict[AgentId, int]: ...
+    def advance_all_last_action(self) -> None: ...
 
-    @steps_since_split.setter
     @abstractmethod
-    def steps_since_split(self, v: Dict[AgentId, int]) -> None: ...
-
-    @property
-    @abstractmethod
-    def steps_since_merge(self) -> Dict[AgentId, int]: ...
-
-    @steps_since_merge.setter
-    @abstractmethod
-    def steps_since_merge(self, v: Dict[AgentId, int]) -> None: ...
+    def reset_last_action(
+        self, agent_id: AgentId, event_type: str, amount: float = 0.0
+    ) -> None: ...
 
     @abstractmethod
     def refresh_budget(self) -> None: ...

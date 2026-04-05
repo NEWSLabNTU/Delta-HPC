@@ -420,18 +420,16 @@ class SimulatorImpl(m.Simulator):
             self._current_time, self._agents
         )
 
-        for aid in self._agents.keys():
-            self._environment_state.steps_since_split[aid] += 1
-            self._environment_state.steps_since_merge[aid] += 1
+        self._environment_state.advance_all_last_action()
 
         if action != m.ResourceManagerAction.NO_ACTION and isinstance(
             action.value, m.MigAction
         ):
             aid = action.value.victim
             if action.value.action == "split":
-                self._environment_state.steps_since_split[aid] = 0
+                self._environment_state.reset_last_action(aid, "split")
             elif action.value.action == "merge":
-                self._environment_state.steps_since_merge[aid] = 0
+                self._environment_state.reset_last_action(aid, "merge")
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
@@ -456,6 +454,13 @@ class SimulatorImpl(m.Simulator):
                     receiver_id=v_action.receiver,
                 )
                 self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
+                # Track give/receive
+                self._environment_state.reset_last_action(
+                    v_action.giver, "give", float(v_action.amount)
+                )
+                self._environment_state.reset_last_action(
+                    v_action.receiver, "receive", float(v_action.amount)
+                )
 
             case action if action.value.action == "split":
                 m_action = action.value

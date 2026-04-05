@@ -40,10 +40,10 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 2 agents
-        # Per Agent: 4 scalar metrics + history_len + 5*6 (util, latency, q_len, q_trend, run_req) + 1 mig instance + 5 mig geometry + 2 timing = 42 + history_len
-        per_agent_features = 42 + history_len
-        # Global Flags/Budget/Downtime: 3
-        total_features = 2 * per_agent_features + 3
+        # Per Agent: 4 scalar metrics + history_len + 5*6 (util, latency, q_len, q_trend, run_req) + 1 mig instance + 5 mig geometry + 6 action metrics = 46 + history_len
+        per_agent_features = 46 + history_len
+        # Global Flags/Budget/Downtime + 8 Agent Ratios: 11
+        total_features = 2 * per_agent_features + 11
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -147,14 +147,28 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             geometry = state_data["mig_geometry"][aid]
             obs_list.extend([float(x) for x in geometry])
 
-            # 2 action counters
+            # 6 action metrics
             obs_list.append(float(state_data["last_split"][aid]))
             obs_list.append(float(state_data["last_merge"][aid]))
+            obs_list.append(float(state_data["last_give"][aid]))
+            obs_list.append(float(state_data["last_receive"][aid]))
+            obs_list.append(float(state_data["last_give_amount"][aid]))
+            obs_list.append(float(state_data["last_receive_amount"][aid]))
 
-        # Global Metrics: 3
+        # Global Metrics: 11 (3 existing + 8 new ratios)
         obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)
         obs_list.append(float(state_data["current_budget"]))
         obs_list.append(float(state_data["downtime_ratio"]))
+
+        # Agent Ratios (CODING / RAG)
+        obs_list.append(float(state_data["agent_arrival_rate_ratio"]))
+        obs_list.append(float(state_data["agent_avg_queue_len_ratio"]))
+        obs_list.append(float(state_data["agent_avg_running_req_ratio"]))
+        obs_list.append(float(state_data["agent_avg_kv_cache_ratio"]))
+        obs_list.append(float(state_data["agent_avg_composite_latency_ratio"]))
+        obs_list.append(float(state_data["agent_n_mig_ratio"]))
+        obs_list.append(float(state_data["agent_vram_ratio"]))
+        obs_list.append(float(state_data["agent_sm_ratio"]))
 
         return np.array(obs_list, dtype=np.float32)
 

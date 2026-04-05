@@ -33,14 +33,6 @@ class TrainingConfig:
         return float(self._data["normalization"]["avg_queue_length"])
 
     @property
-    def norm_queue_delta(self) -> float:
-        return float(self._data["normalization"]["queue_delta"])
-
-    @property
-    def norm_p99_ttft(self) -> float:
-        return float(self._data["normalization"]["p99_ttft"])
-
-    @property
     def norm_avg_running_requests(self) -> float:
         return float(self._data["normalization"]["avg_running_requests"])
 
@@ -63,6 +55,14 @@ class TrainingConfig:
     @property
     def norm_last_action(self) -> float:
         return float(self._data["normalization"]["last_action"])
+
+    @property
+    def norm_vram_transfer_amount(self) -> float:
+        return float(self._data["normalization"]["vram_transfer_amount"])
+
+    @property
+    def norm_avg_composite_latency(self) -> float:
+        return float(self._data["normalization"]["avg_composite_latency"])
 
     @property
     def episode_length(self) -> int:

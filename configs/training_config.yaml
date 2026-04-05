@@ -5,14 +5,14 @@ training:
   normalization:
     arrival_rate: 10.0
     avg_queue_length: 100.0
-    queue_delta: 50.0
-    p99_ttft: 50.0
     avg_running_requests: 20.0
     current_budget: 150.0
     total_sm_ratio: 7.0
     total_vram_ratio: 40.0
     mig_geometry: 7.0
     last_action: 5.0
+    vram_transfer_amount: 20.0
+    avg_composite_latency: 100.0
   PPO:
     episode_length: 1024
     learning_rate: 0.00015
@@ -24,7 +24,7 @@ training:
     ent_coef: 0.01
     net_arch:
       pi: [128, 128]
-      vf: [512, 512]
+      vf: [512, 256, 128]
   patterns:
     busy:
       duration: [2400.0, 3600.0]
