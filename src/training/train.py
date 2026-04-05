@@ -23,7 +23,6 @@ from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
 
-
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
 
 
@@ -54,8 +53,8 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 2 agents
-        # Per Agent: 9 scalar metrics + history_len + 5 KV util + 5 avg latency + 1 mig instance + 5 mig geometry = 24 + history_len
-        per_agent_features = 27 + history_len
+        # Per Agent: 9 scalar metrics + history_len + 6 KV util + 6 avg latency + 1 mig instance + 5 mig geometry = 29 + history_len
+        per_agent_features = 29 + history_len
         # Global Flags/Budget/Downtime/Splits/Merges: 5
         total_features = 2 * per_agent_features + 3
 
@@ -114,19 +113,27 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         for aid in agents_ordered:
             # 9 Scalar Metrics
             for metric in metrics:
-                data = cast(Dict[m.AgentId, float], state_data[metric]) # type: ignore
+                data = cast(Dict[m.AgentId, float], state_data[metric])  # type: ignore
                 obs_list.append(float(data[aid]))
 
             # history_len size array
-            history = cast(Dict[m.AgentId, Tuple[float, ...]], state_data["arrival_rate_history"])
+            history = cast(
+                Dict[m.AgentId, Tuple[float, ...]], state_data["arrival_rate_history"]
+            )
             obs_list.extend(history[aid])
 
-            # 5 KV Cache Utilization
-            kv_util = cast(Dict[m.AgentId, Tuple[float, float, float, float, float]], state_data["kv_cache_utilization"])
+            # 6 KV Cache Utilization (1g, 2g, 3g, 4g, 7g, permanent)
+            kv_util = cast(
+                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+                state_data["kv_cache_utilization"],
+            )
             obs_list.extend(kv_util[aid])
 
-            # 5 Avg Composite Latency
-            latency = cast(Dict[m.AgentId, Tuple[float, float, float, float, float]], state_data["avg_composite_latency"])
+            # 6 Avg Composite Latency (1g, 2g, 3g, 4g, 7g, permanent) — as percentages
+            latency = cast(
+                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+                state_data["avg_composite_latency"],
+            )
             obs_list.extend(latency[aid])
 
             # 1 MIG Instance count

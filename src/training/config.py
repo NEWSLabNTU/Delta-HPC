@@ -53,6 +53,10 @@ class TrainingConfig:
         return float(self._data["normalization"]["mig_total_ratio"])
 
     @property
+    def norm_mig_geometry(self) -> float:
+        return float(self._data["normalization"]["mig_geometry"])
+
+    @property
     def episode_length(self) -> int:
         return self._data["PPO"]["episode_length"]
 

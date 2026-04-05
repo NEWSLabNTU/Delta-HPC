@@ -776,10 +776,12 @@ class EnvironmentStateData(TypedDict):
     queue_delta: Dict[AgentId, float]
     p99_ttft: Dict[AgentId, float]
     avg_tpot: Dict[AgentId, float]
-    kv_cache_utilization: Dict[AgentId, Tuple[float, float, float, float, float]]
-    avg_composite_latency: Dict[AgentId, Tuple[float, float, float, float, float]]
+    kv_cache_utilization: Dict[AgentId, Tuple[float, float, float, float, float, float]]
+    avg_composite_latency: Dict[
+        AgentId, Tuple[float, float, float, float, float, float]
+    ]
     n_mig_instance: Dict[AgentId, int]
-    mig_geometry: Dict[AgentId, Tuple[int, int, int, int, int]]
+    mig_geometry: Dict[AgentId, Tuple[float, float, float, float, float]]
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, float]

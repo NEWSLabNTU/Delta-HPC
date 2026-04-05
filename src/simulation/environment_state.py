@@ -320,36 +320,46 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def _get_kv_cache_utilization(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float]]:
+    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float, float]]:
         num_profiles = len(m.MIGProfile)
-        result: Dict[m.AgentId, Tuple[float, float, float, float, float]] = {}
+        result: Dict[m.AgentId, Tuple[float, float, float, float, float, float]] = {}
         for agent_id, agent in agents.items():
             util_sums = [0.0] * num_profiles
             counts = [0] * num_profiles
+            perm_util_sum = 0.0
+            perm_count = 0
             for e in agent.engines:
                 if e.status == m.EngineStatus.BOOTING:
                     continue
-                idx = e.mig_profile.idx
-                util_sums[idx] += e.current_kv_utilization
-                counts[idx] += 1
-            result[agent_id] = tuple(
+                if e.is_permanent:
+                    perm_util_sum += e.current_kv_utilization
+                    perm_count += 1
+                else:
+                    idx = e.mig_profile.idx
+                    util_sums[idx] += e.current_kv_utilization
+                    counts[idx] += 1
+            normal_avgs = tuple(
                 s / c if c > 0 else 0.0 for s, c in zip(util_sums, counts)
             )
+            perm_avg = perm_util_sum / perm_count if perm_count > 0 else 0.0
+            result[agent_id] = normal_avgs + (perm_avg,)  # type: ignore
         return result
 
     def _get_avg_composite_latency(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float]]:
-        result: Dict[m.AgentId, Tuple[float, float, float, float, float]] = {}
+    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float, float]]:
+        result: Dict[m.AgentId, Tuple[float, float, float, float, float, float]] = {}
         w_t = TRAINING_CONFIG.w("ttft")
         w_p = TRAINING_CONFIG.w("tpot")
 
         for agent_id, agent in agents.items():
             stats = self._agent_stats[agent_id]
 
-            # Clear and repopulate from the bounded deque (maxlen=500)
+            # Clear and repopulate from the bounded deque (maxlen=100)
             for mig in m.MIGProfile:
                 stats.mig_composite_latencies[mig.idx].clear()
+
+            perm_latencies: deque = deque(maxlen=100)
 
             for req in agent.completed_requests:
                 if req.serving_engine is None:
@@ -363,15 +373,29 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 )
                 q_j = TRAINING_CONFIG.qf(mig)
                 composite = (w_t * ttft + w_p * tpot) / q_j
-                stats.mig_composite_latencies[mig.idx].append(composite)
+                if req.serving_engine.is_permanent:
+                    perm_latencies.append(composite)
+                else:
+                    stats.mig_composite_latencies[mig.idx].append(composite)
 
-            avgs = [0.0] * len(m.MIGProfile)
+            # Raw averages for each MIG profile slot + permanent slot
+            raw_avgs = [0.0] * (len(m.MIGProfile) + 1)
             for mig in m.MIGProfile:
                 q = stats.mig_composite_latencies[mig.idx]
                 if len(q) > 0:
-                    avgs[mig.idx] = sum(q) / len(q)
+                    raw_avgs[mig.idx] = sum(q) / len(q)
+            raw_avgs[len(m.MIGProfile)] = (
+                sum(perm_latencies) / len(perm_latencies) if perm_latencies else 0.0
+            )
 
-            result[agent_id] = tuple(avgs)  # type: ignore
+            # Normalize to percentages (proportion of total)
+            total = sum(raw_avgs)
+            if total > 0.0:
+                pct_avgs = tuple(v / total for v in raw_avgs)
+            else:
+                pct_avgs = tuple(0.0 for _ in raw_avgs)
+
+            result[agent_id] = pct_avgs  # type: ignore
         return result
 
     def _get_n_mig_instance(
@@ -387,14 +411,15 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def _get_mig_geometry(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[int, int, int, int, int]]:
-        result: Dict[m.AgentId, Tuple[int, int, int, int, int]] = {}
+    ) -> Dict[m.AgentId, Tuple[float, float, float, float, float]]:
+        result: Dict[m.AgentId, Tuple[float, float, float, float, float]] = {}
+        divisor = TRAINING_CONFIG.norm_mig_geometry
         for agent_id, agent in agents.items():
             counts = [0] * len(m.MIGProfile)
             for e in agent.engines:
                 if e.status != m.EngineStatus.BOOTING:
                     counts[e.mig_profile.idx] += 1
-            result[agent_id] = tuple(counts)  # type: ignore
+            result[agent_id] = tuple(c / divisor for c in counts)  # type: ignore
         return result
 
     def _get_mig_total_ratio(
