@@ -174,9 +174,9 @@ class LLMEngineImpl(m.LLMEngine):
         self._restart_time = restart_time
 
     def add_request(self, request: m.Request, current_time: float):
-        assert (
-            self._status == m.EngineStatus.ACTIVE
-        ), f"Cannot add request to {self._engine_id} while {self._status}"
+        assert self._status == m.EngineStatus.ACTIVE, (
+            f"Cannot add request to {self._engine_id} while {self._status}"
+        )
         self._waiting_queue.append(request)
         self._current_time = max(self._current_time, current_time)
 

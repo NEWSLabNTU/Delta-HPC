@@ -33,4 +33,7 @@ explicit = true
 
 
 [dependency-groups]
-dev = ["black>=26.3.0", "sortedcontainers-stubs>=2.4.3"]
+dev = [
+    "ruff>=0.15.9",
+    "sortedcontainers-stubs>=2.4.3",
+]

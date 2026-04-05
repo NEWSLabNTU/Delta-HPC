@@ -15,7 +15,7 @@ def expand_conversations(example):
 
         new_row = {
             "messages": current_round_slice,
-            "id": f"{example.get('id', '0')}_round_{i//2 + 1}",
+            "id": f"{example.get('id', '0')}_round_{i // 2 + 1}",
         }
         expanded_rows.append(new_row)
 

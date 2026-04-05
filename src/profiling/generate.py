@@ -107,7 +107,7 @@ async def main():
     dataset_dir = Path(args.dataset_dir)
     output_path = (
         output_dir
-        / f"{args.model.lower().split("/")[1]}-port-{args.port}-{dataset_dir.name}-generated.jsonl"
+        / f"{args.model.lower().split('/')[1]}-port-{args.port}-{dataset_dir.name}-generated.jsonl"
     )
 
     vllm_url = f"http://localhost:{args.port}/v1/chat/completions"

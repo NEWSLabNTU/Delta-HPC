@@ -157,7 +157,7 @@ def main():
         line_y_ms,
         color="red",
         linewidth=2,
-        label=f"Fit: $y = {beta*1000:.4f}N + {alpha*1000:.2f}$ms",
+        label=f"Fit: $y = {beta * 1000:.4f}N + {alpha * 1000:.2f}$ms",
         zorder=4,
     )
 
