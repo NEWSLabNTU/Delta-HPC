@@ -8,13 +8,12 @@ from src.training.config import TRAINING_CONFIG
 
 @dataclass
 class AgentStats:
-    queue_length_integral: float = 0.0
-    running_requests_integral: float = 0.0
-    last_queue_length: int = 0
-    last_running_requests: int = 0
-    interval_start_queue_length: int = 0
+    queue_length_integrals: List[float] = field(default_factory=lambda: [0.0] * 6)
+    running_requests_integrals: List[float] = field(default_factory=lambda: [0.0] * 6)
+    last_queue_lengths: List[int] = field(default_factory=lambda: [0] * 6)
+    last_running_request_counts: List[int] = field(default_factory=lambda: [0] * 6)
     last_arrival_rate: Optional[float] = None
-    last_avg_queue_length: Optional[float] = None
+    last_avg_queue_lengths: Optional[Tuple[float, ...]] = None
     arrival_rate_history: Tuple[float, ...] = field(
         default_factory=lambda: tuple(
             [0.0] * TRAINING_CONFIG.arrival_rate_history_length
@@ -89,17 +88,17 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id, stats in self._agent_stats.items():
             if current_time == 0.0:
                 stats.last_arrival_rate = None
-                stats.last_avg_queue_length = None
+                stats.last_avg_queue_lengths = None
                 for mig in m.MIGProfile:
                     stats.mig_composite_latencies[mig.idx].clear()
             else:
                 stats.last_arrival_rate = rates[agent_id]
-                stats.last_avg_queue_length = avg_qs[agent_id]
+                stats.last_avg_queue_lengths = avg_qs[agent_id]
                 stats.arrival_rate_history = (
                     rates[agent_id],
                 ) + stats.arrival_rate_history[:-1]
-            stats.queue_length_integral = 0.0
-            stats.running_requests_integral = 0.0
+            stats.queue_length_integrals = [0.0] * 6
+            stats.running_requests_integrals = [0.0] * 6
             stats.interval_requests.clear()
 
         for agent_id, agent in agents.items():
@@ -109,13 +108,16 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     eng.running_queue.all_requests
                 )
 
-            q_len = sum(len(e.waiting_queue) for e in agent.engines)
-            run_len = sum(len(e.running_queue) for e in agent.engines)
-
             stats = self._agent_stats[agent_id]
-            stats.interval_start_queue_length = q_len
-            stats.last_queue_length = q_len
-            stats.last_running_requests = run_len
+            stats.last_queue_lengths = [0] * 6
+            stats.last_running_request_counts = [0] * 6
+
+            for e in agent.engines:
+                if e.status == m.EngineStatus.BOOTING:
+                    continue
+                idx = 5 if e.is_permanent else e.mig_profile.idx
+                stats.last_queue_lengths[idx] += len(e.waiting_queue)
+                stats.last_running_request_counts[idx] += len(e.running_queue)
 
         self._last_queue_update_time = current_time
 
@@ -126,17 +128,23 @@ class EnvironmentStateImpl(m.EnvironmentState):
         if dt > 0:
             for agent_id in agents.keys():
                 stats = self._agent_stats[agent_id]
-                stats.queue_length_integral += stats.last_queue_length * dt
-                stats.running_requests_integral += stats.last_running_requests * dt
+                for i in range(6):
+                    stats.queue_length_integrals[i] += stats.last_queue_lengths[i] * dt
+                    stats.running_requests_integrals[i] += (
+                        stats.last_running_request_counts[i] * dt
+                    )
 
         self._last_queue_update_time = current_time
         for agent_id, agent in agents.items():
-            run_len = sum(len(e.running_queue) for e in agent.engines)
-            q_len = sum(len(e.waiting_queue) for e in agent.engines)
-
             stats = self._agent_stats[agent_id]
-            stats.last_queue_length = q_len
-            stats.last_running_requests = run_len
+            stats.last_queue_lengths = [0] * 6
+            stats.last_running_request_counts = [0] * 6
+            for e in agent.engines:
+                if e.status == m.EngineStatus.BOOTING:
+                    continue
+                idx = 5 if e.is_permanent else e.mig_profile.idx
+                stats.last_queue_lengths[idx] += len(e.waiting_queue)
+                stats.last_running_request_counts[idx] += len(e.running_queue)
 
     def register_arrival(self, request: m.Request):
         self._agent_stats[request.agent_id].interval_requests.append(request)
@@ -154,16 +162,14 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "avg_queue_length": self._get_normalized_avg_queue_length(agents),
             "avg_queue_length_trend": self._get_avg_queue_length_trend(agents),
             "avg_running_requests": self._get_avg_running_requests(agents),
-            "queue_delta": self._get_queue_delta(agents),
-            "p99_ttft": self._get_p99_ttft(agents, current_time),
-            "avg_tpot": self._get_avg_tpot(agents, current_time),
             "kv_cache_utilization": self._get_kv_cache_utilization(agents),
             "avg_composite_latency": self._get_avg_composite_latency(agents),
             "n_mig_instance": self._get_n_mig_instance(agents),
             "mig_geometry": self._get_mig_geometry(agents),
             "current_budget": self._get_current_budget(),
             "downtime_ratio": self._get_downtime_ratio(),
-            "mig_total_ratio": self._get_mig_total_ratio(agents),
+            "total_sm_ratio": self._get_total_sm_ratio(agents),
+            "total_vram_ratio": self._get_total_vram_ratio(agents),
             "recovery_flag": self._reconfig_flag,
             "last_split": self._get_last_split(agents),
             "last_merge": self._get_last_merge(agents),
@@ -222,112 +228,68 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def _get_avg_queue_length(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Tuple[Dict[m.AgentId, float], Dict[m.AgentId, float]]:
+    ) -> Tuple[Dict[m.AgentId, Tuple[float, ...]], Dict[m.AgentId, Tuple[float, ...]]]:
         """Returns raw (un-normalized) avg queue lengths and trends. Used internally."""
-        avg_q: Dict[m.AgentId, float] = {}
-        trends: Dict[m.AgentId, float] = {}
+        avg_q: Dict[m.AgentId, Tuple[float, ...]] = {}
+        trends: Dict[m.AgentId, Tuple[float, ...]] = {}
         for agent_id in agents.keys():
             stats = self._agent_stats[agent_id]
-            integral = stats.queue_length_integral
-            current_avg = (
-                integral / TRAINING_CONFIG.action_interval
-                if TRAINING_CONFIG.action_interval > 0
-                else 0.0
-            )
-            avg_q[agent_id] = current_avg
+            current_avgs = []
+            current_trends = []
+            for i in range(6):
+                integral = stats.queue_length_integrals[i]
+                current_avg = (
+                    integral / TRAINING_CONFIG.action_interval
+                    if TRAINING_CONFIG.action_interval > 0
+                    else 0.0
+                )
+                current_avgs.append(current_avg)
 
-            if stats.last_avg_queue_length is None:
-                trends[agent_id] = 0.0
-            elif stats.last_avg_queue_length > 0.0:
-                trends[agent_id] = (
-                    current_avg - stats.last_avg_queue_length
-                ) / stats.last_avg_queue_length
-            else:
-                trends[agent_id] = 1.0 if current_avg > 0.0 else 0.0
+                if stats.last_avg_queue_lengths is None:
+                    current_trends.append(0.0)
+                elif stats.last_avg_queue_lengths[i] > 0.0:
+                    current_trends.append(
+                        (current_avg - stats.last_avg_queue_lengths[i])
+                        / stats.last_avg_queue_lengths[i]
+                    )
+                else:
+                    current_trends.append(1.0 if current_avg > 0.0 else 0.0)
+            avg_q[agent_id] = tuple(current_avgs)
+            trends[agent_id] = tuple(current_trends)
         return avg_q, trends
 
     def _get_normalized_avg_queue_length(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
         avg_qs, _ = self._get_avg_queue_length(agents)
-        return {k: v / TRAINING_CONFIG.norm_avg_queue_length for k, v in avg_qs.items()}
+        return {
+            k: tuple(v_i / TRAINING_CONFIG.norm_avg_queue_length for v_i in v)
+            for k, v in avg_qs.items()
+        }
 
     def _get_avg_queue_length_trend(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
         _, trends = self._get_avg_queue_length(agents)
         return trends
 
     def _get_avg_running_requests(
         self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
-        avg_run: Dict[m.AgentId, float] = {}
+    ) -> Dict[m.AgentId, Tuple[float, ...]]:
+        avg_run: Dict[m.AgentId, Tuple[float, ...]] = {}
         for agent_id in agents.keys():
-            integral = self._agent_stats[agent_id].running_requests_integral
-            raw = (
-                integral / TRAINING_CONFIG.action_interval
-                if TRAINING_CONFIG.action_interval > 0
-                else 0.0
-            )
-            avg_run[agent_id] = raw / TRAINING_CONFIG.norm_avg_running_requests
+            stats = self._agent_stats[agent_id]
+            normalized_avgs = []
+            for i in range(6):
+                integral = stats.running_requests_integrals[i]
+                raw = (
+                    integral / TRAINING_CONFIG.action_interval
+                    if TRAINING_CONFIG.action_interval > 0
+                    else 0.0
+                )
+                normalized_avgs.append(raw / TRAINING_CONFIG.norm_avg_running_requests)
+            avg_run[agent_id] = tuple(normalized_avgs)
         return avg_run
-
-    def _get_queue_delta(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
-        delta: Dict[m.AgentId, float] = {}
-        for agent_id in agents.keys():
-            start_q = self._agent_stats[agent_id].interval_start_queue_length
-            end_q = self._agent_stats[agent_id].last_queue_length
-            delta[agent_id] = (end_q - start_q) / TRAINING_CONFIG.norm_queue_delta
-        return delta
-
-    def _get_p99_ttft(
-        self, agents: Dict[m.AgentId, m.Agent], current_time: float
-    ) -> Dict[m.AgentId, float]:
-        p99: Dict[m.AgentId, float] = {}
-        start_time = current_time - TRAINING_CONFIG.action_interval
-        for agent_id in agents.keys():
-            ttfts: List[float] = []
-            for r in self._agent_stats[agent_id].interval_requests:
-                if (
-                    r.agent_id == agent_id
-                    and r.first_token_time is not None
-                    and r.first_token_time >= start_time
-                ):
-                    ttfts.append(r.first_token_time - r.arrival_time)
-
-            if not ttfts:
-                p99[agent_id] = 0.0
-            else:
-                ttfts.sort()
-                idx = int(0.99 * len(ttfts))
-                idx = min(idx, len(ttfts) - 1)
-                p99[agent_id] = ttfts[idx] / TRAINING_CONFIG.norm_p99_ttft
-        return p99
-
-    def _get_avg_tpot(
-        self, agents: Dict[m.AgentId, m.Agent], current_time: float
-    ) -> Dict[m.AgentId, float]:
-        avg_tpot: Dict[m.AgentId, float] = {}
-        start_time = current_time - TRAINING_CONFIG.action_interval
-        for agent_id in agents.keys():
-            tpots: List[float] = []
-            for r in self._agent_stats[agent_id].interval_requests:
-                if (
-                    r.agent_id == agent_id
-                    and r.start_time is not None
-                    and r.finish_time is not None
-                    and r.start_time >= start_time
-                    and r.finish_time <= current_time
-                    and r.completion_tokens > 0
-                ):
-                    duration = r.finish_time - r.start_time
-                    if duration > 0:
-                        tpots.append(duration / r.completion_tokens)
-
-            avg_tpot[agent_id] = sum(tpots) / len(tpots) if tpots else 0.0
-        return avg_tpot
 
     def _get_kv_cache_utilization(
         self, agents: Dict[m.AgentId, m.Agent]
@@ -433,13 +395,22 @@ class EnvironmentStateImpl(m.EnvironmentState):
             result[agent_id] = tuple(c / divisor for c in counts)  # type: ignore
         return result
 
-    def _get_mig_total_ratio(
+    def _get_total_sm_ratio(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
         ratio: Dict[m.AgentId, float] = {}
         for agent_id, agent in agents.items():
             total_size = sum(e.mig_profile.size for e in agent.engines)
-            ratio[agent_id] = total_size / TRAINING_CONFIG.norm_mig_total_ratio
+            ratio[agent_id] = total_size / TRAINING_CONFIG.norm_total_sm_ratio
+        return ratio
+
+    def _get_total_vram_ratio(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
+        ratio: Dict[m.AgentId, float] = {}
+        for agent_id, agent in agents.items():
+            total_vram = sum(e.mig_profile.vram for e in agent.engines)
+            ratio[agent_id] = total_vram / TRAINING_CONFIG.norm_total_vram_ratio
         return ratio
 
     def _get_current_budget(self) -> float:

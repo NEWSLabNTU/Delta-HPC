@@ -66,9 +66,9 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
-        if TRAINING_CONFIG.phase == 1:
-            for i in range(1, 5):
-                mask[i] = False
+        # if TRAINING_CONFIG.phase == 1:
+        #     for i in range(1, 5):
+        #         mask[i] = False
 
         valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
@@ -89,7 +89,8 @@ def main():
             sim.current_time, sim.agents, sim.engines
         )
         avg_q = state_data["avg_queue_length"]
-        print(f"  Avg Queue Length: {sum(avg_q.values()):.2f}")
+        total_avg_q = sum(sum(v) for v in avg_q.values())
+        print(f"  Avg Queue Length: {total_avg_q:.2f}")
 
         reward = compute_reward(state_data["requests"], action, sim.current_time)
         print(f"  Reward: {reward:.4f}")

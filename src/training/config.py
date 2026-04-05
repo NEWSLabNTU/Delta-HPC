@@ -49,8 +49,12 @@ class TrainingConfig:
         return float(self._data["normalization"]["current_budget"])
 
     @property
-    def norm_mig_total_ratio(self) -> float:
-        return float(self._data["normalization"]["mig_total_ratio"])
+    def norm_total_sm_ratio(self) -> float:
+        return float(self._data["normalization"]["total_sm_ratio"])
+
+    @property
+    def norm_total_vram_ratio(self) -> float:
+        return float(self._data["normalization"]["total_vram_ratio"])
 
     @property
     def norm_mig_geometry(self) -> float:

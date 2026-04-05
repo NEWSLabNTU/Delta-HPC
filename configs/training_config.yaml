@@ -9,7 +9,8 @@ training:
     p99_ttft: 50.0
     avg_running_requests: 20.0
     current_budget: 150.0
-    mig_total_ratio: 7.0
+    total_sm_ratio: 7.0
+    total_vram_ratio: 40.0
     mig_geometry: 7.0
     last_action: 5.0
   PPO:

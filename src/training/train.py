@@ -34,28 +34,15 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
     def __init__(self, simulator: m.Simulator) -> None:
         super(MIGResourceEnv, self).__init__()
-
-        """
-        Action space:
-        0. No action
-        1. Give 10gb VRAM from A1 to A2
-        3. Give 10gb VRAM from A2 to A1
-        3. Give 20gb VRAM from A1 to A2
-        4. Give 20gb VRAM from A2 to A1
-        5. Split A1’s larger MIG
-        6. Split A2’s larger MIG
-        7. Merge A1’s 2 smaller MIG
-        8. Merge A2’s 2 smaller MIG
-        """
         self.sim = simulator
         self.action_space = spaces.Discrete(25)
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 2 agents
-        # Per Agent: 9 scalar metrics + history_len + 6 KV util + 6 avg latency + 1 mig instance + 5 mig geometry = 29 + history_len
-        per_agent_features = 29 + history_len
-        # Global Flags/Budget/Downtime/Splits/Merges: 5
+        # Per Agent: 4 scalar metrics + history_len + 5*6 (util, latency, q_len, q_trend, run_req) + 1 mig instance + 5 mig geometry + 2 timing = 42 + history_len
+        per_agent_features = 42 + history_len
+        # Global Flags/Budget/Downtime: 3
         total_features = 2 * per_agent_features + 3
 
         self.observation_space = spaces.Box(
@@ -101,17 +88,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         metrics = [
             "arrival_rate",
             "arrival_rate_trend",
-            "mig_total_ratio",
-            "avg_queue_length",
-            "avg_queue_length_trend",
-            "avg_running_requests",
-            "queue_delta",
-            "p99_ttft",
-            "avg_tpot",
+            "total_sm_ratio",
+            "total_vram_ratio",
         ]
 
         for aid in agents_ordered:
-            # 9 Scalar Metrics
+            # 4 Scalar Metrics
             for metric in metrics:
                 data = cast(Dict[m.AgentId, float], state_data[metric])  # type: ignore
                 obs_list.append(float(data[aid]))
@@ -135,6 +117,27 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
                 state_data["avg_composite_latency"],
             )
             obs_list.extend(latency[aid])
+
+            # 6 Avg Queue Length (1g, 2g, 3g, 4g, 7g, permanent)
+            q_len = cast(
+                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+                state_data["avg_queue_length"],
+            )
+            obs_list.extend(q_len[aid])
+
+            # 6 Avg Queue Length Trend (1g, 2g, 3g, 4g, 7g, permanent)
+            q_trend = cast(
+                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+                state_data["avg_queue_length_trend"],
+            )
+            obs_list.extend(q_trend[aid])
+
+            # 6 Avg Running Requests (1g, 2g, 3g, 4g, 7g, permanent)
+            run_req = cast(
+                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
+                state_data["avg_running_requests"],
+            )
+            obs_list.extend(run_req[aid])
 
             # 1 MIG Instance count
             n_mig = state_data["n_mig_instance"][aid]

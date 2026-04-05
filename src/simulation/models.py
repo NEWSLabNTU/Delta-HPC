@@ -771,11 +771,10 @@ class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
     arrival_rate_trend: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
-    avg_queue_length: Dict[AgentId, float]
-    avg_queue_length_trend: Dict[AgentId, float]
-    queue_delta: Dict[AgentId, float]
-    p99_ttft: Dict[AgentId, float]
-    avg_tpot: Dict[AgentId, float]
+    avg_queue_length: Dict[AgentId, Tuple[float, float, float, float, float, float]]
+    avg_queue_length_trend: Dict[
+        AgentId, Tuple[float, float, float, float, float, float]
+    ]
     kv_cache_utilization: Dict[AgentId, Tuple[float, float, float, float, float, float]]
     avg_composite_latency: Dict[
         AgentId, Tuple[float, float, float, float, float, float]
@@ -784,9 +783,10 @@ class EnvironmentStateData(TypedDict):
     mig_geometry: Dict[AgentId, Tuple[float, float, float, float, float]]
     current_budget: float
     recovery_flag: bool
-    avg_running_requests: Dict[AgentId, float]
+    avg_running_requests: Dict[AgentId, Tuple[float, float, float, float, float, float]]
     downtime_ratio: float
-    mig_total_ratio: Dict[AgentId, float]
+    total_sm_ratio: Dict[AgentId, float]
+    total_vram_ratio: Dict[AgentId, float]
     requests: Dict[AgentId, List[Request]]
     last_split: Dict[AgentId, float]
     last_merge: Dict[AgentId, float]
