@@ -771,19 +771,15 @@ class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
     predicted_arrival_rate: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
-    avg_queue_length: Dict[AgentId, Tuple[float, float, float, float, float, float]]
-    avg_queue_length_trend: Dict[
-        AgentId, Tuple[float, float, float, float, float, float]
-    ]
-    kv_cache_utilization: Dict[AgentId, Tuple[float, float, float, float, float, float]]
-    avg_composite_latency: Dict[
-        AgentId, Tuple[float, float, float, float, float, float]
-    ]
-    n_mig_instance: Dict[AgentId, int]
-    mig_geometry: Dict[AgentId, Tuple[float, float, float, float, float]]
+    avg_queue_length: Dict[AgentId, Tuple[float, ...]]
+    avg_queue_length_trend: Dict[AgentId, Tuple[float, ...]]
+    kv_cache_utilization: Dict[AgentId, Tuple[float, ...]]
+    avg_composite_latency: Dict[AgentId, Tuple[float, ...]]
+    n_mig_instance: Dict[AgentId, float]
+    mig_geometry: Dict[AgentId, Tuple[float, ...]]
     current_budget: float
     recovery_flag: bool
-    avg_running_requests: Dict[AgentId, Tuple[float, float, float, float, float, float]]
+    avg_running_requests: Dict[AgentId, Tuple[float, ...]]
     downtime_ratio: float
     total_sm_ratio: Dict[AgentId, float]
     total_vram_ratio: Dict[AgentId, float]
@@ -815,6 +811,9 @@ class Worker(ABC):
     ) -> Tuple[str, Any] | None: ...
 
 
+type ActionHistoryKey = Literal["split", "merge", "give", "receive"]
+
+
 class EnvironmentState(ABC):
     @property
     @abstractmethod
@@ -844,9 +843,12 @@ class EnvironmentState(ABC):
     def advance_all_last_action(self) -> None: ...
 
     @abstractmethod
-    def reset_last_action(
-        self, agent_id: AgentId, event_type: str, amount: float = 0.0
+    def set_last_action(
+        self, agent_id: AgentId, event_type: ActionHistoryKey, amount: int = 0
     ) -> None: ...
+
+    @abstractmethod
+    def reset_last_actions(self) -> None: ...
 
     @abstractmethod
     def refresh_budget(self) -> None: ...
@@ -872,6 +874,11 @@ class EnvironmentState(ABC):
         engines: Dict[str, LLMEngine],
         current_step: int,
     ) -> EnvironmentStateData: ...
+
+    @abstractmethod
+    def get_steps_since(
+        self, agent_id: AgentId, event_type: ActionHistoryKey
+    ) -> int: ...
 
 
 class MIGProfileRule(ABC):

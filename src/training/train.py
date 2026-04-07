@@ -9,7 +9,7 @@ from stable_baselines3.common.callbacks import (
     BaseCallback,
 )
 
-# from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 import torch
 import numpy.typing as npt
@@ -123,45 +123,22 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
                 obs_list.append(float(data[aid]))
 
             # history_len size array
-            history = cast(
-                Dict[m.AgentId, Tuple[float, ...]], state_data["arrival_rate_history"]
-            )
-            obs_list.extend(history[aid])
+            obs_list.extend(state_data["arrival_rate_history"][aid])
 
             # 6 KV Cache Utilization (1g, 2g, 3g, 4g, 7g, permanent)
-            kv_util = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["kv_cache_utilization"],
-            )
-            obs_list.extend(kv_util[aid])
+            obs_list.extend(state_data["kv_cache_utilization"][aid])
 
             # 6 Avg Composite Latency (1g, 2g, 3g, 4g, 7g, permanent) — as percentages
-            latency = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_composite_latency"],
-            )
-            obs_list.extend(latency[aid])
+            obs_list.extend(state_data["avg_composite_latency"][aid])
 
             # 6 Avg Queue Length (1g, 2g, 3g, 4g, 7g, permanent)
-            q_len = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_queue_length"],
-            )
-            obs_list.extend(q_len[aid])
+            obs_list.extend(state_data["avg_queue_length"][aid])
 
             # 6 Avg Queue Length Trend (1g, 2g, 3g, 4g, 7g, permanent)
-            q_trend = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_queue_length_trend"],
-            )
-            obs_list.extend(q_trend[aid])
+            obs_list.extend(state_data["avg_queue_length_trend"][aid])
 
             # 6 Avg Running Requests (1g, 2g, 3g, 4g, 7g, permanent)
-            run_req = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_running_requests"],
-            )
-            obs_list.extend(run_req[aid])
+            obs_list.extend(state_data["avg_running_requests"][aid])
 
             # 1 MIG Instance count
             n_mig = state_data["n_mig_instance"][aid]
@@ -326,8 +303,9 @@ def train() -> None:
 
     # 1. Initialize the Environment
     raw_env = MIGResourceEnv(sim)
-    env = Monitor(raw_env)
-    # env = DummyVecEnv([lambda: env])
+    env_0: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
+    env_1 = DummyVecEnv([lambda: env_0])
+    env = VecNormalize(env_1, norm_obs=True, norm_reward=True)
 
     policy_kwargs = dict(
         activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO

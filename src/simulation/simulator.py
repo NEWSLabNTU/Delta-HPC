@@ -420,9 +420,9 @@ class SimulatorImpl(m.Simulator):
         ):
             aid = action.value.victim
             if action.value.action == "split":
-                self._environment_state.reset_last_action(aid, "split")
+                self._environment_state.set_last_action(aid, "split")
             elif action.value.action == "merge":
-                self._environment_state.reset_last_action(aid, "merge")
+                self._environment_state.set_last_action(aid, "merge")
 
         if action != m.ResourceManagerAction.NO_ACTION:
             if self._comming_budget_refresh is not None:
@@ -459,11 +459,11 @@ class SimulatorImpl(m.Simulator):
                 )
                 self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
                 # Track give/receive
-                self._environment_state.reset_last_action(
-                    v_action.giver, "give", float(v_action.amount)
+                self._environment_state.set_last_action(
+                    v_action.giver, "give", v_action.amount
                 )
-                self._environment_state.reset_last_action(
-                    v_action.receiver, "receive", float(v_action.amount)
+                self._environment_state.set_last_action(
+                    v_action.receiver, "receive", v_action.amount
                 )
 
             case action if action.value.action == "split":
@@ -648,7 +648,7 @@ class SimulatorImpl(m.Simulator):
         if not active_engines:
             return
 
-        all_requests = []
+        all_requests: List[m.Request] = []
         for e in active_engines:
             all_requests.extend(e.waiting_queue)
             e.waiting_queue.clear()
@@ -847,12 +847,7 @@ class SimulatorImpl(m.Simulator):
         self._environment_state.reconfig_flag = False
         for aid in self._agents.keys():
             self._environment_state.set_pending_request_count(aid, 0)
-            stats = self._environment_state._agent_stats[aid]
-            for key in ["split", "merge"]:
-                stats.action_history[key]["steps"] = 5
-            for key in ["give", "receive"]:
-                stats.action_history[key]["steps"] = 5
-                stats.action_history[key]["amount"] = 0.0
+        self.environment_state.reset_last_actions()
 
     def get_action_mask(self) -> List[bool]:
         mask: List[bool] = [False] * len(m.ResourceManagerAction)
