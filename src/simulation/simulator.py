@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from sortedcontainers import SortedList
-from typing import Any, List, Dict, Tuple, cast
+from typing import Any, List, Dict, Optional, Tuple, cast
 
 import src.simulation.models as m
 import src.simulation.utils as utils
@@ -27,6 +27,7 @@ class SimulatorImpl(m.Simulator):
         self._current_time: float = 0.0
         self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
+        self._comming_budget_refresh: Optional[m.SimulationEvent] = None
 
         self._environment_state = EnvironmentStateImpl()
         self._environment_state.reset_for_next_interval(0.0, self._agents)
@@ -56,14 +57,11 @@ class SimulatorImpl(m.Simulator):
         return self._environment_state
 
     def need_requests_replenish(self) -> List[m.AgentId]:
-        counts = {aid: 0 for aid in m.AgentId}
-        for e in self._events:
-            if e.event_type == m.EventType.REQUEST_ARRIVAL:
-                e.payload = cast(m.RequestArrivalPayload, e.payload)
-                counts[e.payload["request"].agent_id] += 1
-            if all(c >= 1000 for c in counts.values()):
-                break
-        return [aid for aid, c in counts.items() if c < 1000]
+        return [
+            aid
+            for aid in m.AgentId
+            if self._environment_state.get_pending_request_count(aid) < 1000
+        ]
 
     def latest_arrival_time(self, agent_id: m.AgentId) -> float:
         for e in reversed(self._events):
@@ -74,7 +72,9 @@ class SimulatorImpl(m.Simulator):
         return self._current_time
 
     def add_arrival_events(self, requests: List[m.Request]) -> None:
+        counts: Dict[m.AgentId, int] = defaultdict(int)
         for req in requests:
+            counts[req.agent_id] += 1
             self._events.add(
                 m.SimulationEvent(
                     time=req.arrival_time,
@@ -82,6 +82,8 @@ class SimulatorImpl(m.Simulator):
                     payload={"request": req},
                 )
             )
+        for aid, cnt in counts.items():
+            self._environment_state.add_pending_request_count(aid, cnt)
 
         self._sample_rag_searches(requests)
 
@@ -113,15 +115,6 @@ class SimulatorImpl(m.Simulator):
                     payload={},
                 )
             )
-
-        # Add budget refresh events
-        self._events.add(
-            m.SimulationEvent(
-                time=0.0,
-                event_type=m.EventType.REFRESH_ACTION_BUDGET,
-                payload={},
-            )
-        )
 
         # Activate engines
         for e in self._engines.values():
@@ -413,7 +406,7 @@ class SimulatorImpl(m.Simulator):
             self._current_time, self._agents
         )
         state_data = self._environment_state.get_state(
-            self._current_time, self._agents, self._engines
+            self._current_time, self._agents, self._engines, 0
         )
         self._logger.log_environment_state(self._current_time, state_data)
         self._environment_state.reset_for_next_interval(
@@ -430,6 +423,17 @@ class SimulatorImpl(m.Simulator):
                 self._environment_state.reset_last_action(aid, "split")
             elif action.value.action == "merge":
                 self._environment_state.reset_last_action(aid, "merge")
+
+        if action != m.ResourceManagerAction.NO_ACTION:
+            if self._comming_budget_refresh is not None:
+                self._events.remove(self._comming_budget_refresh)
+            refresh_evt = m.SimulationEvent(
+                time=self._current_time + TRAINING_CONFIG.refresh_period,
+                event_type=m.EventType.REFRESH_ACTION_BUDGET,
+                payload={},
+            )
+            self._comming_budget_refresh = refresh_evt
+            self._events.add(refresh_evt)
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
@@ -639,6 +643,38 @@ class SimulatorImpl(m.Simulator):
             case _:
                 raise ValueError(f"Unexpected shutdown purpose {purpose}")
 
+    def _redistribute_agent_waiting_requests(self, agent: m.Agent):
+        active_engines = [e for e in agent.engines if e.status == m.EngineStatus.ACTIVE]
+        if not active_engines:
+            return
+
+        all_requests = []
+        for e in active_engines:
+            all_requests.extend(e.waiting_queue)
+            e.waiting_queue.clear()
+
+        # Preserve FIFO by sorting by arrival time
+        all_requests.sort(key=lambda r: r.arrival_time)
+
+        # Distribute based on total load (waiting + running)
+        for req in all_requests:
+            # Find the engine with the minimum total load
+            engine = min(
+                active_engines,
+                key=lambda e: len(e.waiting_queue) + len(e.running_queue),
+            )
+
+            # Resolve completion_tokens based on the destination engine's model
+            model_req_map = utils.TOKENS_MAP[agent.agent_id][engine.model_name]
+            lookup_id = req.original_id if req.original_id else req.id
+            _, completion_tokens = model_req_map[lookup_id]
+            req.completion_tokens = completion_tokens
+
+            # Update serving engine
+            req.serving_engine = engine
+
+            engine.waiting_queue.append(req)
+
     def _handle_boot_complete(self, payload: m.BootPayload) -> None:
         engine_id = payload["engine_id"]
 
@@ -661,11 +697,19 @@ class SimulatorImpl(m.Simulator):
                 return  # Wait for remaining sibling engines
         self._environment_state.reconfig_flag = False  # reconfig action done
 
+        self._redistribute_agent_waiting_requests(agent)
+        for eng in agent.engines:
+            if eng.waiting_queue and len(eng.running_queue) == 0:
+                evt = eng.step(self._current_time, next_arrival_time=None)
+                if evt:
+                    self._events.add(evt)
+
     def _handle_request_arrival(self, payload: m.RequestArrivalPayload):
         req = payload["request"]
         agent_id = req.agent_id
 
         self._environment_state.register_arrival(req)
+        self._environment_state.decrement_pending_requests(agent_id)
 
         # If it's a RAG request, wiat til RAG_SEARCH_COMPLETE
         if agent_id == m.AgentId.RAG:
@@ -759,14 +803,8 @@ class SimulatorImpl(m.Simulator):
                         cast(m.EngineStepPayload, current_event.payload)
                     )
                 case m.EventType.REFRESH_ACTION_BUDGET:
+                    self._comming_budget_refresh = None
                     self._environment_state.refresh_budget()
-                    self._events.add(
-                        m.SimulationEvent(
-                            time=self._current_time + TRAINING_CONFIG.refresh_period,
-                            event_type=m.EventType.REFRESH_ACTION_BUDGET,
-                            payload={},
-                        )
-                    )
                 case m.EventType.RESOURCE_MANAGER_TRIGGER:
                     raise ValueError(f"Unexpected event {current_event.event_type}")
 
@@ -803,20 +841,18 @@ class SimulatorImpl(m.Simulator):
             self._engines[eid] = eng
 
         self._environment_state.reset_for_next_interval(0.0, self._agents)
+        self._environment_state.refresh_budget()
+        self._comming_budget_refresh = None
+
         self._environment_state.reconfig_flag = False
-        self._environment_state.steps_since_split = {
-            aid: 5 for aid in self._agents.keys()
-        }
-        self._environment_state.steps_since_merge = {
-            aid: 5 for aid in self._agents.keys()
-        }
-        self._events.add(
-            m.SimulationEvent(
-                time=0.0,
-                event_type=m.EventType.REFRESH_ACTION_BUDGET,
-                payload={},
-            )
-        )
+        for aid in self._agents.keys():
+            self._environment_state.set_pending_request_count(aid, 0)
+            stats = self._environment_state._agent_stats[aid]
+            for key in ["split", "merge"]:
+                stats.action_history[key]["steps"] = 5
+            for key in ["give", "receive"]:
+                stats.action_history[key]["steps"] = 5
+                stats.action_history[key]["amount"] = 0.0
 
     def get_action_mask(self) -> List[bool]:
         mask: List[bool] = [False] * len(m.ResourceManagerAction)

@@ -8,8 +8,9 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     BaseCallback,
 )
-import torch
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
+import torch
 import numpy.typing as npt
 from typing import Dict, Any, List, Tuple, Optional, cast
 
@@ -78,6 +79,28 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             mask[3] = False
             mask[4] = False
 
+        # Cooldown (Per-Agent): disable merging for X steps after a split,
+        # and disable splitting for X steps after a merge.
+        env_state = self.sim.environment_state
+        cooldown_steps = TRAINING_CONFIG.split_merge_cooldown_steps
+
+        for act_id, action in enumerate(m.ResourceManagerAction):
+            if action == m.ResourceManagerAction.NO_ACTION:
+                continue
+            val = action.value
+            if not isinstance(val, m.MigAction):
+                continue
+
+            aid = val.victim
+            if val.action == "split":
+                # Cannot split if this agent recently merged
+                if env_state.get_steps_since(aid, "merge") < cooldown_steps:
+                    mask[act_id] = False
+            elif val.action == "merge":
+                # Cannot merge if this agent recently split
+                if env_state.get_steps_since(aid, "split") < cooldown_steps:
+                    mask[act_id] = False
+
         self._current_action_mask = mask
         return np.array(self._current_action_mask, dtype=np.bool_)
 
@@ -87,7 +110,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         metrics = [
             "arrival_rate",
-            "arrival_rate_trend",
+            "predicted_arrival_rate",
             "total_sm_ratio",
             "total_vram_ratio",
         ]
@@ -155,20 +178,20 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             obs_list.append(float(state_data["last_give_amount"][aid]))
             obs_list.append(float(state_data["last_receive_amount"][aid]))
 
-        # Global Metrics: 11 (3 existing + 8 new ratios)
+        # Global Metrics: 11 (3 existing + 8 new differences)
         obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)
         obs_list.append(float(state_data["current_budget"]))
         obs_list.append(float(state_data["downtime_ratio"]))
 
-        # Agent Ratios (CODING / RAG)
-        obs_list.append(float(state_data["agent_arrival_rate_ratio"]))
-        obs_list.append(float(state_data["agent_avg_queue_len_ratio"]))
-        obs_list.append(float(state_data["agent_avg_running_req_ratio"]))
-        obs_list.append(float(state_data["agent_avg_kv_cache_ratio"]))
-        obs_list.append(float(state_data["agent_avg_composite_latency_ratio"]))
-        obs_list.append(float(state_data["agent_n_mig_ratio"]))
-        obs_list.append(float(state_data["agent_vram_ratio"]))
-        obs_list.append(float(state_data["agent_sm_ratio"]))
+        # Agent Differences (CODING - RAG)
+        obs_list.append(float(state_data["agent_arrival_rate_diff"]))
+        obs_list.append(float(state_data["agent_avg_queue_len_diff"]))
+        obs_list.append(float(state_data["agent_avg_running_req_diff"]))
+        obs_list.append(float(state_data["agent_avg_kv_cache_diff"]))
+        obs_list.append(float(state_data["agent_avg_composite_latency_diff"]))
+        obs_list.append(float(state_data["agent_n_mig_diff"]))
+        obs_list.append(float(state_data["agent_vram_diff"]))
+        obs_list.append(float(state_data["agent_sm_diff"]))
 
         return np.array(obs_list, dtype=np.float32)
 
@@ -193,7 +216,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
         state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines
+            self.sim.current_time, self.sim.agents, self.sim.engines, self.current_step + 1
         )
         self._logger.log_step(
             self.current_step,
@@ -247,7 +270,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim.run()  # advance to the first action interval
 
         state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines
+            self.sim.current_time, self.sim.agents, self.sim.engines, self.current_step
         )
         return self._get_obs(state_data), {}
 
@@ -299,8 +322,9 @@ def train() -> None:
 
     # 1. Initialize the Environment
     raw_env = MIGResourceEnv(sim)
-    # Track episode rewards and lengths
-    env: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
+    env = Monitor(raw_env)
+    env = DummyVecEnv([lambda: env])
+    env = VecNormalize(env, norm_obs=True, norm_reward=True)
 
     policy_kwargs = dict(
         activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO
@@ -313,18 +337,27 @@ def train() -> None:
     )
 
     # 2. Define MaskablePPO Hyperparameters
+    # Linear LR schedule: decays from lr_max to lr_min over training
+    lr_max = TRAINING_CONFIG.rl_lr_max
+    lr_min = TRAINING_CONFIG.rl_lr_min
+
+    def lr_schedule(progress_remaining: float) -> float:
+        """Linearly decays from lr_max (start) to lr_min (end)."""
+        return lr_min + (lr_max - lr_min) * progress_remaining
+
     model: MaskablePPO = MaskablePPO(
         "MlpPolicy",
         env,
         policy_kwargs=policy_kwargs,
         verbose=1,
-        learning_rate=TRAINING_CONFIG.rl_learning_rate,
-        n_steps=TRAINING_CONFIG.episode_length,
+        learning_rate=lr_schedule,
+        n_steps=TRAINING_CONFIG.rl_n_steps,
         batch_size=TRAINING_CONFIG.rl_batch_size,
         n_epochs=TRAINING_CONFIG.rl_n_epochs,
         gamma=TRAINING_CONFIG.rl_gamma,
         gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
         clip_range=TRAINING_CONFIG.rl_clip_range,
+        clip_range_vf=TRAINING_CONFIG.rl_clip_range,
         ent_coef=TRAINING_CONFIG.rl_ent_coef,
         device="cuda",
         tensorboard_log=f"./tboard/{TIMESTAMP}",
@@ -332,7 +365,7 @@ def train() -> None:
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
-        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
+        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}", save_vecnormalize=True
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
     callbacks = CallbackList([checkpoint_callback, log_cleanup_callback])
@@ -343,6 +376,7 @@ def train() -> None:
 
     # 5. Save the final model
     model.save(f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager")
+    env.save(f"./ckpts/{TIMESTAMP}/env_phase1.pkl")
     print("Training Complete. Model Saved.")
 
 

@@ -21,16 +21,19 @@ class TrainingConfig:
         return self._data["phase"]
 
     @property
+    def queue_length_trend_clamp(self) -> float:
+        return float(self._data["normalization"]["queue_length_trend_clamp"])
+
+    @property
     def arrival_rate_history_length(self) -> int:
         return self._data["arrival_rate_history_length"]
+    @property
+    def norm_avg_queue_length_exp_max(self) -> float:
+        return float(self._data["normalization"]["avg_queue_length_exp_max"])
 
     @property
-    def norm_arrival_rate(self) -> float:
-        return float(self._data["normalization"]["arrival_rate"])
-
-    @property
-    def norm_avg_queue_length(self) -> float:
-        return float(self._data["normalization"]["avg_queue_length"])
+    def default_waiting_qj(self) -> float:
+        return float(self._data["normalization"]["default_waiting_qj"])
 
     @property
     def norm_avg_running_requests(self) -> float:
@@ -61,16 +64,20 @@ class TrainingConfig:
         return float(self._data["normalization"]["vram_transfer_amount"])
 
     @property
-    def norm_avg_composite_latency(self) -> float:
-        return float(self._data["normalization"]["avg_composite_latency"])
-
-    @property
     def episode_length(self) -> int:
         return self._data["PPO"]["episode_length"]
 
     @property
-    def rl_learning_rate(self) -> float:
-        return float(self._data["PPO"]["learning_rate"])
+    def rl_n_steps(self) -> int:
+        return self._data["PPO"]["n_steps"]
+
+    @property
+    def rl_lr_max(self) -> float:
+        return float(self._data["PPO"]["lr_max"])
+
+    @property
+    def rl_lr_min(self) -> float:
+        return float(self._data["PPO"]["lr_min"])
 
     @property
     def rl_batch_size(self) -> int:
@@ -103,6 +110,10 @@ class TrainingConfig:
     @property
     def rl_net_arch_vf(self) -> List[int]:
         return self._data["PPO"]["net_arch"]["vf"]
+
+    @property
+    def split_merge_cooldown_steps(self) -> int:
+        return int(self._data["action_mask"]["split_merge_cooldown_steps"])
 
     def pattern_duration(self, pattern: AgentPattern) -> Tuple[float, float]:
         match pattern:
@@ -155,10 +166,6 @@ class TrainingConfig:
     @property
     def gamma(self) -> float:
         return self._data["reward"]["gamma"]
-
-    @property
-    def scaling_factor(self) -> float:
-        return self._data["reward"]["scaling"]
 
     @property
     def clip_threshold(self) -> float:

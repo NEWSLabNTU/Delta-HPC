@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from enum import Enum
+from enum import Enum, IntEnum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Dict, Tuple, Union, TypedDict, Literal
@@ -141,14 +141,14 @@ class AgentId(Enum):
     RAG = "RAGAgent"
 
 
-class EventType(Enum):
-    REQUEST_ARRIVAL = "REQUEST_ARRIVAL"
-    RAG_SEARCH_COMPLETE = "RAG_SEARCH_COMPLETE"
-    ENGINE_STEP_COMPLETE = "ENGINE_STEP_COMPLETE"
-    RESOURCE_MANAGER_TRIGGER = "RESOURCE_MANAGER_TRIGGER"
-    ENGINE_SHUTDOWN_COMPLETE = "ENGINE_SHUTDOWN_COMPLETE"
-    ENGINE_BOOT_COMPLETE = "ENGINE_BOOT_COMPLETE"
-    REFRESH_ACTION_BUDGET = "REFRESH_ACTION_BUDGET"
+class EventType(IntEnum):
+    REQUEST_ARRIVAL = 0
+    RAG_SEARCH_COMPLETE = 1
+    ENGINE_STEP_COMPLETE = 2
+    RESOURCE_MANAGER_TRIGGER = 3
+    ENGINE_SHUTDOWN_COMPLETE = 4
+    ENGINE_BOOT_COMPLETE = 5
+    REFRESH_ACTION_BUDGET = 6
 
 
 class OperationPurpose(Enum):
@@ -449,7 +449,7 @@ type PayloadType = Union[
 @dataclass(order=True)
 class SimulationEvent:
     time: float
-    event_type: EventType = field(compare=False)
+    event_type: EventType
     payload: PayloadType = field(compare=False, repr=False)
 
 
@@ -769,7 +769,7 @@ class TransferDetails:
 
 class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
-    arrival_rate_trend: Dict[AgentId, float]
+    predicted_arrival_rate: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
     avg_queue_length: Dict[AgentId, Tuple[float, float, float, float, float, float]]
     avg_queue_length_trend: Dict[
@@ -794,15 +794,16 @@ class EnvironmentStateData(TypedDict):
     last_receive: Dict[AgentId, float]
     last_give_amount: Dict[AgentId, float]
     last_receive_amount: Dict[AgentId, float]
-    # Agent Ratios (CODING / RAG)
-    agent_arrival_rate_ratio: float
-    agent_avg_queue_len_ratio: float
-    agent_avg_running_req_ratio: float
-    agent_avg_kv_cache_ratio: float
-    agent_avg_composite_latency_ratio: float
-    agent_n_mig_ratio: float
-    agent_vram_ratio: float
-    agent_sm_ratio: float
+    # Agent Differences (CODING - RAG)
+    agent_arrival_rate_diff: float
+    agent_avg_queue_len_diff: float
+    agent_avg_running_req_diff: float
+    agent_avg_kv_cache_diff: float
+    agent_avg_composite_latency_diff: float
+    agent_n_mig_diff: float
+    agent_vram_diff: float
+    agent_sm_diff: float
+    progress_ratio: float
 
 
 class Worker(ABC):
@@ -869,6 +870,7 @@ class EnvironmentState(ABC):
         current_time: float,
         agents: Dict[AgentId, Agent],
         engines: Dict[str, LLMEngine],
+        current_step: int,
     ) -> EnvironmentStateData: ...
 
 

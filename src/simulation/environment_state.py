@@ -24,12 +24,17 @@ class AgentStats:
     mig_composite_latencies: Dict[int, deque] = field(
         default_factory=lambda: {mig.idx: deque(maxlen=100) for mig in m.MIGProfile}
     )
-    steps_since_split: int = 5
-    steps_since_merge: int = 5
-    steps_since_give: int = 5
-    steps_since_receive: int = 5
-    last_give_amount: float = 0.0
-    last_receive_amount: float = 0.0
+    # action_history keys: "split", "merge", "give", "receive"
+    # Each value is a dict with "steps": int and (optionally) "amount": float
+    action_history: Dict[str, Dict] = field(
+        default_factory=lambda: {
+            "split": {"steps": 5},
+            "merge": {"steps": 5},
+            "give": {"steps": 5, "amount": 0.0},
+            "receive": {"steps": 5, "amount": 0.0},
+        }
+    )
+    pending_request_count: int = 0
 
 
 class EnvironmentStateImpl(m.EnvironmentState):
@@ -69,25 +74,33 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def advance_all_last_action(self) -> None:
         for stats in self._agent_stats.values():
-            stats.steps_since_split += 1
-            stats.steps_since_merge += 1
-            stats.steps_since_give += 1
-            stats.steps_since_receive += 1
+            for entry in stats.action_history.values():
+                entry["steps"] += 1
 
     def reset_last_action(
         self, agent_id: m.AgentId, event_type: str, amount: float = 0.0
     ) -> None:
+        entry = self._agent_stats[agent_id].action_history[event_type]
+        entry["steps"] = 0
+        if "amount" in entry:
+            entry["amount"] = amount
+
+    def decrement_pending_requests(self, agent_id: m.AgentId) -> None:
         stats = self._agent_stats[agent_id]
-        if event_type == "split":
-            stats.steps_since_split = 0
-        elif event_type == "merge":
-            stats.steps_since_merge = 0
-        elif event_type == "give":
-            stats.steps_since_give = 0
-            stats.last_give_amount = amount
-        elif event_type == "receive":
-            stats.steps_since_receive = 0
-            stats.last_receive_amount = amount
+        if stats.pending_request_count > 0:
+            stats.pending_request_count -= 1
+
+    def set_pending_request_count(self, agent_id: m.AgentId, count: int) -> None:
+        self._agent_stats[agent_id].pending_request_count = count
+
+    def add_pending_request_count(self, agent_id: m.AgentId, count: int) -> None:
+        self._agent_stats[agent_id].pending_request_count += count
+
+    def get_pending_request_count(self, agent_id: m.AgentId) -> int:
+        return self._agent_stats[agent_id].pending_request_count
+
+    def get_steps_since(self, agent_id: m.AgentId, event_type: str) -> int:
+        return self._agent_stats[agent_id].action_history[event_type]["steps"]
 
     def reset_for_next_interval(
         self,
@@ -165,12 +178,16 @@ class EnvironmentStateImpl(m.EnvironmentState):
         current_time: float,
         agents: Dict[m.AgentId, m.Agent],
         engines: Dict[str, m.LLMEngine],
+        current_step: int,
     ) -> m.EnvironmentStateData:
         # 1. Collect all metrics via (normalized) getters
-        arrival_rate = self._get_normalized_arrival_rate(agents, current_time)
+        arrival_rate = self._get_arrival_rate_obs(agents, current_time)
         arrival_rate_trend = self._get_arrival_rate_trend(agents, current_time)
-        avg_queue_length = self._get_normalized_avg_queue_length(agents)
-        avg_queue_length_trend = self._get_avg_queue_length_trend(agents)
+        predicted_arrival_rate = {
+            aid: arrival_rate[aid] * (1 + arrival_rate_trend[aid])
+            for aid in agents.keys()
+        }
+        avg_queue_length, avg_queue_length_trend = self._get_avg_queue_length(agents)
 
         run_reqs = self._get_avg_running_requests(agents)
         kv = self._get_kv_cache_utilization(agents)
@@ -182,8 +199,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
         # 2. Create the state dictionary
         state_data: m.EnvironmentStateData = {
             "arrival_rate": arrival_rate,
-            "arrival_rate_trend": arrival_rate_trend,
-            "arrival_rate_history": self._get_normalized_arrival_rate_history(agents),
+            "predicted_arrival_rate": predicted_arrival_rate,
+            "arrival_rate_history": self._get_arrival_rate_history(agents),
             "avg_queue_length": avg_queue_length,
             "avg_queue_length_trend": avg_queue_length_trend,
             "avg_running_requests": run_reqs,
@@ -205,8 +222,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "requests": {
                 aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
             },
-            # 3. Global agent ratios
-            **self._calculate_global_agent_ratios(
+            # 3. Global agent differences
+            **self._calculate_global_agent_diffs(
                 arrival_rate,
                 avg_queue_length,
                 run_reqs,
@@ -216,10 +233,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 vram,
                 sm,
             ),
+            "progress_ratio": current_step / TRAINING_CONFIG.episode_length,
         }
         return state_data
 
-    def _calculate_global_agent_ratios(
+    def _calculate_global_agent_diffs(
         self,
         rates: Dict[m.AgentId, float],
         avg_qs: Dict[m.AgentId, Tuple[float, ...]],
@@ -235,34 +253,27 @@ class EnvironmentStateImpl(m.EnvironmentState):
             return sum(val) if isinstance(val, (tuple, list)) else float(val)
 
         metrics = {
-            "agent_arrival_rate_ratio": rates,
-            "agent_avg_queue_len_ratio": avg_qs,
-            "agent_avg_running_req_ratio": run_reqs,
-            "agent_avg_kv_cache_ratio": kv,
-            "agent_n_mig_ratio": n_mig,
-            "agent_vram_ratio": vram,
-            "agent_sm_ratio": sm,
+            "agent_arrival_rate_diff": rates,
+            "agent_avg_queue_len_diff": avg_qs,
+            "agent_avg_running_req_diff": run_reqs,
+            "agent_avg_kv_cache_diff": kv,
+            "agent_n_mig_diff": n_mig,
+            "agent_vram_diff": vram,
+            "agent_sm_diff": sm,
         }
 
-        ratios = {}
-        epsilon = 1e-6
+        diffs = {}
         for key, data in metrics.items():
             c_val = get_total(data, m.AgentId.CODING)
             r_val = get_total(data, m.AgentId.RAG)
-            ratios[key] = (c_val - r_val) / (c_val + r_val + epsilon)
+            diffs[key] = c_val - r_val
 
-        # 4. Special Case: Latency (Log-Normalized symmetric ratio)
-        max_exp = TRAINING_CONFIG.norm_avg_composite_latency
-        denom = math.log10(1 + max_exp)
+        # 4. Special Case: Latency (Absolute Difference)
         l_c_raw = raw_latent_totals[m.AgentId.CODING]
         l_r_raw = raw_latent_totals[m.AgentId.RAG]
-        l_c_norm = math.log10(1 + l_c_raw) / denom
-        l_r_norm = math.log10(1 + l_r_raw) / denom
-        ratios["agent_avg_composite_latency_ratio"] = (l_c_norm - l_r_norm) / (
-            l_c_norm + l_r_norm + epsilon
-        )
+        diffs["agent_avg_composite_latency_diff"] = l_c_raw - l_r_raw
 
-        return ratios
+        return diffs
 
     def _get_arrival_rate(
         self, agents: Dict[m.AgentId, m.Agent], current_time: float
@@ -276,7 +287,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             arr = [
                 r.arrival_time
                 for r in stats.interval_requests
-                if r.agent_id == agent_id and r.arrival_time >= start_time
+                if r.arrival_time >= start_time
             ]
             current_rate = len(arr) / TRAINING_CONFIG.action_interval
             rates[agent_id] = current_rate
@@ -288,11 +299,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 ) / stats.last_arrival_rate
         return rates, trends
 
-    def _get_normalized_arrival_rate(
+    def _get_arrival_rate_obs(
         self, agents: Dict[m.AgentId, m.Agent], current_time: float
     ) -> Dict[m.AgentId, float]:
         rates, _ = self._get_arrival_rate(agents, current_time)
-        return {k: v / TRAINING_CONFIG.norm_arrival_rate for k, v in rates.items()}
+        return rates
 
     def _get_arrival_rate_trend(
         self, agents: Dict[m.AgentId, m.Agent], current_time: float
@@ -300,14 +311,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
         _, trends = self._get_arrival_rate(agents, current_time)
         return trends
 
-    def _get_normalized_arrival_rate_history(
+    def _get_arrival_rate_history(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, Tuple[float, ...]]:
         return {
-            aid: tuple(
-                r / TRAINING_CONFIG.norm_arrival_rate
-                for r in stats.arrival_rate_history
-            )
+            aid: stats.arrival_rate_history
             for aid, stats in self._agent_stats.items()
             if aid in agents
         }
@@ -315,7 +323,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_avg_queue_length(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Tuple[Dict[m.AgentId, Tuple[float, ...]], Dict[m.AgentId, Tuple[float, ...]]]:
-        """Returns raw (un-normalized) avg queue lengths and trends. Used internally."""
         avg_q: Dict[m.AgentId, Tuple[float, ...]] = {}
         trends: Dict[m.AgentId, Tuple[float, ...]] = {}
         for agent_id in agents.keys():
@@ -329,7 +336,10 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     if TRAINING_CONFIG.action_interval > 0
                     else 0.0
                 )
-                current_avgs.append(current_avg)
+                current_avgs.append(
+                    math.log10(1 + current_avg)
+                    / math.log10(1 + TRAINING_CONFIG.norm_avg_queue_length_exp_max)
+                )
 
                 if stats.last_avg_queue_lengths is None:
                     current_trends.append(0.0)
@@ -337,8 +347,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     trd = (
                         current_avg - stats.last_avg_queue_lengths[i]
                     ) / stats.last_avg_queue_lengths[i]
-                    trd = min(trd, 2.0)  # clamp in [-2, 2]
-                    trd = max(trd, -2.0)
+                    trd = min(trd, TRAINING_CONFIG.queue_length_trend_clamp)  # clamp
+                    trd = max(trd, -TRAINING_CONFIG.queue_length_trend_clamp)
                     current_trends.append(trd)
                 else:
                     current_trends.append(1.0 if current_avg > 0.0 else 0.0)
@@ -352,7 +362,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         avg_run: Dict[m.AgentId, Tuple[float, ...]] = {}
         for agent_id in agents.keys():
             stats = self._agent_stats[agent_id]
-            normalized_avgs = []
+            avgs = []
             for i in range(6):
                 integral = stats.running_requests_integrals[i]
                 raw = (
@@ -360,8 +370,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     if TRAINING_CONFIG.action_interval > 0
                     else 0.0
                 )
-                normalized_avgs.append(raw / TRAINING_CONFIG.norm_avg_running_requests)
-            avg_run[agent_id] = tuple(normalized_avgs)
+                avgs.append(raw / TRAINING_CONFIG.norm_avg_running_requests)
+            avg_run[agent_id] = tuple(avgs)
         return avg_run
 
     def _get_kv_cache_utilization(
@@ -405,15 +415,19 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id, agent in agents.items():
             stats = self._agent_stats[agent_id]
 
-            # Clear and repopulate from the bounded deque (maxlen=100)
+            # Clear and repopulate from the last 100 valid completed requests
             for mig in m.MIGProfile:
                 stats.mig_composite_latencies[mig.idx].clear()
 
             perm_latencies: deque = deque(maxlen=100)
 
-            for req in agent.completed_requests:
+            visited = 0
+            for req in reversed(agent.completed_requests):
+                if visited >= 100:
+                    break
                 if req.serving_engine is None:
                     continue
+                visited += 1
                 mig = req.serving_engine.mig_profile
                 ttft = (req.first_token_time or req.arrival_time) - req.arrival_time
                 tpot = (
@@ -448,24 +462,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
             result[agent_id] = pct_avgs  # type: ignore
         return result, raw_totals
-
-    def _get_normalized_avg_queue_length(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, ...]]:
-        avg_qs, _ = self._get_avg_queue_length(agents)
-        max_expected = TRAINING_CONFIG.norm_avg_queue_length
-        denom = math.log10(1 + max_expected)
-
-        res = {}
-        for aid, components in avg_qs.items():
-            res[aid] = tuple(math.log10(1 + q) / denom for q in components)
-        return res
-
-    def _get_avg_queue_length_trend(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, Tuple[float, ...]]:
-        _, trends = self._get_avg_queue_length(agents)
-        return trends
 
     def _get_n_mig_instance(
         self, agents: Dict[m.AgentId, m.Agent]
@@ -520,7 +516,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._agent_stats[aid].steps_since_split, norm) / norm
+            aid: min(self._agent_stats[aid].action_history["split"]["steps"], norm)
+            / norm
             for aid in agents.keys()
         }
 
@@ -529,7 +526,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._agent_stats[aid].steps_since_merge, norm) / norm
+            aid: min(self._agent_stats[aid].action_history["merge"]["steps"], norm)
+            / norm
             for aid in agents.keys()
         }
 
@@ -538,7 +536,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._agent_stats[aid].steps_since_give, norm) / norm
+            aid: min(self._agent_stats[aid].action_history["give"]["steps"], norm)
+            / norm
             for aid in agents.keys()
         }
 
@@ -547,7 +546,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
     ) -> Dict[m.AgentId, float]:
         norm = TRAINING_CONFIG.norm_last_action
         return {
-            aid: min(self._agent_stats[aid].steps_since_receive, norm) / norm
+            aid: min(self._agent_stats[aid].action_history["receive"]["steps"], norm)
+            / norm
             for aid in agents.keys()
         }
 
@@ -558,13 +558,13 @@ class EnvironmentStateImpl(m.EnvironmentState):
         norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
         res = {}
         for aid in agents.keys():
-            stats = self._agent_stats[aid]
-            # 0 if counter is 0 or normalized counter is 1.0
-            norm_val = min(stats.steps_since_give, norm_action) / norm_action
-            if norm_val == 1.0 or stats.steps_since_give == 0:
+            entry = self._agent_stats[aid].action_history["give"]
+            steps = entry["steps"]
+            norm_val = min(steps, norm_action) / norm_action
+            if norm_val == 1.0 or steps == 0:
                 res[aid] = 0.0
             else:
-                res[aid] = stats.last_give_amount / norm_amount
+                res[aid] = entry["amount"] / norm_amount
         return res
 
     def _get_last_receive_amount(
@@ -574,11 +574,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
         norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
         res = {}
         for aid in agents.keys():
-            stats = self._agent_stats[aid]
-            # 0 if counter is 0 or normalized counter is 1.0
-            norm_val = min(stats.steps_since_receive, norm_action) / norm_action
-            if norm_val == 1.0 or stats.steps_since_receive == 0:
+            entry = self._agent_stats[aid].action_history["receive"]
+            steps = entry["steps"]
+            norm_val = min(steps, norm_action) / norm_action
+            if norm_val == 1.0 or steps == 0:
                 res[aid] = 0.0
             else:
-                res[aid] = stats.last_receive_amount / norm_amount
+                res[aid] = entry["amount"] / norm_amount
         return res
