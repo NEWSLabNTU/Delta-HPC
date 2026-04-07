@@ -4,7 +4,7 @@ from collections import deque
 from enum import Enum, IntEnum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Dict, Tuple, Union, TypedDict, Literal
+from typing import List, Optional, Dict, Tuple, Union, TypedDict, Literal
 
 from sortedcontainers import SortedList
 
@@ -32,10 +32,8 @@ __all__ = [
     "ShutdownMergePayload",
     "ShutdownSplitPayload",
     "BootPayload",
-    "TransferDetails",
     "EnvironmentStateData",
     "EnvironmentState",
-    "Worker",
     "ResourceManagerAction",
     "VramTransferAction",
     "MigAction",
@@ -323,11 +321,6 @@ class SimulationLogger(ABC):
         receiver_id: AgentId,
         amount: int,
         eids: List[str],
-    ) -> None: ...
-
-    @abstractmethod
-    def log_discard_vram_transfer(
-        self, current_time: float, detail: TransferDetails
     ) -> None: ...
 
     @abstractmethod
@@ -628,7 +621,7 @@ class Simulator(ABC):
 class VramTransferAction:
     giver: AgentId
     receiver: AgentId
-    amount: int
+    mig: MIGProfile
 
 
 MIG_4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
@@ -657,18 +650,37 @@ class MigAction:
 class ResourceManagerAction(Enum):
     NO_ACTION = None
 
-    # 1-4: VRAM
-    TRANSFER_10_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, amount=10
+    # 1-10: VRAM precise
+    TRANSFER_7G_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_7G_40GB
     )
-    TRANSFER_10_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, amount=10
+    TRANSFER_4G_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_4G_20GB
     )
-    TRANSFER_20_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, amount=20
+    TRANSFER_3G_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_3G_20GB
     )
-    TRANSFER_20_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, amount=20
+    TRANSFER_2G_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_2G_10GB
+    )
+    TRANSFER_1G_CODING_RAG = VramTransferAction(
+        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_1G_10GB
+    )
+
+    TRANSFER_7G_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_7G_40GB
+    )
+    TRANSFER_4G_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_4G_20GB
+    )
+    TRANSFER_3G_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_3G_20GB
+    )
+    TRANSFER_2G_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_2G_10GB
+    )
+    TRANSFER_1G_RAG_CODING = VramTransferAction(
+        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_1G_10GB
     )
 
     # 5-24: MIG per agent
@@ -760,13 +772,6 @@ class ResourceManagerAction(Enum):
 # --- Management Interfaces ---
 
 
-@dataclass
-class TransferDetails:
-    amount: int
-    giver_id: AgentId
-    receiver_id: AgentId
-
-
 class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]
     predicted_arrival_rate: Dict[AgentId, float]
@@ -800,15 +805,6 @@ class EnvironmentStateData(TypedDict):
     agent_vram_ratio: float
     agent_sm_ratio: float
     progress_ratio: float
-
-
-class Worker(ABC):
-    @abstractmethod
-    def transfer(
-        self,
-        details: TransferDetails,
-        agents: Dict[AgentId, Agent],
-    ) -> Tuple[str, Any] | None: ...
 
 
 type ActionHistoryKey = Literal["split", "merge", "give", "receive"]
@@ -911,3 +907,9 @@ class MIGProfileRule(ABC):
     def get_best_merge(
         self, agent: Agent, desired_vram: Optional[float] = None
     ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...
+
+    @abstractmethod
+    def has_exact_match(self, agent: Agent, mig: MIGProfile) -> bool: ...
+
+    @abstractmethod
+    def get_best_exact_match(self, agent: Agent, mig: MIGProfile) -> LLMEngine | None: ...

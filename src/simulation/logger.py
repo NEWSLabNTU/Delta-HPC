@@ -167,15 +167,6 @@ class SimulationLoggerImpl(m.SimulationLogger):
         )
         self.log(msg)
 
-    def log_discard_vram_transfer(self, current_time: float, detail: m.TransferDetails):
-        if not self.enabled:
-            return
-        msg = (
-            f"[{current_time:.4f}] VRAM_TRANSFER_DROP | "
-            f"GIVER: {detail.giver_id} | RECEIVER: {detail.receiver_id} | AMOUNT: {detail.amount}"
-        )
-        self.log(msg)
-
     def log_engine_boot_complete(
         self,
         current_time: float,

@@ -37,7 +37,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def __init__(self, simulator: m.Simulator) -> None:
         super(MIGResourceEnv, self).__init__()
         self.sim = simulator
-        self.action_space = spaces.Discrete(25)
+        self.action_space = spaces.Discrete(31)
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
@@ -74,23 +74,34 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         mask = self.sim.get_action_mask()
 
         if phase == 1:
-            # Action 0 is NO_ACTION
-            mask[1] = False
-            mask[2] = False
-            mask[3] = False
-            mask[4] = False
+            for act_id, action in enumerate(m.ResourceManagerAction):
+                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
+                    action.value, m.VramTransferAction
+                ):
+                    mask[act_id] = False
 
         # Cooldown (Per-Agent): disable merging for X steps after a split,
         # and disable splitting for X steps after a merge.
         env_state = self.sim.environment_state
         cooldown_steps = TRAINING_CONFIG.split_merge_cooldown_steps
 
+        # Transfer cooldown constraint:
+        # If A transferred a MIG to B recently, NO transfers can happen between A and B
+        transfer_blocked = any(
+            env_state.get_steps_since(agent.agent_id, "give") < cooldown_steps
+            for agent in self.sim.agents.values()
+        )
+
         for act_id, action in enumerate(m.ResourceManagerAction):
             if action == m.ResourceManagerAction.NO_ACTION:
                 continue
             val = action.value
-            if not isinstance(val, m.MigAction):
+
+            if isinstance(val, m.VramTransferAction):
+                if transfer_blocked:
+                    mask[act_id] = False
                 continue
+            assert isinstance(val, m.MigAction)
 
             aid = val.victim
             if val.action == "split":

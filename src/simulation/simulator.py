@@ -7,7 +7,6 @@ from typing import Any, List, Dict, Optional, Tuple, cast
 import src.simulation.models as m
 import src.simulation.utils as utils
 from src.simulation.agent import AgentImpl
-from src.simulation.worker import WorkerImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
 from src.simulation.environment_state import EnvironmentStateImpl
@@ -24,8 +23,8 @@ class SimulatorImpl(m.Simulator):
         self._agents = agents
         self._engines = engines
         self._events: SortedList[m.SimulationEvent] = SortedList()
+        self._events: SortedList[m.SimulationEvent] = SortedList()
         self._current_time: float = 0.0
-        self.worker = WorkerImpl()
         self._logger = SimulationLoggerImpl(enabled=not no_log)
         self._comming_budget_refresh: Optional[m.SimulationEvent] = None
 
@@ -169,112 +168,6 @@ class SimulatorImpl(m.Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_resource_manager_trigger_vram_transfer(
-        self, vram_transfer: m.TransferDetails
-    ):
-        transfer_decision = self.worker.transfer(vram_transfer, self._agents)
-        assert transfer_decision is not None
-        # if not transfer_decision:
-        #     self._logger.log_discard_vram_transfer(self._current_time, vram_transfer)
-        #     return
-        self._environment_state.reconfig_flag = True
-
-        action_type, data = transfer_decision
-        match action_type:
-            case "exact":
-                engine_to_shift = data["engine"]
-                giver = data["giver"]
-                receiver = data["receiver"]
-                amount = data["amount"]
-
-                shutdown_payload: m.ShutdownReallocatePayload = {
-                    "engine_id": engine_to_shift.engine_id,
-                    "purpose": m.OperationPurpose.REALLOCATE,
-                    "receiver_id": receiver.agent_id,
-                }
-                self._logger.log_vram_transfer(
-                    self._current_time,
-                    giver.agent_id,
-                    receiver.agent_id,
-                    amount,
-                    [engine_to_shift.engine_id],
-                )
-                evt = engine_to_shift.trigger_shutdown(
-                    shutdown_payload, self._current_time
-                )
-                if evt:
-                    self._events.add(evt)
-
-            case "merge":
-                engs = data["engines"]
-                new_profile = data["new_profile"]
-                giver = data["giver"]
-                receiver = data["receiver"]
-                amount = data["amount"]
-
-                merge_payload: m.ShutdownMergePayload = {
-                    "engine_id": engs[0].engine_id,
-                    "purpose": m.OperationPurpose.MERGE,
-                    "merge_engine_ids": tuple(e.engine_id for e in engs),
-                    "drained_ids": [],
-                    "new_profile": new_profile,
-                    "agent_id": giver.agent_id,
-                    "gpu": engs[0].gpu,
-                    "receiver_id": receiver.agent_id,
-                }
-                for e in engs:
-                    per_engine_payload: m.ShutdownMergePayload = {
-                        **merge_payload,
-                        "engine_id": e.engine_id,
-                    }
-                    evt = e.trigger_shutdown(per_engine_payload, self._current_time)
-                    if evt:
-                        self._events.add(evt)
-                self._logger.log_mig_merge_trigger(
-                    self._current_time, [e.engine_id for e in engs], engs[0].gpu
-                )
-                self._logger.log_vram_transfer(
-                    self._current_time,
-                    giver.agent_id,
-                    receiver.agent_id,
-                    amount,
-                    [e.engine_id for e in engs],
-                )
-
-            case "split":
-                eng = data["engine"]
-                new_profiles = data["new_profiles"]
-                mig_to_transfer = data["mig_to_transfer"]
-                giver = data["giver"]
-                receiver = data["receiver"]
-                amount = data["amount"]
-
-                split_payload: m.ShutdownSplitPayload = {
-                    "engine_id": eng.engine_id,
-                    "purpose": m.OperationPurpose.SPLIT,
-                    "new_profiles": new_profiles,
-                    "agent_id": giver.agent_id,
-                    "gpu": eng.gpu,
-                    "receiver_id": receiver.agent_id,
-                    "received_profile": mig_to_transfer,
-                }
-                evt = eng.trigger_shutdown(split_payload, self._current_time)
-                if evt:
-                    self._events.add(evt)
-                self._logger.log_mig_split_trigger(
-                    self._current_time, eng.engine_id, eng.gpu
-                )
-                self._logger.log_vram_transfer(
-                    self._current_time,
-                    giver.agent_id,
-                    receiver.agent_id,
-                    amount,
-                    [eng.engine_id],
-                )
-
-            case _:
-                raise ValueError(f"Unknown action {action_type}")
-
     def _handle_resource_manager_trigger_mig_decision(
         self, mig_decision: Tuple[str, Any]
     ):
@@ -327,40 +220,60 @@ class SimulatorImpl(m.Simulator):
             case _:
                 raise ValueError(f"Unknown action {action_type}")
 
+    def _handle_resource_manager_trigger_vram_transfer(
+        self, v_action: m.VramTransferAction
+    ) -> None:
+        giver = self._agents[v_action.giver]
+        receiver = self._agents[v_action.receiver]
+        amount = v_action.mig.size
+
+        engine_to_shift = utils.MIG_RULES.get_best_exact_match(giver, v_action.mig)
+        assert engine_to_shift is not None
+
+        self._environment_state.reconfig_flag = True
+
+        shutdown_payload: m.ShutdownReallocatePayload = {
+            "engine_id": engine_to_shift.engine_id,
+            "purpose": m.OperationPurpose.REALLOCATE,
+            "receiver_id": receiver.agent_id,
+        }
+        self._logger.log_vram_transfer(
+            self._current_time,
+            giver.agent_id,
+            receiver.agent_id,
+            amount,
+            [engine_to_shift.engine_id],
+        )
+        evt = engine_to_shift.trigger_shutdown(
+            shutdown_payload, self._current_time
+        )
+        if evt:
+            self._events.add(evt)
+
+        # Track give/receive
+        self._environment_state.set_last_action(
+            v_action.giver, "give", v_action.mig.size
+        )
+        self._environment_state.set_last_action(
+            v_action.receiver, "receive", v_action.mig.size
+        )
+
     def _predict_action_cost(self, action: m.ResourceManagerAction) -> float:
         """Predict the reconfiguration cost (drain + boot time) for an action."""
         val = action.value
         cost = 0.0
 
         if isinstance(val, m.VramTransferAction):
-            vram_transfer = m.TransferDetails(
-                amount=val.amount,
-                giver_id=val.giver,
-                receiver_id=val.receiver,
-            )
-            transfer_decision = self.worker.transfer(vram_transfer, self._agents)
-            if transfer_decision:
-                atype, data = transfer_decision
-                match atype:
-                    case "exact":
-                        affected = [data["engine"]]
-                        boot_cost = affected[0]._restart_time
-                    case "merge":
-                        affected = data["engines"]
-                        boot_cost = utils.SIM_CONFIG.get_restart_time(
-                            data["receiver"].agent_id, data["new_profile"]
-                        )
-                    case "split":
-                        affected = [data["engine"]]
-                        boot_cost = utils.SIM_CONFIG.get_restart_time(
-                            data["receiver"].agent_id, data["mig_to_transfer"]
-                        )
-                    case _:
-                        raise ValueError(f"Unknown transfer action type: {atype}")
-                drain_cost = max(
-                    (e.predict_drain_time() for e in affected), default=0.0
+            giver = self._agents[val.giver]
+            engine_to_shift = utils.MIG_RULES.get_best_exact_match(giver, val.mig)
+            if engine_to_shift is not None:
+                boot_cost = utils.SIM_CONFIG.get_restart_time(
+                    val.receiver, engine_to_shift.mig_profile
                 )
+                drain_cost = engine_to_shift.predict_drain_time()
                 cost = drain_cost + boot_cost
+            else:
+                cost = 0.0
 
         elif isinstance(val, m.MigAction):
             victim = self._agents[val.victim]
@@ -445,28 +358,12 @@ class SimulatorImpl(m.Simulator):
             case m.ResourceManagerAction.NO_ACTION:
                 pass
 
-            case (
-                m.ResourceManagerAction.TRANSFER_10_CODING_RAG
-                | m.ResourceManagerAction.TRANSFER_10_RAG_CODING
-                | m.ResourceManagerAction.TRANSFER_20_CODING_RAG
-                | m.ResourceManagerAction.TRANSFER_20_RAG_CODING
-            ):
-                v_action = action.value
-                vram_transfer = m.TransferDetails(
-                    amount=v_action.amount,
-                    giver_id=v_action.giver,
-                    receiver_id=v_action.receiver,
-                )
-                self._handle_resource_manager_trigger_vram_transfer(vram_transfer)
-                # Track give/receive
-                self._environment_state.set_last_action(
-                    v_action.giver, "give", v_action.amount
-                )
-                self._environment_state.set_last_action(
-                    v_action.receiver, "receive", v_action.amount
-                )
+            case action if isinstance(action.value, m.VramTransferAction):
+                self._handle_resource_manager_trigger_vram_transfer(action.value)
 
-            case action if action.value.action == "split":
+            case action if (
+                isinstance(action.value, m.MigAction) and action.value.action == "split"
+            ):
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
@@ -487,7 +384,9 @@ class SimulatorImpl(m.Simulator):
                 )
                 self._handle_resource_manager_trigger_mig_decision(mig_decision)
 
-            case action if action.value.action == "merge":
+            case action if (
+                isinstance(action.value, m.MigAction) and action.value.action == "merge"
+            ):
                 m_action = action.value
                 agent_id = m_action.victim
                 agent = self._agents[agent_id]
@@ -865,11 +764,8 @@ class SimulatorImpl(m.Simulator):
             val = action.value
             if isinstance(val, m.VramTransferAction):
                 giver = self._agents[val.giver]
-                active_vram: Dict[int, int] = defaultdict(int)
-                for e in giver.engines:
-                    if e.status == m.EngineStatus.ACTIVE and not e.is_permanent:
-                        active_vram[e.gpu] += e.mig_profile.vram
-                mask[act_id] = any(v >= val.amount for v in active_vram.values())
+                has_exact_match = utils.MIG_RULES.has_exact_match(giver, val.mig)
+                mask[act_id] = has_exact_match
             else:  # MIGAction
                 victim = self._agents[val.victim]
                 match val.action:

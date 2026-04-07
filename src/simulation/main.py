@@ -66,9 +66,6 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
-        # if TRAINING_CONFIG.phase == 1:
-        #     for i in range(1, 5):
-        #         mask[i] = False
 
         valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
