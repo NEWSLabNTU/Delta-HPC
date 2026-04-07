@@ -8,7 +8,8 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     BaseCallback,
 )
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+
+# from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 import torch
 import numpy.typing as npt
@@ -183,15 +184,15 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data["current_budget"]))
         obs_list.append(float(state_data["downtime_ratio"]))
 
-        # Agent Differences (CODING - RAG)
-        obs_list.append(float(state_data["agent_arrival_rate_diff"]))
-        obs_list.append(float(state_data["agent_avg_queue_len_diff"]))
-        obs_list.append(float(state_data["agent_avg_running_req_diff"]))
-        obs_list.append(float(state_data["agent_avg_kv_cache_diff"]))
-        obs_list.append(float(state_data["agent_avg_composite_latency_diff"]))
-        obs_list.append(float(state_data["agent_n_mig_diff"]))
-        obs_list.append(float(state_data["agent_vram_diff"]))
-        obs_list.append(float(state_data["agent_sm_diff"]))
+        # Agent Ratios (CODING - RAG)
+        obs_list.append(float(state_data.get("agent_arrival_rate_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_queue_len_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_running_req_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_kv_cache_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_composite_latency_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_n_mig_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_vram_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_sm_ratio", 0.0)))
 
         return np.array(obs_list, dtype=np.float32)
 
@@ -216,7 +217,10 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
         state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines, self.current_step + 1
+            self.sim.current_time,
+            self.sim.agents,
+            self.sim.engines,
+            self.current_step + 1,
         )
         self._logger.log_step(
             self.current_step,
@@ -323,8 +327,7 @@ def train() -> None:
     # 1. Initialize the Environment
     raw_env = MIGResourceEnv(sim)
     env = Monitor(raw_env)
-    env = DummyVecEnv([lambda: env])
-    env = VecNormalize(env, norm_obs=True, norm_reward=True)
+    # env = DummyVecEnv([lambda: env])
 
     policy_kwargs = dict(
         activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO
@@ -365,7 +368,7 @@ def train() -> None:
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
-        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}", save_vecnormalize=True
+        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
     callbacks = CallbackList([checkpoint_callback, log_cleanup_callback])
@@ -376,7 +379,6 @@ def train() -> None:
 
     # 5. Save the final model
     model.save(f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager")
-    env.save(f"./ckpts/{TIMESTAMP}/env_phase1.pkl")
     print("Training Complete. Model Saved.")
 
 

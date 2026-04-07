@@ -794,15 +794,15 @@ class EnvironmentStateData(TypedDict):
     last_receive: Dict[AgentId, float]
     last_give_amount: Dict[AgentId, float]
     last_receive_amount: Dict[AgentId, float]
-    # Agent Differences (CODING - RAG)
-    agent_arrival_rate_diff: float
-    agent_avg_queue_len_diff: float
-    agent_avg_running_req_diff: float
-    agent_avg_kv_cache_diff: float
-    agent_avg_composite_latency_diff: float
-    agent_n_mig_diff: float
-    agent_vram_diff: float
-    agent_sm_diff: float
+    # Agent Ratios (CODING / RAG)
+    agent_arrival_rate_ratio: float
+    agent_avg_queue_len_ratio: float
+    agent_avg_running_req_ratio: float
+    agent_avg_kv_cache_ratio: float
+    agent_avg_composite_latency_ratio: float
+    agent_n_mig_ratio: float
+    agent_vram_ratio: float
+    agent_sm_ratio: float
     progress_ratio: float
 
 

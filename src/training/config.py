@@ -27,9 +27,10 @@ class TrainingConfig:
     @property
     def arrival_rate_history_length(self) -> int:
         return self._data["arrival_rate_history_length"]
+
     @property
-    def norm_avg_queue_length_exp_max(self) -> float:
-        return float(self._data["normalization"]["avg_queue_length_exp_max"])
+    def norm_avg_queue_length(self) -> float:
+        return float(self._data["normalization"]["avg_queue_length"])
 
     @property
     def default_waiting_qj(self) -> float:
@@ -38,6 +39,14 @@ class TrainingConfig:
     @property
     def norm_avg_running_requests(self) -> float:
         return float(self._data["normalization"]["avg_running_requests"])
+
+    @property
+    def norm_arrival_rate(self) -> float:
+        return float(self._data["normalization"]["arrival_rate"])
+
+    @property
+    def norm_avg_composite_latency(self) -> float:
+        return float(self._data["normalization"]["avg_composite_latency"])
 
     @property
     def norm_current_budget(self) -> float:
@@ -166,6 +175,10 @@ class TrainingConfig:
     @property
     def gamma(self) -> float:
         return self._data["reward"]["gamma"]
+
+    @property
+    def scaling(self) -> float:
+        return self._data["reward"]["scaling"]
 
     @property
     def clip_threshold(self) -> float:
