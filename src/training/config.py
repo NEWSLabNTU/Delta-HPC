@@ -113,8 +113,20 @@ class TrainingConfig:
         return float(self._data["PPO"]["clip_range"])
 
     @property
+    def rl_enable_ent_coef_schd(self) -> bool:
+        return bool(self._data["PPO"]["ent_coef_schd"])
+
+    @property
     def rl_ent_coef(self) -> float:
         return float(self._data["PPO"]["ent_coef"])
+
+    @property
+    def rl_min_ent_coef(self) -> float:
+        return float(self._data["PPO"]["min_ent_coef"])
+
+    @property
+    def rl_max_ent_coef(self) -> float:
+        return float(self._data["PPO"]["max_ent_coef"])
 
     @property
     def rl_net_arch_pi(self) -> List[int]:

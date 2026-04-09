@@ -27,7 +27,10 @@ training:
     gamma: 0.995
     gae_lambda: 0.90
     clip_range: 0.2
+    ent_coef_schd: true
     ent_coef: 0.02
+    min_ent_coef: 0.01
+    max_ent_coef: 0.05
     net_arch:
       pi: [128, 128]
       vf: [512, 512]
@@ -70,4 +73,4 @@ training:
     gamma: 2.0 # reconfiguration penalty
     scaling: 0.1
     clipping: -30.0
-    dynamic_penalty: true
+    dynamic_penalty: false

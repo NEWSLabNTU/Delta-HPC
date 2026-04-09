@@ -4,15 +4,16 @@ from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import (
     CheckpointCallback,
     CallbackList,
     BaseCallback,
 )
-
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 import torch
 import numpy.typing as npt
 from typing import Dict, Any, List, Tuple, Optional, cast
@@ -54,6 +55,40 @@ class SaveVecNormalizeCallback(BaseCallback):
                 )
                 vec_env.save(str(path))
         return True
+
+
+class EntCoefSchedulerCallback(BaseCallback):
+    def __init__(
+        self, initial_ent_coef: float, final_ent_coef: float, verbose: int = 0
+    ):
+        super().__init__(verbose)
+        self.initial_ent_coef = initial_ent_coef
+        self.final_ent_coef = final_ent_coef
+
+    def _on_step(self) -> bool:
+        # Linear decay based on training progress
+        progress = self.num_timesteps / self.model._total_timesteps  # type: ignore
+        new_ent_coef = self.initial_ent_coef + progress * (
+            self.final_ent_coef - self.initial_ent_coef
+        )
+
+        assert isinstance(self.model, OnPolicyAlgorithm)
+        self.model.ent_coef = new_ent_coef
+
+        self.logger.record("train/ent_coef", new_ent_coef)
+        return True
+
+
+class LogCleanupCallback(BaseCallback):
+    def __init__(self, env_logger: TrainingLogger, verbose: int = 0):
+        super().__init__(verbose)
+        self._env_logger = env_logger
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_training_end(self) -> None:
+        self._env_logger.close()
 
 
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
@@ -307,18 +342,6 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         return self._get_obs(state_data), {}
 
 
-class LogCleanupCallback(BaseCallback):
-    def __init__(self, env_logger: TrainingLogger, verbose: int = 0):
-        super().__init__(verbose)
-        self._env_logger = env_logger
-
-    def _on_step(self) -> bool:
-        return True
-
-    def _on_training_end(self) -> None:
-        self._env_logger.close()
-
-
 def train(ckpt: Optional[Path] = None) -> None:
     # 1. Initialize Simulator similar to main.py
     agents: Dict[m.AgentId, m.Agent] = {}
@@ -428,7 +451,9 @@ def train(ckpt: Optional[Path] = None) -> None:
             gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
             clip_range=TRAINING_CONFIG.rl_clip_range,
             clip_range_vf=TRAINING_CONFIG.rl_clip_range,
-            ent_coef=TRAINING_CONFIG.rl_ent_coef,
+            ent_coef=TRAINING_CONFIG.rl_ent_coef
+            if not TRAINING_CONFIG.rl_enable_ent_coef_schd
+            else TRAINING_CONFIG.rl_max_ent_coef,
             device="cuda",
             tensorboard_log=f"./tboard/{TIMESTAMP}",
         )
@@ -442,6 +467,13 @@ def train(ckpt: Optional[Path] = None) -> None:
     if TRAINING_CONFIG.sb3_norm:
         cb_list.append(
             SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}")
+        )
+    if TRAINING_CONFIG.rl_enable_ent_coef_schd:
+        cb_list.append(
+            EntCoefSchedulerCallback(
+                initial_ent_coef=TRAINING_CONFIG.rl_max_ent_coef,
+                final_ent_coef=TRAINING_CONFIG.rl_min_ent_coef,
+            )
         )
     callbacks = CallbackList(cb_list)
 
