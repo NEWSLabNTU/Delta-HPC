@@ -89,7 +89,7 @@ def main():
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")
 
-        reward = compute_reward(state_data["requests"], action, sim.current_time)
+        reward = compute_reward(state_data["requests"], action, sim.current_time, 0.25)
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively

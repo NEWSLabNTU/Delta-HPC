@@ -21,6 +21,10 @@ class TrainingConfig:
         return self._data["phase"]
 
     @property
+    def sb3_norm(self) -> bool:
+        return self._data.get("sb3_norm", False)
+
+    @property
     def queue_length_trend_clamp(self) -> float:
         return float(self._data["normalization"]["queue_length_trend_clamp"])
 
@@ -183,6 +187,14 @@ class TrainingConfig:
     @property
     def clip_threshold(self) -> float:
         return self._data["reward"]["clipping"]
+
+    @property
+    def dynamic_penalty(self) -> bool:
+        return self._data["reward"].get("dynamic_penalty", False)
+
+    @property
+    def total_timesteps(self) -> int:
+        return self._data["total_timesteps"]
 
 
 # Automatically load from default path

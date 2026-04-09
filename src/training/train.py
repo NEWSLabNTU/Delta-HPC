@@ -1,4 +1,6 @@
 import time
+import argparse
+from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -25,6 +27,35 @@ from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
 
+
+class SaveVecNormalizeCallback(BaseCallback):
+    def __init__(
+        self,
+        save_freq: int,
+        save_path: str,
+        name_prefix: str = "rl_model",
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+
+    def _init_callback(self) -> None:
+        Path(self.save_path).mkdir(parents=True, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            vec_env = self.model.get_vec_normalize_env()
+            if vec_env is not None:
+                path = (
+                    Path(self.save_path)
+                    / f"{self.name_prefix}_{self.num_timesteps}_steps_vecnormalize.pkl"
+                )
+                vec_env.save(str(path))
+        return True
+
+
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
 
 
@@ -38,6 +69,8 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         super(MIGResourceEnv, self).__init__()
         self.sim = simulator
         self.action_space = spaces.Discrete(31)
+
+        self.global_step = 0
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
@@ -185,10 +218,14 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
-        self, action: int, reqs: Dict[m.AgentId, List[m.Request]], current_time: float
+        self,
+        action: int,
+        reqs: Dict[m.AgentId, List[m.Request]],
+        current_time: float,
+        progress_ratio: float,
     ) -> float:
         enum_action = list(m.ResourceManagerAction)[action]
-        return compute_reward(reqs, enum_action, current_time)
+        return compute_reward(reqs, enum_action, current_time, progress_ratio)
 
     def _is_action_valid(self, action: int) -> bool:
         return self._current_action_mask[action]
@@ -219,9 +256,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         )
 
         # 3. Compute new state and reward
+        self.global_step += 1
+        progress_ratio = self.global_step / TRAINING_CONFIG.total_timesteps
+
         obs = self._get_obs(state_data)
         reward = self._calculate_reward(
-            action, state_data["requests"], self.sim.current_time
+            action, state_data["requests"], self.sim.current_time, progress_ratio
         )
 
         self.current_step += 1
@@ -279,7 +319,7 @@ class LogCleanupCallback(BaseCallback):
         self._env_logger.close()
 
 
-def train() -> None:
+def train(ckpt: Optional[Path] = None) -> None:
     # 1. Initialize Simulator similar to main.py
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
@@ -314,9 +354,26 @@ def train() -> None:
 
     # 1. Initialize the Environment
     raw_env = MIGResourceEnv(sim)
-    env_0: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
-    env_1 = DummyVecEnv([lambda: env_0])
-    env = VecNormalize(env_1, norm_obs=True, norm_reward=True)
+    monitored_env: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
+
+    if TRAINING_CONFIG.sb3_norm:
+        vec_env = DummyVecEnv([lambda: monitored_env])
+        if ckpt is not None:
+            norm_path = ckpt.with_name(f"{ckpt.stem}_vecnormalize.pkl")
+            if norm_path.exists():
+                print(f"Loading VecNormalize stats from {norm_path}")
+                env = VecNormalize.load(str(norm_path), vec_env)
+                env.training = True
+                env.norm_reward = True
+            else:
+                print(
+                    f"Warning: {norm_path} not found, initializing fresh VecNormalize"
+                )
+                env = VecNormalize(vec_env, norm_obs=True, norm_reward=True)
+        else:
+            env = VecNormalize(vec_env, norm_obs=True, norm_reward=True)
+    else:
+        env = monitored_env
 
     policy_kwargs = dict(
         activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO
@@ -335,41 +392,86 @@ def train() -> None:
 
     def lr_schedule(progress_remaining: float) -> float:
         """Linearly decays from lr_max (start) to lr_min (end)."""
-        return lr_min + (lr_max - lr_min) * progress_remaining
+        if TRAINING_CONFIG.dynamic_penalty:
+            if progress_remaining > 0.75:
+                return lr_max
+            return lr_min + (lr_max - lr_min) * (progress_remaining / 0.75)
+        else:
+            return lr_min + (lr_max - lr_min) * progress_remaining
 
-    model: MaskablePPO = MaskablePPO(
-        "MlpPolicy",
-        env,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        learning_rate=lr_schedule,
-        n_steps=TRAINING_CONFIG.rl_n_steps,
-        batch_size=TRAINING_CONFIG.rl_batch_size,
-        n_epochs=TRAINING_CONFIG.rl_n_epochs,
-        gamma=TRAINING_CONFIG.rl_gamma,
-        gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
-        clip_range=TRAINING_CONFIG.rl_clip_range,
-        clip_range_vf=TRAINING_CONFIG.rl_clip_range,
-        ent_coef=TRAINING_CONFIG.rl_ent_coef,
-        device="cuda",
-        tensorboard_log=f"./tboard/{TIMESTAMP}",
-    )
+    model: MaskablePPO
+    if ckpt is not None:
+        print(f"Loading model from checkpoint: {ckpt}")
+        custom_objects: Dict[str, Any] = {
+            "learning_rate": lr_schedule,
+            "tensorboard_log": f"./tboard/{TIMESTAMP}",
+        }
+        model = MaskablePPO.load(
+            ckpt,
+            env=env,
+            device="cuda",
+            custom_objects=custom_objects,
+        )
+        # Ensure tensorboard logger is properly setup for the new run
+        model.tensorboard_log = f"./tboard/{TIMESTAMP}"
+    else:
+        model = MaskablePPO(
+            "MlpPolicy",
+            env,
+            policy_kwargs=policy_kwargs,
+            verbose=1,
+            learning_rate=lr_schedule,
+            n_steps=TRAINING_CONFIG.rl_n_steps,
+            batch_size=TRAINING_CONFIG.rl_batch_size,
+            n_epochs=TRAINING_CONFIG.rl_n_epochs,
+            gamma=TRAINING_CONFIG.rl_gamma,
+            gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
+            clip_range=TRAINING_CONFIG.rl_clip_range,
+            clip_range_vf=TRAINING_CONFIG.rl_clip_range,
+            ent_coef=TRAINING_CONFIG.rl_ent_coef,
+            device="cuda",
+            tensorboard_log=f"./tboard/{TIMESTAMP}",
+        )
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
         save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
-    callbacks = CallbackList([checkpoint_callback, log_cleanup_callback])
+    cb_list: List[BaseCallback] = [checkpoint_callback, log_cleanup_callback]
+    if TRAINING_CONFIG.sb3_norm:
+        cb_list.append(
+            SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}")
+        )
+    callbacks = CallbackList(cb_list)
 
     # 4. Start Training
     print("Training Setup Complete")
-    model.learn(total_timesteps=204800, callback=callbacks, progress_bar=True)  # type: ignore
+    model.learn(  # type: ignore
+        total_timesteps=TRAINING_CONFIG.total_timesteps,
+        callback=callbacks,
+        progress_bar=True,
+    )
 
     # 5. Save the final model
     model.save(f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager")
+    if TRAINING_CONFIG.sb3_norm:
+        vec_env = model.get_vec_normalize_env()
+        if vec_env is not None:
+            vec_env.save(
+                f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager_vecnormalize.pkl"
+            )
     print("Training Complete. Model Saved.")
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train MIG Resource Manager")
+    parser.add_argument(
+        "--ckpt",
+        type=Path,
+        default=None,
+        help="Path to checkpoint to continue training",
+    )
+    args = parser.parse_args()
+
+    train(ckpt=args.ckpt)

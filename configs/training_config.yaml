@@ -1,6 +1,8 @@
 training:
   phase: 1
+  sb3_norm: true
   action-interval: 120.0 # seconds
+  total_timesteps: 1024000
   arrival_rate_history_length: 5
   normalization:
     current_budget: 150.0
@@ -25,7 +27,7 @@ training:
     gamma: 0.995
     gae_lambda: 0.90
     clip_range: 0.2
-    ent_coef: 0.01
+    ent_coef: 0.02
     net_arch:
       pi: [128, 128]
       vf: [512, 512]
@@ -35,7 +37,7 @@ training:
     busy:
       duration: [2400.0, 3600.0]
       rate:
-        CodingAgent: [4.0, 5.0]
+        CodingAgent: [5.0, 6.0]
         RAGAgent: [6.0, 7.0]
     idle:
       duration: [2400.0, 3600.0]
@@ -55,7 +57,7 @@ training:
     # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
     # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
     Q: # quality-incentive factor
-      7g.40gb: 7.0
+      7g.40gb: 10.0
       4g.20gb: 3.0
       3g.20gb: 3.0
       2g.10gb: 1.0
@@ -65,6 +67,7 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 3.5 # reconfiguration penalty
+    gamma: 2.0 # reconfiguration penalty
     scaling: 0.1
     clipping: -30.0
+    dynamic_penalty: true

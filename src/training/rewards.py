@@ -8,12 +8,20 @@ def compute_reward(
     requests: Dict[m.AgentId, List[m.Request]],
     action: m.ResourceManagerAction,
     current_time: float,
+    progress_ratio: float,
     epsilon: float = 1e-9,
 ) -> float:
     """
     Computes the RL agent's reward based on latency and reconfiguration cost.
     """
-    gamma = TRAINING_CONFIG.gamma
+    gamma_max = TRAINING_CONFIG.gamma
+    if TRAINING_CONFIG.dynamic_penalty:
+        if progress_ratio < 0.25:
+            gamma = 0.0
+        else:
+            gamma = gamma_max * (progress_ratio - 0.25) / 0.75
+    else:
+        gamma = gamma_max
     w_t = TRAINING_CONFIG.w("ttft")
     w_p = TRAINING_CONFIG.w("tpot")
 
