@@ -175,3 +175,28 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
                 ),
             )
         return None
+
+    def has_exact_match(self, agent: m.Agent, mig: m.MIGProfile) -> bool:
+        return any(
+            e.status == m.EngineStatus.ACTIVE
+            and e.mig_profile == mig
+            and not e.is_permanent
+            for e in agent.engines
+        )
+
+    def get_best_exact_match(
+        self, agent: m.Agent, mig: m.MIGProfile
+    ) -> m.LLMEngine | None:
+        exact_matches = [
+            e
+            for e in agent.engines
+            if e.status == m.EngineStatus.ACTIVE
+            and e.mig_profile == mig
+            and not e.is_permanent
+        ]
+        if exact_matches:
+            return min(
+                exact_matches,
+                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+            )
+        return None

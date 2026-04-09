@@ -66,9 +66,6 @@ def main():
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
-        # if TRAINING_CONFIG.phase == 1:
-        #     for i in range(1, 5):
-        #         mask[i] = False
 
         valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
         action = random.choice(valid_actions)
@@ -86,13 +83,13 @@ def main():
 
         # 2. Print State
         state_data = sim.environment_state.get_state(
-            sim.current_time, sim.agents, sim.engines
+            sim.current_time, sim.agents, sim.engines, step + 1
         )
         avg_q = state_data["avg_queue_length"]
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")
 
-        reward = compute_reward(state_data["requests"], action, sim.current_time)
+        reward = compute_reward(state_data["requests"], action, sim.current_time, 0.25)
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively

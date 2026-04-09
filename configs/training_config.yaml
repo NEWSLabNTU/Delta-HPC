@@ -1,6 +1,8 @@
 training:
   phase: 1
+  sb3_norm: true
   action-interval: 120.0 # seconds
+  total_timesteps: 1024000
   arrival_rate_history_length: 5
   normalization:
     current_budget: 150.0
@@ -9,8 +11,10 @@ training:
     mig_geometry: 7.0
     last_action: 5.0
     vram_transfer_amount: 20.0
-    avg_queue_length_exp_max: 100.0
-    avg_running_requests: 10.0
+    arrival_rate: 10.0
+    avg_queue_length: 10.0
+    avg_running_requests: 100.0
+    avg_composite_latency: 5.0
     queue_length_trend_clamp: 3.0
     default_waiting_qj: 10.0
   PPO:
@@ -23,17 +27,17 @@ training:
     gamma: 0.995
     gae_lambda: 0.90
     clip_range: 0.2
-    ent_coef: 0.01
+    ent_coef: 0.02
     net_arch:
       pi: [128, 128]
-      vf: [2048, 1024, 512]
+      vf: [512, 512]
   action_mask:
     split_merge_cooldown_steps: 5
   patterns:
     busy:
       duration: [2400.0, 3600.0]
       rate:
-        CodingAgent: [4.0, 5.0]
+        CodingAgent: [5.0, 6.0]
         RAGAgent: [6.0, 7.0]
     idle:
       duration: [2400.0, 3600.0]
@@ -53,7 +57,7 @@ training:
     # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
     # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
     Q: # quality-incentive factor
-      7g.40gb: 7.0
+      7g.40gb: 10.0
       4g.20gb: 3.0
       3g.20gb: 3.0
       2g.10gb: 1.0
@@ -63,5 +67,7 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 3.5 # reconfiguration penalty
-    clipping: -300.0
+    gamma: 2.0 # reconfiguration penalty
+    scaling: 0.1
+    clipping: -30.0
+    dynamic_penalty: true

@@ -1,4 +1,6 @@
 import time
+import argparse
+from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -8,6 +10,7 @@ from stable_baselines3.common.callbacks import (
     CallbackList,
     BaseCallback,
 )
+
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 import torch
@@ -24,6 +27,35 @@ from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
 
+
+class SaveVecNormalizeCallback(BaseCallback):
+    def __init__(
+        self,
+        save_freq: int,
+        save_path: str,
+        name_prefix: str = "rl_model",
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+        self.name_prefix = name_prefix
+
+    def _init_callback(self) -> None:
+        Path(self.save_path).mkdir(parents=True, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            vec_env = self.model.get_vec_normalize_env()
+            if vec_env is not None:
+                path = (
+                    Path(self.save_path)
+                    / f"{self.name_prefix}_{self.num_timesteps}_steps_vecnormalize.pkl"
+                )
+                vec_env.save(str(path))
+        return True
+
+
 TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
 
 
@@ -36,7 +68,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def __init__(self, simulator: m.Simulator) -> None:
         super(MIGResourceEnv, self).__init__()
         self.sim = simulator
-        self.action_space = spaces.Discrete(25)
+        self.action_space = spaces.Discrete(31)
+
+        self.global_step = 0
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
@@ -73,23 +107,34 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         mask = self.sim.get_action_mask()
 
         if phase == 1:
-            # Action 0 is NO_ACTION
-            mask[1] = False
-            mask[2] = False
-            mask[3] = False
-            mask[4] = False
+            for act_id, action in enumerate(m.ResourceManagerAction):
+                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
+                    action.value, m.VramTransferAction
+                ):
+                    mask[act_id] = False
 
         # Cooldown (Per-Agent): disable merging for X steps after a split,
         # and disable splitting for X steps after a merge.
         env_state = self.sim.environment_state
         cooldown_steps = TRAINING_CONFIG.split_merge_cooldown_steps
 
+        # Transfer cooldown constraint:
+        # If A transferred a MIG to B recently, NO transfers can happen between A and B
+        transfer_blocked = any(
+            env_state.get_steps_since(agent.agent_id, "give") < cooldown_steps
+            for agent in self.sim.agents.values()
+        )
+
         for act_id, action in enumerate(m.ResourceManagerAction):
             if action == m.ResourceManagerAction.NO_ACTION:
                 continue
             val = action.value
-            if not isinstance(val, m.MigAction):
+
+            if isinstance(val, m.VramTransferAction):
+                if transfer_blocked:
+                    mask[act_id] = False
                 continue
+            assert isinstance(val, m.MigAction)
 
             aid = val.victim
             if val.action == "split":
@@ -122,45 +167,22 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
                 obs_list.append(float(data[aid]))
 
             # history_len size array
-            history = cast(
-                Dict[m.AgentId, Tuple[float, ...]], state_data["arrival_rate_history"]
-            )
-            obs_list.extend(history[aid])
+            obs_list.extend(state_data["arrival_rate_history"][aid])
 
             # 6 KV Cache Utilization (1g, 2g, 3g, 4g, 7g, permanent)
-            kv_util = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["kv_cache_utilization"],
-            )
-            obs_list.extend(kv_util[aid])
+            obs_list.extend(state_data["kv_cache_utilization"][aid])
 
             # 6 Avg Composite Latency (1g, 2g, 3g, 4g, 7g, permanent) — as percentages
-            latency = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_composite_latency"],
-            )
-            obs_list.extend(latency[aid])
+            obs_list.extend(state_data["avg_composite_latency"][aid])
 
             # 6 Avg Queue Length (1g, 2g, 3g, 4g, 7g, permanent)
-            q_len = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_queue_length"],
-            )
-            obs_list.extend(q_len[aid])
+            obs_list.extend(state_data["avg_queue_length"][aid])
 
             # 6 Avg Queue Length Trend (1g, 2g, 3g, 4g, 7g, permanent)
-            q_trend = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_queue_length_trend"],
-            )
-            obs_list.extend(q_trend[aid])
+            obs_list.extend(state_data["avg_queue_length_trend"][aid])
 
             # 6 Avg Running Requests (1g, 2g, 3g, 4g, 7g, permanent)
-            run_req = cast(
-                Dict[m.AgentId, Tuple[float, float, float, float, float, float]],
-                state_data["avg_running_requests"],
-            )
-            obs_list.extend(run_req[aid])
+            obs_list.extend(state_data["avg_running_requests"][aid])
 
             # 1 MIG Instance count
             n_mig = state_data["n_mig_instance"][aid]
@@ -183,23 +205,27 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data["current_budget"]))
         obs_list.append(float(state_data["downtime_ratio"]))
 
-        # Agent Differences (CODING - RAG)
-        obs_list.append(float(state_data["agent_arrival_rate_diff"]))
-        obs_list.append(float(state_data["agent_avg_queue_len_diff"]))
-        obs_list.append(float(state_data["agent_avg_running_req_diff"]))
-        obs_list.append(float(state_data["agent_avg_kv_cache_diff"]))
-        obs_list.append(float(state_data["agent_avg_composite_latency_diff"]))
-        obs_list.append(float(state_data["agent_n_mig_diff"]))
-        obs_list.append(float(state_data["agent_vram_diff"]))
-        obs_list.append(float(state_data["agent_sm_diff"]))
+        # Agent Ratios (CODING - RAG)
+        obs_list.append(float(state_data.get("agent_arrival_rate_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_queue_len_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_running_req_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_kv_cache_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_avg_composite_latency_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_n_mig_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_vram_ratio", 0.0)))
+        obs_list.append(float(state_data.get("agent_sm_ratio", 0.0)))
 
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
-        self, action: int, reqs: Dict[m.AgentId, List[m.Request]], current_time: float
+        self,
+        action: int,
+        reqs: Dict[m.AgentId, List[m.Request]],
+        current_time: float,
+        progress_ratio: float,
     ) -> float:
         enum_action = list(m.ResourceManagerAction)[action]
-        return compute_reward(reqs, enum_action, current_time)
+        return compute_reward(reqs, enum_action, current_time, progress_ratio)
 
     def _is_action_valid(self, action: int) -> bool:
         return self._current_action_mask[action]
@@ -216,7 +242,10 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
         state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines, self.current_step + 1
+            self.sim.current_time,
+            self.sim.agents,
+            self.sim.engines,
+            self.current_step + 1,
         )
         self._logger.log_step(
             self.current_step,
@@ -227,9 +256,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         )
 
         # 3. Compute new state and reward
+        self.global_step += 1
+        progress_ratio = self.global_step / TRAINING_CONFIG.total_timesteps
+
         obs = self._get_obs(state_data)
         reward = self._calculate_reward(
-            action, state_data["requests"], self.sim.current_time
+            action, state_data["requests"], self.sim.current_time, progress_ratio
         )
 
         self.current_step += 1
@@ -287,7 +319,7 @@ class LogCleanupCallback(BaseCallback):
         self._env_logger.close()
 
 
-def train() -> None:
+def train(ckpt: Optional[Path] = None) -> None:
     # 1. Initialize Simulator similar to main.py
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
@@ -322,9 +354,26 @@ def train() -> None:
 
     # 1. Initialize the Environment
     raw_env = MIGResourceEnv(sim)
-    env = Monitor(raw_env)
-    env = DummyVecEnv([lambda: env])
-    env = VecNormalize(env, norm_obs=True, norm_reward=True)
+    monitored_env: Monitor[npt.NDArray[np.float32], int] = Monitor(raw_env)
+
+    if TRAINING_CONFIG.sb3_norm:
+        vec_env = DummyVecEnv([lambda: monitored_env])
+        if ckpt is not None:
+            norm_path = ckpt.with_name(f"{ckpt.stem}_vecnormalize.pkl")
+            if norm_path.exists():
+                print(f"Loading VecNormalize stats from {norm_path}")
+                env = VecNormalize.load(str(norm_path), vec_env)
+                env.training = True
+                env.norm_reward = True
+            else:
+                print(
+                    f"Warning: {norm_path} not found, initializing fresh VecNormalize"
+                )
+                env = VecNormalize(vec_env, norm_obs=True, norm_reward=True)
+        else:
+            env = VecNormalize(vec_env, norm_obs=True, norm_reward=True)
+    else:
+        env = monitored_env
 
     policy_kwargs = dict(
         activation_fn=torch.nn.Tanh,  # Tanh is often more stable for PPO
@@ -343,42 +392,86 @@ def train() -> None:
 
     def lr_schedule(progress_remaining: float) -> float:
         """Linearly decays from lr_max (start) to lr_min (end)."""
-        return lr_min + (lr_max - lr_min) * progress_remaining
+        if TRAINING_CONFIG.dynamic_penalty:
+            if progress_remaining > 0.75:
+                return lr_max
+            return lr_min + (lr_max - lr_min) * (progress_remaining / 0.75)
+        else:
+            return lr_min + (lr_max - lr_min) * progress_remaining
 
-    model: MaskablePPO = MaskablePPO(
-        "MlpPolicy",
-        env,
-        policy_kwargs=policy_kwargs,
-        verbose=1,
-        learning_rate=lr_schedule,
-        n_steps=TRAINING_CONFIG.rl_n_steps,
-        batch_size=TRAINING_CONFIG.rl_batch_size,
-        n_epochs=TRAINING_CONFIG.rl_n_epochs,
-        gamma=TRAINING_CONFIG.rl_gamma,
-        gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
-        clip_range=TRAINING_CONFIG.rl_clip_range,
-        clip_range_vf=TRAINING_CONFIG.rl_clip_range,
-        ent_coef=TRAINING_CONFIG.rl_ent_coef,
-        device="cuda",
-        tensorboard_log=f"./tboard/{TIMESTAMP}",
-    )
+    model: MaskablePPO
+    if ckpt is not None:
+        print(f"Loading model from checkpoint: {ckpt}")
+        custom_objects: Dict[str, Any] = {
+            "learning_rate": lr_schedule,
+            "tensorboard_log": f"./tboard/{TIMESTAMP}",
+        }
+        model = MaskablePPO.load(
+            ckpt,
+            env=env,
+            device="cuda",
+            custom_objects=custom_objects,
+        )
+        # Ensure tensorboard logger is properly setup for the new run
+        model.tensorboard_log = f"./tboard/{TIMESTAMP}"
+    else:
+        model = MaskablePPO(
+            "MlpPolicy",
+            env,
+            policy_kwargs=policy_kwargs,
+            verbose=1,
+            learning_rate=lr_schedule,
+            n_steps=TRAINING_CONFIG.rl_n_steps,
+            batch_size=TRAINING_CONFIG.rl_batch_size,
+            n_epochs=TRAINING_CONFIG.rl_n_epochs,
+            gamma=TRAINING_CONFIG.rl_gamma,
+            gae_lambda=TRAINING_CONFIG.rl_gae_lambda,
+            clip_range=TRAINING_CONFIG.rl_clip_range,
+            clip_range_vf=TRAINING_CONFIG.rl_clip_range,
+            ent_coef=TRAINING_CONFIG.rl_ent_coef,
+            device="cuda",
+            tensorboard_log=f"./tboard/{TIMESTAMP}",
+        )
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
-        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}", save_vecnormalize=True
+        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
-    callbacks = CallbackList([checkpoint_callback, log_cleanup_callback])
+    cb_list: List[BaseCallback] = [checkpoint_callback, log_cleanup_callback]
+    if TRAINING_CONFIG.sb3_norm:
+        cb_list.append(
+            SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}")
+        )
+    callbacks = CallbackList(cb_list)
 
     # 4. Start Training
     print("Training Setup Complete")
-    model.learn(total_timesteps=204800, callback=callbacks, progress_bar=True)  # type: ignore
+    model.learn(  # type: ignore
+        total_timesteps=TRAINING_CONFIG.total_timesteps,
+        callback=callbacks,
+        progress_bar=True,
+    )
 
     # 5. Save the final model
     model.save(f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager")
-    env.save(f"./ckpts/{TIMESTAMP}/env_phase1.pkl")
+    if TRAINING_CONFIG.sb3_norm:
+        vec_env = model.get_vec_normalize_env()
+        if vec_env is not None:
+            vec_env.save(
+                f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager_vecnormalize.pkl"
+            )
     print("Training Complete. Model Saved.")
 
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser(description="Train MIG Resource Manager")
+    parser.add_argument(
+        "--ckpt",
+        type=Path,
+        default=None,
+        help="Path to checkpoint to continue training",
+    )
+    args = parser.parse_args()
+
+    train(ckpt=args.ckpt)
