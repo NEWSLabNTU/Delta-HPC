@@ -35,7 +35,7 @@ training:
       pi: [128, 128]
       vf: [512, 512]
   action_mask:
-    split_merge_cooldown_steps: 5
+    split_merge_cooldown_steps: 15
   patterns:
     busy:
       duration: [2400.0, 3600.0]
@@ -73,4 +73,4 @@ training:
     gamma: 2.0 # reconfiguration penalty
     scaling: 0.1
     clipping: -30.0
-    dynamic_penalty: false
+    dynamic_penalty: true

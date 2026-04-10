@@ -68,9 +68,18 @@ class EntCoefSchedulerCallback(BaseCallback):
     def _on_step(self) -> bool:
         # Linear decay based on training progress
         progress = self.num_timesteps / self.model._total_timesteps  # type: ignore
-        new_ent_coef = self.initial_ent_coef + progress * (
-            self.final_ent_coef - self.initial_ent_coef
-        )
+        # new_ent_coef = self.initial_ent_coef + progress * (
+        #     self.final_ent_coef - self.initial_ent_coef
+        # )
+        if progress < 0.25:
+            new_ent_coef = self.initial_ent_coef
+        else:
+            r = (progress - 0.25) / 0.75
+            new_ent_coef = (
+                (self.initial_ent_coef + self.final_ent_coef) / 2
+                if r < 0.5
+                else self.final_ent_coef
+            )
 
         assert isinstance(self.model, OnPolicyAlgorithm)
         self.model.ent_coef = new_ent_coef

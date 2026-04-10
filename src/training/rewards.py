@@ -19,7 +19,8 @@ def compute_reward(
         if progress_ratio < 0.25:
             gamma = 0.0
         else:
-            gamma = gamma_max * (progress_ratio - 0.25) / 0.75
+            r = (progress_ratio - 0.25) / 0.75
+            gamma = gamma_max / 2 if r < 0.5 else gamma_max
     else:
         gamma = gamma_max
     w_t = TRAINING_CONFIG.w("ttft")
