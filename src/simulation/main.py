@@ -82,9 +82,7 @@ def main():
         sim.run()
 
         # 2. Print State
-        state_data = sim.environment_state.get_state(
-            sim.current_time, sim.agents, sim.engines, step + 1
-        )
+        state_data = sim.get_state(step + 1)
         avg_q = state_data["avg_queue_length"]
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")

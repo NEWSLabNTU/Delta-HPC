@@ -588,7 +588,7 @@ class Simulator(ABC):
 
     @property
     @abstractmethod
-    def environment_state(self) -> EnvironmentState: ...
+    def interval_requests(self) -> Dict[AgentId, List[Request]]: ...
 
     @abstractmethod
     def need_requests_replenish(self) -> List[AgentId]: ...
@@ -615,6 +615,14 @@ class Simulator(ABC):
 
     @abstractmethod
     def get_action_mask(self) -> List[bool]: ...
+
+    @abstractmethod
+    def get_state(self, current_step: int) -> EnvironmentStateData: ...
+
+    @abstractmethod
+    def get_steps_since(
+        self, agent_id: AgentId, event_type: ActionHistoryKey
+    ) -> int: ...
 
 
 @dataclass
@@ -831,6 +839,10 @@ class EnvironmentState(ABC):
     @abstractmethod
     def last_action_downtime(self) -> float: ...
 
+    @property
+    @abstractmethod
+    def interval_requests(self) -> Dict[AgentId, List[Request]]: ...
+
     @last_action_downtime.setter
     @abstractmethod
     def last_action_downtime(self, v: float) -> None: ...
@@ -912,4 +924,6 @@ class MIGProfileRule(ABC):
     def has_exact_match(self, agent: Agent, mig: MIGProfile) -> bool: ...
 
     @abstractmethod
-    def get_best_exact_match(self, agent: Agent, mig: MIGProfile) -> LLMEngine | None: ...
+    def get_best_exact_match(
+        self, agent: Agent, mig: MIGProfile
+    ) -> LLMEngine | None: ...

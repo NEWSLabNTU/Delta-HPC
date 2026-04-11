@@ -42,7 +42,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     Follows a fixed-interval Discrete-Time MDP.
     """
 
-    def __init__(self, simulator: m.Simulator) -> None:
+    def __init__(self, simulator: m.Simulator, enable_log: bool = True) -> None:
         super(MIGResourceEnv, self).__init__()
         self.sim = simulator
         self.action_space = spaces.Discrete(31)
@@ -69,9 +69,10 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.max_steps: int = TRAINING_CONFIG.episode_length
         self.load_turn: int = 0
         self.episode_count: int = 0
-        self._logger = TrainingLogger()
+        self._logger = TrainingLogger(enabled=enable_log)
         self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
         self._current_action_mask: List[bool] = list(self.action_masks())
+        self.enable_replenish: bool = True
 
     @property
     def logger(self) -> TrainingLogger:
@@ -92,13 +93,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # Cooldown (Per-Agent): disable merging for X steps after a split,
         # and disable splitting for X steps after a merge.
-        env_state = self.sim.environment_state
         cooldown_steps = TRAINING_CONFIG.split_merge_cooldown_steps
 
         # Transfer cooldown constraint:
         # If A transferred a MIG to B recently, NO transfers can happen between A and B
         transfer_blocked = any(
-            env_state.get_steps_since(agent.agent_id, "give") < cooldown_steps
+            self.sim.get_steps_since(agent.agent_id, "give") < cooldown_steps
             for agent in self.sim.agents.values()
         )
 
@@ -116,11 +116,13 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             aid = val.victim
             if val.action == "split":
                 # Cannot split if this agent recently merged
-                if env_state.get_steps_since(aid, "merge") < cooldown_steps:
+                if self.sim.get_steps_since(aid, "merge") < cooldown_steps:
+                    # Disable merging if just split
                     mask[act_id] = False
             elif val.action == "merge":
                 # Cannot merge if this agent recently split
-                if env_state.get_steps_since(aid, "split") < cooldown_steps:
+                if self.sim.get_steps_since(aid, "split") < cooldown_steps:
+                    # Disable splitting if just merged
                     mask[act_id] = False
 
         self._current_action_mask = mask
@@ -218,12 +220,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # 2. Simulate interval logic
         self.sim.handle_resource_manager_trigger(enum_action)
         self.sim.run()
-        state_data = self.sim.environment_state.get_state(
-            self.sim.current_time,
-            self.sim.agents,
-            self.sim.engines,
-            self.current_step + 1,
-        )
+        state_data = self.sim.get_state(self.current_step + 1)
         self._logger.log_step(
             self.current_step,
             enum_action.name,
@@ -246,13 +243,14 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         truncated = False
 
         # 4. Replenish requests if necessary
-        for agent_id in self.sim.need_requests_replenish():
-            max_arr_time = self.sim.latest_arrival_time(agent_id)
-            self.load_turn += 1
-            new_requests = self.request_loader.generate_requests(
-                agent_id=agent_id, start_time=max_arr_time, turn=self.load_turn
-            )
-            self.sim.add_arrival_events(new_requests)
+        if self.enable_replenish:
+            for agent_id in self.sim.need_requests_replenish():
+                max_arr_time = self.sim.latest_arrival_time(agent_id)
+                self.load_turn += 1
+                new_requests = self.request_loader.generate_requests(
+                    agent_id=agent_id, start_time=max_arr_time, turn=self.load_turn
+                )
+                self.sim.add_arrival_events(new_requests)
 
         return obs, reward, terminated, truncated, {}
 
@@ -278,9 +276,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim.init_simulator(requests, self.max_steps)
         self.sim.run()  # advance to the first action interval
 
-        state_data = self.sim.environment_state.get_state(
-            self.sim.current_time, self.sim.agents, self.sim.engines, self.current_step
-        )
+        state_data = self.sim.get_state(self.current_step)
         return self._get_obs(state_data), {}
 
 

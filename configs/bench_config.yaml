@@ -1,0 +1,11 @@
+benchmark-length: 1024
+workloads:
+  idle:
+    rate: [0.3, 0.4]
+    duration: [2300.0, 2500.0]
+  balanced:
+    rate: [0.9, 1.1]
+    duration: [3900.0, 4100.0]
+  busy:
+    rate: [2.9, 3.1]
+    duration: [2300.0, 2500.0]

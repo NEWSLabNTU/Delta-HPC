@@ -85,6 +85,13 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def last_action_downtime(self, v: float) -> None:
         self._last_action_downtime = v
 
+    @property
+    def interval_requests(self) -> Dict[m.AgentId, List[m.Request]]:
+        return {
+            aid: self._agent_stats[aid].interval_requests
+            for aid in self._agent_stats.keys()
+        }
+
     def refresh_budget(self) -> None:
         self._current_budget = TRAINING_CONFIG.reconfig_budget
 
@@ -256,9 +263,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "last_receive": self._get_last_receive(agents),
             "last_give_amount": self._get_last_give_amount(agents),
             "last_receive_amount": self._get_last_receive_amount(agents),
-            "requests": {
-                aid: self._agent_stats[aid].interval_requests for aid in agents.keys()
-            },
+            "requests": self.interval_requests,
             "agent_arrival_rate_ratio": ratios["agent_arrival_rate_ratio"],
             "agent_avg_queue_len_ratio": ratios["agent_avg_queue_len_ratio"],
             "agent_avg_running_req_ratio": ratios["agent_avg_running_req_ratio"],

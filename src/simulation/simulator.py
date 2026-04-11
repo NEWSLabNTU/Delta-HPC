@@ -52,8 +52,13 @@ class SimulatorImpl(m.Simulator):
         return self._logger
 
     @property
-    def environment_state(self) -> m.EnvironmentState:
-        return self._environment_state
+    def interval_requests(self) -> Dict[m.AgentId, List[m.Request]]:
+        return self._environment_state.interval_requests
+
+    def get_steps_since(
+        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey
+    ) -> int:
+        return self._environment_state.get_steps_since(agent_id, event_type)
 
     def need_requests_replenish(self) -> List[m.AgentId]:
         return [
@@ -244,9 +249,7 @@ class SimulatorImpl(m.Simulator):
             amount,
             [engine_to_shift.engine_id],
         )
-        evt = engine_to_shift.trigger_shutdown(
-            shutdown_payload, self._current_time
-        )
+        evt = engine_to_shift.trigger_shutdown(shutdown_payload, self._current_time)
         if evt:
             self._events.add(evt)
 
@@ -709,6 +712,14 @@ class SimulatorImpl(m.Simulator):
 
         return False  # Finished simulation
 
+    def get_state(self, current_step: int) -> m.EnvironmentStateData:
+        return self._environment_state.get_state(
+            self._current_time,
+            self._agents,
+            self._engines,
+            current_step,
+        )
+
     def reset(self) -> None:
         """Resets the simulator to its initial hardware and agent state."""
         self._current_time = 0.0
@@ -746,11 +757,11 @@ class SimulatorImpl(m.Simulator):
         self._environment_state.reconfig_flag = False
         for aid in self._agents.keys():
             self._environment_state.set_pending_request_count(aid, 0)
-        self.environment_state.reset_last_actions()
+        self._environment_state.reset_last_actions()
 
     def get_action_mask(self) -> List[bool]:
         mask: List[bool] = [False] * len(m.ResourceManagerAction)
-        if self.environment_state.reconfig_flag:
+        if self._environment_state.reconfig_flag:
             mask[
                 list(m.ResourceManagerAction).index(m.ResourceManagerAction.NO_ACTION)
             ] = True

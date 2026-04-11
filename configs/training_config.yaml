@@ -35,23 +35,23 @@ training:
       pi: [128, 128]
       vf: [512, 512]
   action_mask:
-    split_merge_cooldown_steps: 15
+    split_merge_cooldown_steps: 10
   patterns:
     busy:
-      duration: [2400.0, 3600.0]
+      duration: [2200.0, 2600.0]
       rate:
-        CodingAgent: [5.0, 6.0]
-        RAGAgent: [6.0, 7.0]
+        CodingAgent: [2.0, 4.0]
+        RAGAgent: [2.0, 4.0]
     idle:
-      duration: [2400.0, 3600.0]
+      duration: [2200.0, 2600.0]
       rate:
         CodingAgent: [0.1, 0.5]
-        RAGAgent: [0.5, 2.0]
+        RAGAgent: [0.1, 0.5]
     balanced:
-      duration: [3600.0, 5400.0]
+      duration: [3800.0, 4200.0]
       rate:
-        CodingAgent: [1.0, 2.0]
-        RAGAgent: [2.0, 3.0]
+        CodingAgent: [0.5, 1.5]
+        RAGAgent: [0.5, 1.5]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes
