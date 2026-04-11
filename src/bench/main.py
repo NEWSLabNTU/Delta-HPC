@@ -167,6 +167,7 @@ class BenchRunner:
         last_merge_split_time = {aid: 0.0 for aid in m.AgentId}
         action_durations = {aid: [] for aid in m.AgentId}
         completed_reqs_map = {aid: {} for aid in m.AgentId}
+        presence_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
 
         for step in tqdm(
             range(total_steps),
@@ -218,6 +219,9 @@ class BenchRunner:
                     if e.status != m.EngineStatus.BOOTING
                 )
                 queue_lengths_sum[aid] += ql_sum
+                for engine in agent.engines:
+                    if not engine.is_permanent:
+                        presence_by_mig[aid][engine.mig_profile] += 1
 
             # Accumulate completed requests before potential environment resets clear them
             for aid, reqs in env.sim.interval_requests.items():
@@ -274,6 +278,11 @@ class BenchRunner:
                     k: (v / total_tokens * 100 if total_tokens > 0 else 0)
                     for k, v in tokens_by_mig[aid].items()
                 },
+                "mig_existence_percentages": {
+                    prof: (count / total_steps * 100)
+                    for prof, count in presence_by_mig[aid].items()
+                    if count > 0
+                },
             }
 
         # Workload summary aggregation
@@ -311,22 +320,11 @@ class BenchRunner:
 
 def print_metrics_table(mode_name: str, workload_name: str, results: dict):
     print(f"\nMode: {mode_name} | Workload: {workload_name}")
-    headers = [
-        "Agent",
-        "TTFT (P25/50/75/99)",
-        "TPOT (P25/50/75)",
-        "Avg Q",
-        "S/M",
-        "Tokens By MIG (%)",
-    ]
-    table_data = []
 
     # Filter out workload_summary and then iterate
     agents = [k for k in results.keys() if k != "workload_summary"]
     for i, aid in enumerate(agents):
         metrics = results[aid]
-        if i > 0:
-            table_data.append(tabulate.SEPARATING_LINE)
 
         ttft_str = "/".join([f"{x:.3f}" for x in metrics["ttft_percentiles"]])
         tpot_str = "/".join([f"{x:.3f}" for x in metrics["tpot_quartiles"]])
@@ -339,12 +337,29 @@ def print_metrics_table(mode_name: str, workload_name: str, results: dict):
         ):
             val = metrics["token_mig_percentages"][mig]
             if val > 0:
-                mig_tokens.append(f"{mig.size}g:{val:.1f}%")
-        mig_str = ", ".join(mig_tokens)
+                mig_tokens.append(f"{mig.size}g: {val:.1f}%")
+        mig_str = "\n".join(mig_tokens)
 
-        table_data.append([aid, ttft_str, tpot_str, avg_q_str, sm_str, mig_str])
+        mig_existence = []
+        for mig in sorted(
+            metrics["mig_existence_percentages"].keys(), key=lambda m: m.size
+        ):
+            val = metrics["mig_existence_percentages"][mig]
+            mig_existence.append(f"{mig.size}g: {val:.1f}%")
+        existence_str = "\n".join(mig_existence)
 
-    print(tabulate.tabulate(table_data, headers=headers, tablefmt="fancy_outline"))
+        # Build vertical data
+        table_data = [
+            ["TTFT (P25/50/75/99)", ttft_str],
+            ["TPOT (P25/50/75)", tpot_str],
+            ["Avg Q", avg_q_str],
+            ["S/M", sm_str],
+            ["Tokens By MIG (%)", mig_str],
+            ["MIG Existence (%)", existence_str],
+        ]
+
+        print(f"\n● Agent: {aid}")
+        print(tabulate.tabulate(table_data, tablefmt="fancy_outline"))
 
 
 def print_workload_summary_table(results: dict):

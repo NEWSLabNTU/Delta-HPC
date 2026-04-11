@@ -40,8 +40,8 @@ training:
     busy:
       duration: [2200.0, 2600.0]
       rate:
-        CodingAgent: [2.0, 4.0]
-        RAGAgent: [2.0, 4.0]
+        CodingAgent: [3.0, 4.0]
+        RAGAgent: [3.0, 4.0]
     idle:
       duration: [2200.0, 2600.0]
       rate:
@@ -50,8 +50,8 @@ training:
     balanced:
       duration: [3800.0, 4200.0]
       rate:
-        CodingAgent: [0.5, 1.5]
-        RAGAgent: [0.5, 1.5]
+        CodingAgent: [1.0, 2.0]
+        RAGAgent: [1.0, 2.0]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes
