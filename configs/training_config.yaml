@@ -1,5 +1,5 @@
 training:
-  phase: 1
+  phase: 2
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -33,7 +33,7 @@ training:
       min_ent_coef: 0.01
       max_ent_coef: 0.05
       net_arch:
-        pi: [128, 128]
+        pi: [256, 256]
         vf: [512, 512]
     phase_2: # vram transfer + mig action
       episode_length: 1024
@@ -50,10 +50,10 @@ training:
       min_ent_coef: 0.01
       max_ent_coef: 0.05
       net_arch:
-        pi: [128, 128]
+        pi: [256, 256]
         vf: [512, 512]
   action_mask:
-    action_cooldown: 5
+    action_cooldown: 10
   patterns:
     busy:
       duration: [2200.0, 2600.0]

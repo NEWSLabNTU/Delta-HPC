@@ -278,10 +278,10 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 def train(ckpt: Optional[Path] = None) -> None:
     phase = TRAINING_CONFIG.phase
 
-    if phase == m.TrainingPhase.PHASE_2 and ckpt is None:
-        raise ValueError(
-            "Training Phase 2 requires a checkpoint (--ckpt) from Phase 1."
-        )
+    # if phase == m.TrainingPhase.PHASE_2 and ckpt is None:
+    #     raise ValueError(
+    #         "Training Phase 2 requires a checkpoint (--ckpt) from Phase 1."
+    #     )
 
     run_name = f"{TIMESTAMP}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}

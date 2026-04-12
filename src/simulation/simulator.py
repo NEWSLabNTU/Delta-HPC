@@ -227,12 +227,9 @@ class SimulatorImpl(m.Simulator):
     def _handle_resource_manager_trigger_vram_transfer(
         self, v_action: m.VramTransferAction
     ) -> None:
-        giver = self._agents[v_action.giver]
-        receiver = self._agents[v_action.receiver]
-        amount = v_action.mig.size
         all_engines = list(self._engines.values())
         engine_to_shift = utils.MIG_RULES.get_best_exact_match(
-            giver, v_action.mig, all_engines
+            v_action.giver, v_action.mig, v_action.receiver, all_engines
         )
         assert engine_to_shift is not None
 
@@ -241,13 +238,13 @@ class SimulatorImpl(m.Simulator):
         shutdown_payload: m.ShutdownReallocatePayload = {
             "engine_id": engine_to_shift.engine_id,
             "purpose": m.OperationPurpose.REALLOCATE,
-            "receiver_id": receiver.agent_id,
+            "receiver_id": v_action.receiver,
         }
         self._logger.log_vram_transfer(
             self._current_time,
-            giver.agent_id,
-            receiver.agent_id,
-            amount,
+            v_action.giver,
+            v_action.receiver,
+            v_action.mig.size,
             [engine_to_shift.engine_id],
         )
         evt = engine_to_shift.trigger_shutdown(shutdown_payload, self._current_time)
@@ -268,10 +265,9 @@ class SimulatorImpl(m.Simulator):
         cost = 0.0
 
         if isinstance(val, m.VramTransferAction):
-            giver = self._agents[val.giver]
             all_engines = list(self._engines.values())
             engine_to_shift = utils.MIG_RULES.get_best_exact_match(
-                giver, val.mig, all_engines
+                val.giver, val.mig, val.receiver, all_engines
             )
             if engine_to_shift is not None:
                 boot_cost = utils.SIM_CONFIG.get_restart_time(

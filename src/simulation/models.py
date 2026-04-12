@@ -969,7 +969,8 @@ class MIGProfileRule(ABC):
     @abstractmethod
     def get_best_exact_match(
         self,
-        agent: Agent,
+        giver_aid: AgentId,
         mig: MIGProfile,
-        all_engines: Optional[List[LLMEngine]] = None,
+        receiver_aid: AgentId,  # Pass the ID of the agent RECEIVING the MIG
+        all_engines: List[LLMEngine],
     ) -> LLMEngine | None: ...

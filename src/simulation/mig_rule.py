@@ -168,63 +168,54 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
 
     def get_best_exact_match(
         self,
-        agent: m.Agent,
+        giver_aid: m.AgentId,
         mig: m.MIGProfile,
-        all_engines: m.Optional[m.List[m.LLMEngine]] = None,
+        receiver_aid: m.AgentId,  # Pass the ID of the agent RECEIVING the MIG
+        all_engines: m.List[m.LLMEngine],
     ) -> m.LLMEngine | None:
         exact_matches = [
             e
-            for e in agent.engines
-            if e.status == m.EngineStatus.ACTIVE
+            for e in all_engines
+            if e.owner.agent_id == giver_aid
+            and e.status == m.EngineStatus.ACTIVE
             and e.mig_profile == mig
             and not e.is_permanent
         ]
         if not exact_matches:
             return None
 
-        if all_engines is None:
-            return min(
-                exact_matches,
-                key=lambda e: len(e.running_queue) + len(e.waiting_queue),
+        def calculate_gathering_score(gpu: int) -> Tuple[int, int]:
+            gpu_engines = [e for e in all_engines if e.gpu == gpu]
+
+            # Current SM counts on this GPU
+            sm_counts: Dict[m.AgentId, int] = defaultdict(int)
+            for e in gpu_engines:
+                sm_counts[e.owner.agent_id] += e.mig_profile.size
+
+            # 1. Calculate Target Agent's SMs AFTER transfer
+            target_sm_after = sm_counts[receiver_aid] + mig.size
+
+            # 2. Calculate unique agents remaining on GPU AFTER transfer
+            # We simulate the counts to see how many agents actually 'exist' post-transfer
+            hypothetical_counts = sm_counts.copy()
+            hypothetical_counts[receiver_aid] = (
+                hypothetical_counts.get(receiver_aid, 0) + mig.size
+            )
+            hypothetical_counts[giver_aid] -= mig.size
+
+            # Only count agents that still have more than 0 SMs
+            final_agent_count = sum(
+                1 for count in hypothetical_counts.values() if count > 0
             )
 
-        # Entropy-aware selection
-        def calculate_gpu_entropy_after_transfer(
-            gpu: int, engine_to_transfer: m.LLMEngine
-        ) -> float:
-            gpu_engines = [e for e in all_engines if e.gpu == gpu]
-            # SM slice counts per agent
-            sm_counts: Dict[m.AgentId, int] = defaultdict(int)
-            total_sm = 0
-            for e in gpu_engines:
-                owner_id = e.owner.agent_id
-                size = e.mig_profile.size
-                if e.engine_id == engine_to_transfer.engine_id:
-                    # Hypothetically transfer to the other agent
-                    other_agent_id = (
-                        m.AgentId.RAG
-                        if owner_id == m.AgentId.CODING
-                        else m.AgentId.CODING
-                    )
-                    sm_counts[other_agent_id] += size
-                else:
-                    sm_counts[owner_id] += size
-                total_sm += size
-
-            if total_sm == 0:
-                return 0.0
-
-            entropy = 0.0
-            for count in sm_counts.values():
-                p = count / total_sm
-                if p > 0:
-                    entropy -= p * math.log2(p)
-            return entropy
+            # We want to MAXIMIZE target_sm_after and MINIMIZE final_agent_count
+            # min() sorts ascending, so we negate the target_sm
+            return (-target_sm_after, final_agent_count)
 
         return min(
             exact_matches,
             key=lambda e: (
-                calculate_gpu_entropy_after_transfer(e.gpu, e),
+                calculate_gathering_score(e.gpu),
                 len(e.running_queue) + len(e.waiting_queue),
             ),
         )
