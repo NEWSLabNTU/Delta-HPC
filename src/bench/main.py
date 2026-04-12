@@ -15,6 +15,7 @@ from src.training.train import MIGResourceEnv
 from src.bench.models import BenchMode, Workload
 from src.bench.config import BENCH_CONFIG
 from src.bench.request_loader import BenchRequestLoader
+import src.simulation.utils as utils
 
 
 class BenchMIGResourceEnv(MIGResourceEnv):
@@ -119,11 +120,25 @@ class BenchRunner:
         else:
             obs, _ = env.reset()
 
+        # Display Initial State
+        print(f"\n[Initial State: {self.mode.name}]")
+        state_info = [
+            [
+                e["gpu"],
+                e["agent"],
+                e["mig"],
+                "✓" if e.get("is-permanent", False) else " "
+            ]
+            for e in utils.SIM_CONFIG.initial_state
+        ]
+        print(tabulate.tabulate(state_info, headers=["GPU", "Agent", "MIG", "Perm"], tablefmt="fancy_outline"))
+
         # Metrics tracking
         total_steps = BENCH_CONFIG.benchmark_length
         queue_lengths_sum = {aid: 0 for aid in m.AgentId}
         split_count = {aid: 0 for aid in m.AgentId}
         merge_count = {aid: 0 for aid in m.AgentId}
+        transfer_count = {aid: 0 for aid in m.AgentId}
         last_merge_split_time = {aid: 0.0 for aid in m.AgentId}
         action_durations = {aid: [] for aid in m.AgentId}
         completed_reqs_map = {aid: {} for aid in m.AgentId}
@@ -149,23 +164,26 @@ class BenchRunner:
 
             enum_action = list(m.ResourceManagerAction)[action]
 
-            # Record merge/split counts and durations
-            if enum_action != m.ResourceManagerAction.NO_ACTION and isinstance(
-                enum_action.value, m.MigAction
-            ):
+            # Record merge/split/transfer counts and durations
+            if enum_action != m.ResourceManagerAction.NO_ACTION:
                 act_val = enum_action.value
-                aid = act_val.victim
+                involved_agents = []
+                if isinstance(act_val, m.MigAction):
+                    involved_agents = [act_val.victim]
+                    if act_val.action == "split":
+                        split_count[act_val.victim] += 1
+                    elif act_val.action == "merge":
+                        merge_count[act_val.victim] += 1
+                elif isinstance(act_val, m.VramTransferAction):
+                    involved_agents = [act_val.giver, act_val.receiver]
+                    transfer_count[act_val.giver] += 1
 
-                if last_merge_split_time[aid] > 0:
-                    action_durations[aid].append(
-                        env.sim.current_time - last_merge_split_time[aid]
-                    )
-                last_merge_split_time[aid] = env.sim.current_time
-
-                if act_val.action == "split":
-                    split_count[aid] += 1
-                elif act_val.action == "merge":
-                    merge_count[aid] += 1
+                for aid in involved_agents:
+                    if last_merge_split_time[aid] > 0:
+                        action_durations[aid].append(
+                            env.sim.current_time - last_merge_split_time[aid]
+                        )
+                    last_merge_split_time[aid] = env.sim.current_time
 
             if self.mode == BenchMode.RL:
                 obs, _, _, _ = venv.step([action])
@@ -231,6 +249,7 @@ class BenchRunner:
                 "avg_waiting_queue": queue_lengths_sum[aid] / total_steps,
                 "split_count": split_count[aid],
                 "merge_count": merge_count[aid],
+                "transfer_count": transfer_count[aid],
                 "avg_duration_between_actions": np.mean(action_durations[aid])
                 if action_durations[aid]
                 else 0.0,
@@ -289,7 +308,9 @@ def print_metrics_table(mode_name: str, workload_name: str, results: dict):
         ttft_str = "/".join([f"{x:.3f}" for x in metrics["ttft_percentiles"]])
         tpot_str = "/".join([f"{x:.3f}" for x in metrics["tpot_quartiles"]])
         avg_q_str = f"{metrics['avg_waiting_queue']:.3f}"
-        sm_str = f"{metrics['split_count']}/{metrics['merge_count']}"
+        smt_str = (
+            f"{metrics['split_count']}/{metrics['merge_count']}/{metrics['transfer_count']}"
+        )
 
         mig_tokens = []
         for mig in sorted(
@@ -313,7 +334,7 @@ def print_metrics_table(mode_name: str, workload_name: str, results: dict):
             ["TTFT (P25/50/75/99)", ttft_str],
             ["TPOT (P25/50/75)", tpot_str],
             ["Avg Q", avg_q_str],
-            ["S/M", sm_str],
+            ["S/M/T", smt_str],
             ["Tokens By MIG (%)", mig_str],
             ["MIG Existence (%)", existence_str],
         ]
