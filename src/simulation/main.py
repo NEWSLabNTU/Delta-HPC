@@ -5,7 +5,6 @@ from typing import Dict, List
 import src.simulation.models as m
 import src.simulation.utils as utils
 from src.simulation.request_loader import RequestLoader
-from src.training.config import TRAINING_CONFIG
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.agent import AgentImpl
@@ -16,11 +15,17 @@ from src.training.rewards import compute_reward
 def main():
     parser = argparse.ArgumentParser(description="Run simulation")
     parser.add_argument("--no-log", action="store_true", help="Disable logging")
+    parser.add_argument(
+        "--phase", type=int, default=1, choices=[1, 2], help="Training phase (1 or 2)"
+    )
     args = parser.parse_args()
+
+    phase = m.TrainingPhase(args.phase)
+    print(f"Starting simulation in {phase.name}...")
 
     print("Loading config and datasets...")
     load_turn = 0
-    request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
+    request_loader = RequestLoader()
     requests: List[m.Request] = []
     for aid in m.AgentId:
         requests.extend(request_loader.generate_requests(agent_id=aid, turn=load_turn))
@@ -59,15 +64,32 @@ def main():
 
     # For a quicker test we limit requests
     max_steps = 200
+    sim.reset()
     sim.init_simulator(requests, max_steps)
-    sim.run()  # advance to the first action interal
+    sim.run()  # advance to the first action interval
 
     print("Running mockup training loop...")
     for step in range(max_steps):
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
 
-        valid_actions = [a for a, m in zip(m.ResourceManagerAction, mask) if m]
+        # Apply phase-based masking
+        if phase == m.TrainingPhase.PHASE_1:
+            # Mask VRAM Transfer
+            for act_id, action in enumerate(m.ResourceManagerAction):
+                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
+                    action.value, m.VramTransferAction
+                ):
+                    mask[act_id] = False
+        elif phase == m.TrainingPhase.PHASE_2:
+            # Mask MIG Split/Merge
+            for act_id, action in enumerate(m.ResourceManagerAction):
+                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
+                    action.value, m.MigAction
+                ):
+                    mask[act_id] = False
+
+        valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
         action = random.choice(valid_actions)
         # action = m.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")

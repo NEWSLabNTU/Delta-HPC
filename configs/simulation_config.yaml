@@ -1,14 +1,6 @@
 simulation:
   initial_state:
     engines:
-      - gpu: 0
-        mig: 7g.40gb
-        agent: CodingAgent
-        is-permanent: false
-      - gpu: 1
-        mig: 7g.40gb
-        agent: RAGAgent
-        is-permanent: false
       # Permanent Engines for backups
       - gpu: 2
         mig: 1g.10gb

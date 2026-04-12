@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections import defaultdict
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Optional, Tuple, cast
@@ -231,8 +232,10 @@ class SimulatorImpl(m.Simulator):
         giver = self._agents[v_action.giver]
         receiver = self._agents[v_action.receiver]
         amount = v_action.mig.size
-
-        engine_to_shift = utils.MIG_RULES.get_best_exact_match(giver, v_action.mig)
+        all_engines = list(self._engines.values())
+        engine_to_shift = utils.MIG_RULES.get_best_exact_match(
+            giver, v_action.mig, all_engines
+        )
         assert engine_to_shift is not None
 
         self._environment_state.reconfig_flag = True
@@ -268,7 +271,10 @@ class SimulatorImpl(m.Simulator):
 
         if isinstance(val, m.VramTransferAction):
             giver = self._agents[val.giver]
-            engine_to_shift = utils.MIG_RULES.get_best_exact_match(giver, val.mig)
+            all_engines = list(self._engines.values())
+            engine_to_shift = utils.MIG_RULES.get_best_exact_match(
+                giver, val.mig, all_engines
+            )
             if engine_to_shift is not None:
                 boot_cost = utils.SIM_CONFIG.get_restart_time(
                     val.receiver, engine_to_shift.mig_profile
@@ -750,6 +756,30 @@ class SimulatorImpl(m.Simulator):
             agent.add_engine(eng)
             self._engines[eid] = eng
 
+        # Random initialization for GPU 0 and 1 if not already populated
+        populated_gpus = {int(conf["gpu"]) for conf in utils.SIM_CONFIG.initial_state}
+        for gpu in [0, 1]:
+            if gpu in populated_gpus:
+                continue
+
+            # Select a random combination
+            combo = random.choice(list(m.InitialMIGCombination)).value
+            for mig in combo:
+                # Assign GPU 0 to Coding and GPU 1 to RAG
+                aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
+                agent = self._agents[aid]
+                eid = utils.generate_engine_id(gpu, mig.string)
+                eng = LLMEngineImpl.create(
+                    gpu=gpu,
+                    engine_id=eid,
+                    owner=agent,
+                    mig_profile=mig,
+                    current_time=0.0,
+                    is_permanent=False,
+                )
+                agent.add_engine(eng)
+                self._engines[eid] = eng
+
         self._environment_state.reset_for_next_interval(0.0, self._agents)
         self._environment_state.refresh_budget()
         self._comming_budget_refresh = None
@@ -776,6 +806,7 @@ class SimulatorImpl(m.Simulator):
             if isinstance(val, m.VramTransferAction):
                 giver = self._agents[val.giver]
                 has_exact_match = utils.MIG_RULES.has_exact_match(giver, val.mig)
+                # Note: has_exact_match doesn't need all_engines as it's just a boolean existence check
                 mask[act_id] = has_exact_match
             else:  # MIGAction
                 victim = self._agents[val.victim]

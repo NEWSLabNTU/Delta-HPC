@@ -45,41 +45,27 @@ class BenchMIGResourceEnv(MIGResourceEnv):
 
         # Override initial state for baselines if needed
         original_initial_state = utils.SIM_CONFIG.initial_state
-        if self.baseline_mode == BenchMode.BASELINE_2_2_2_1:
+        if self.baseline_mode in [BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1]:
             new_state = []
+            # 1. Preserve permanent engines (GPU 2)
             for conf in original_initial_state:
                 if conf.get("is-permanent", False):
                     new_state.append(conf)
-                else:
+
+            # 2. Explicitly add GPU 0 (Coding) and GPU 1 (RAG)
+            for gpu in [0, 1]:
+                aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
+                if self.baseline_mode == BenchMode.BASELINE_7G:
+                    profiles = m.InitialMIGCombination.C7.value
+                else:  # BASELINE_2_2_2_1
+                    profiles = m.InitialMIGCombination.C2_2_2_1.value
+
+                for prof in profiles:
                     new_state.append(
                         {
-                            "gpu": conf["gpu"],
-                            "mig": "2g.10gb",
-                            "agent": conf["agent"],
-                            "is-permanent": False,
-                        }
-                    )
-                    new_state.append(
-                        {
-                            "gpu": conf["gpu"],
-                            "mig": "2g.10gb",
-                            "agent": conf["agent"],
-                            "is-permanent": False,
-                        }
-                    )
-                    new_state.append(
-                        {
-                            "gpu": conf["gpu"],
-                            "mig": "2g.10gb",
-                            "agent": conf["agent"],
-                            "is-permanent": False,
-                        }
-                    )
-                    new_state.append(
-                        {
-                            "gpu": conf["gpu"],
-                            "mig": "1g.10gb",
-                            "agent": conf["agent"],
+                            "gpu": gpu,
+                            "mig": prof.string,
+                            "agent": aid.value,
                             "is-permanent": False,
                         }
                     )

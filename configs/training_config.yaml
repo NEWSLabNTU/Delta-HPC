@@ -1,5 +1,5 @@
 training:
-  phase: 1
+  phase: 2
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -16,42 +16,60 @@ training:
     avg_running_requests: 100.0
     avg_composite_latency: 5.0
     queue_length_trend_clamp: 3.0
-    default_waiting_qj: 10.0
+    default_waiting_qj: 1.0
   PPO:
-    episode_length: 1024
-    n_steps: 256
-    lr_max: 3.0e-4
-    lr_min: 5.0e-5
-    batch_size: 64
-    n_epochs: 15
-    gamma: 0.995
-    gae_lambda: 0.90
-    clip_range: 0.2
-    ent_coef_schd: true
-    ent_coef: 0.02
-    min_ent_coef: 0.01
-    max_ent_coef: 0.05
-    net_arch:
-      pi: [128, 128]
-      vf: [512, 512]
+    phase_1:
+      episode_length: 1024
+      n_steps: 256
+      lr_max: 3.0e-4
+      lr_min: 5.0e-5
+      batch_size: 64
+      n_epochs: 15
+      gamma: 0.995
+      gae_lambda: 0.90
+      clip_range: 0.2
+      ent_coef_schd: true
+      ent_coef: 0.02
+      min_ent_coef: 0.01
+      max_ent_coef: 0.05
+      net_arch:
+        pi: [128, 128]
+        vf: [512, 512]
+    phase_2:
+      episode_length: 512
+      n_steps: 2048
+      lr_max: 3.0e-4
+      lr_min: 5.0e-5
+      batch_size: 128
+      n_epochs: 20
+      gamma: 0.995
+      gae_lambda: 0.90
+      clip_range: 0.2
+      ent_coef_schd: true
+      ent_coef: 0.02
+      min_ent_coef: 0.01
+      max_ent_coef: 0.05
+      net_arch:
+        pi: [128, 128]
+        vf: [512, 512]
   action_mask:
-    split_merge_cooldown_steps: 10
+    action_cooldown: 5
   patterns:
     busy:
       duration: [2200.0, 2600.0]
       rate:
-        CodingAgent: [3.0, 4.0]
-        RAGAgent: [3.0, 4.0]
+        CodingAgent: [3.5, 4.5]
+        RAGAgent: [6.0, 7.0]
     idle:
       duration: [2200.0, 2600.0]
       rate:
-        CodingAgent: [0.1, 0.5]
-        RAGAgent: [0.1, 0.5]
+        CodingAgent: [0.1, 0.2]
+        RAGAgent: [0.5, 1.0]
     balanced:
-      duration: [3800.0, 4200.0]
+      duration: [2200.0, 2600.0]
       rate:
-        CodingAgent: [1.0, 2.0]
-        RAGAgent: [1.0, 2.0]
+        CodingAgent: [0.5, 1.0]
+        RAGAgent: [2.0, 3.0]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes

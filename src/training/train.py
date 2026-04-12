@@ -45,7 +45,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def __init__(self, simulator: m.Simulator, enable_log: bool = True) -> None:
         super(MIGResourceEnv, self).__init__()
         self.sim = simulator
-        self.action_space = spaces.Discrete(31)
+        self.action_space = spaces.Discrete(35)
 
         self.global_step = 0
 
@@ -70,33 +70,32 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.load_turn: int = 0
         self.episode_count: int = 0
         self._logger = TrainingLogger(enabled=enable_log)
-        self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
-        self._current_action_mask: List[bool] = list(self.action_masks())
+        self.request_loader = RequestLoader()
+        self._current_action_mask: npt.NDArray[np.bool_] = self.action_masks()
         self.enable_replenish: bool = True
 
     @property
     def logger(self) -> TrainingLogger:
         return self._logger
 
-    def action_masks(self, phase: Optional[int] = None) -> npt.NDArray[np.bool_]:
-        if phase is None:
-            phase = TRAINING_CONFIG.phase
-
+    def get_phase_action_mask(self, phase: m.TrainingPhase) -> npt.NDArray[np.bool_]:
         mask = self.sim.get_action_mask()
 
-        if phase == 1:
+        if phase == m.TrainingPhase.PHASE_1:
             for act_id, action in enumerate(m.ResourceManagerAction):
                 if action != m.ResourceManagerAction.NO_ACTION and isinstance(
                     action.value, m.VramTransferAction
                 ):
                     mask[act_id] = False
+        elif phase == m.TrainingPhase.PHASE_2:
+            for act_id, action in enumerate(m.ResourceManagerAction):
+                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
+                    action.value, m.MigAction
+                ):
+                    mask[act_id] = False
 
-        # Cooldown (Per-Agent): disable merging for X steps after a split,
-        # and disable splitting for X steps after a merge.
-        cooldown_steps = TRAINING_CONFIG.split_merge_cooldown_steps
-
-        # Transfer cooldown constraint:
-        # If A transferred a MIG to B recently, NO transfers can happen between A and B
+        # Cooldown (Per-Agent)
+        cooldown_steps = TRAINING_CONFIG.action_cooldown
         transfer_blocked = any(
             self.sim.get_steps_since(agent.agent_id, "give") < cooldown_steps
             for agent in self.sim.agents.values()
@@ -115,18 +114,17 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
             aid = val.victim
             if val.action == "split":
-                # Cannot split if this agent recently merged
                 if self.sim.get_steps_since(aid, "merge") < cooldown_steps:
-                    # Disable merging if just split
                     mask[act_id] = False
             elif val.action == "merge":
-                # Cannot merge if this agent recently split
                 if self.sim.get_steps_since(aid, "split") < cooldown_steps:
-                    # Disable splitting if just merged
                     mask[act_id] = False
 
-        self._current_action_mask = mask
-        return np.array(self._current_action_mask, dtype=np.bool_)
+        return np.array(mask, dtype=np.bool_)
+
+    def action_masks(self) -> npt.NDArray[np.bool_]:
+        self._current_action_mask = self.get_phase_action_mask(TRAINING_CONFIG.phase)
+        return self._current_action_mask
 
     def _get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:
         obs_list: List[float] = []
@@ -267,7 +265,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
         # Replenish requests to initialize simulator
         self._logger.start_episode(self.episode_count)
-        self.request_loader = RequestLoader(phase=TRAINING_CONFIG.phase)
+        self.request_loader = RequestLoader()
         requests: List[m.Request] = []
         for aid in m.AgentId:
             requests.extend(
@@ -281,7 +279,8 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
 
 def train(ckpt: Optional[Path] = None) -> None:
-    # 1. Initialize Simulator similar to main.py
+    phase = TRAINING_CONFIG.phase
+    run_name = f"{TIMESTAMP}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
@@ -365,7 +364,7 @@ def train(ckpt: Optional[Path] = None) -> None:
         print(f"Loading model from checkpoint: {ckpt}")
         custom_objects: Dict[str, Any] = {
             "learning_rate": lr_schedule,
-            "tensorboard_log": f"./tboard/{TIMESTAMP}",
+            "tensorboard_log": f"./tboard/{run_name}",
         }
         model = MaskablePPO.load(
             ckpt,
@@ -374,7 +373,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             custom_objects=custom_objects,
         )
         # Ensure tensorboard logger is properly setup for the new run
-        model.tensorboard_log = f"./tboard/{TIMESTAMP}"
+        model.tensorboard_log = f"./tboard/{run_name}"
     else:
         model = MaskablePPO(
             "MlpPolicy",
@@ -393,18 +392,18 @@ def train(ckpt: Optional[Path] = None) -> None:
             if not TRAINING_CONFIG.rl_enable_ent_coef_schd
             else TRAINING_CONFIG.rl_max_ent_coef,
             device="cuda",
-            tensorboard_log=f"./tboard/{TIMESTAMP}",
+            tensorboard_log=f"./tboard/{run_name}",
         )
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
-        save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}"
+        save_freq=5120, save_path=f"./ckpts/{run_name}"
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
     cb_list: List[BaseCallback] = [checkpoint_callback, log_cleanup_callback]
     if TRAINING_CONFIG.sb3_norm:
         cb_list.append(
-            SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{TIMESTAMP}")
+            SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{run_name}")
         )
     if TRAINING_CONFIG.rl_enable_ent_coef_schd:
         cb_list.append(
@@ -424,12 +423,12 @@ def train(ckpt: Optional[Path] = None) -> None:
     )
 
     # 5. Save the final model
-    model.save(f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager")
+    model.save(f"./ckpts/{run_name}/ppo_mig_resource_manager")
     if TRAINING_CONFIG.sb3_norm:
         vec_env = model.get_vec_normalize_env()
         if vec_env is not None:
             vec_env.save(
-                f"./ckpts/{TIMESTAMP}/ppo_mig_resource_manager_vecnormalize.pkl"
+                f"./ckpts/{run_name}/ppo_mig_resource_manager_vecnormalize.pkl"
             )
     print("Training Complete. Model Saved.")
 

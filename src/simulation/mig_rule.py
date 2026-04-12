@@ -1,5 +1,6 @@
-from typing import Dict, List, Optional, Tuple
+import math
 from collections import defaultdict, Counter
+from typing import Dict, List, Tuple
 
 import src.simulation.models as m
 
@@ -47,13 +48,26 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         mig_2_1 = self._normalize_value(
             (m.MIGProfile.MIG_2G_10GB, m.MIGProfile.MIG_1G_10GB)
         )
+        mig_4_2_1 = self._normalize_value(
+            (
+                m.MIGProfile.MIG_4G_20GB,
+                m.MIGProfile.MIG_2G_10GB,
+                m.MIGProfile.MIG_1G_10GB,
+            )
+        )
 
-        self._split_rules[m.MIGProfile.MIG_7G_40GB] = [mig_4_3, mig_3_2_2, mig_2_2_2_1]
+        self._split_rules[m.MIGProfile.MIG_7G_40GB] = [
+            mig_4_3,
+            mig_3_2_2,
+            mig_2_2_2_1,
+            mig_4_2_1,
+        ]
         self._split_rules[m.MIGProfile.MIG_4G_20GB] = [mig_2_2]
         self._split_rules[m.MIGProfile.MIG_3G_20GB] = [mig_2_1]
         self._merge_rules[mig_4_3] = m.MIGProfile.MIG_7G_40GB
         self._merge_rules[mig_3_2_2] = m.MIGProfile.MIG_7G_40GB
         self._merge_rules[mig_2_2_2_1] = m.MIGProfile.MIG_7G_40GB
+        self._merge_rules[mig_4_2_1] = m.MIGProfile.MIG_7G_40GB
         self._merge_rules[mig_2_2] = m.MIGProfile.MIG_4G_20GB
         self._merge_rules[mig_2_1] = m.MIGProfile.MIG_3G_20GB
 
@@ -144,38 +158,6 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
             )
         return None
 
-    def get_best_split(
-        self, agent: m.Agent, desired_vram: Optional[float] = None
-    ) -> Tuple[m.LLMEngine, List[m.MIGProfile]] | None:
-        possibles = self.get_possible_splits(agent)
-        if desired_vram:
-            possibles = list(
-                filter(lambda c: any(p.vram == desired_vram for p in c[1]), possibles)
-            )
-        possibles.sort(key=lambda c: len(c[1]))
-        if possibles:
-            return min(
-                possibles,
-                key=lambda c: len(c[0].waiting_queue) + len(c[0].running_queue),
-            )
-        return None
-
-    def get_best_merge(
-        self, agent: m.Agent, desired_vram: Optional[float] = None
-    ) -> Tuple[List[m.LLMEngine], m.MIGProfile] | None:
-        possibles = self.get_possible_merges(agent)
-        if desired_vram:
-            possibles = list(filter(lambda c: c[1].vram == desired_vram, possibles))
-        possibles.sort(key=lambda c: len(c[0]))
-        if possibles:
-            return min(
-                possibles,
-                key=lambda c: sum(
-                    len(e.waiting_queue) + len(e.running_queue) for e in c[0]
-                ),
-            )
-        return None
-
     def has_exact_match(self, agent: m.Agent, mig: m.MIGProfile) -> bool:
         return any(
             e.status == m.EngineStatus.ACTIVE
@@ -185,7 +167,10 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         )
 
     def get_best_exact_match(
-        self, agent: m.Agent, mig: m.MIGProfile
+        self,
+        agent: m.Agent,
+        mig: m.MIGProfile,
+        all_engines: m.Optional[m.List[m.LLMEngine]] = None,
     ) -> m.LLMEngine | None:
         exact_matches = [
             e
@@ -194,9 +179,52 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
             and e.mig_profile == mig
             and not e.is_permanent
         ]
-        if exact_matches:
+        if not exact_matches:
+            return None
+
+        if all_engines is None:
             return min(
                 exact_matches,
                 key=lambda e: len(e.running_queue) + len(e.waiting_queue),
             )
-        return None
+
+        # Entropy-aware selection
+        def calculate_gpu_entropy_after_transfer(
+            gpu: int, engine_to_transfer: m.LLMEngine
+        ) -> float:
+            gpu_engines = [e for e in all_engines if e.gpu == gpu]
+            # SM slice counts per agent
+            sm_counts: Dict[m.AgentId, int] = defaultdict(int)
+            total_sm = 0
+            for e in gpu_engines:
+                owner_id = e.owner.agent_id
+                size = e.mig_profile.size
+                if e.engine_id == engine_to_transfer.engine_id:
+                    # Hypothetically transfer to the other agent
+                    other_agent_id = (
+                        m.AgentId.RAG
+                        if owner_id == m.AgentId.CODING
+                        else m.AgentId.CODING
+                    )
+                    sm_counts[other_agent_id] += size
+                else:
+                    sm_counts[owner_id] += size
+                total_sm += size
+
+            if total_sm == 0:
+                return 0.0
+
+            entropy = 0.0
+            for count in sm_counts.values():
+                p = count / total_sm
+                if p > 0:
+                    entropy -= p * math.log2(p)
+            return entropy
+
+        return min(
+            exact_matches,
+            key=lambda e: (
+                calculate_gpu_entropy_after_transfer(e.gpu, e),
+                len(e.running_queue) + len(e.waiting_queue),
+            ),
+        )

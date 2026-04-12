@@ -37,6 +37,8 @@ __all__ = [
     "ResourceManagerAction",
     "VramTransferAction",
     "MigAction",
+    "TrainingPhase",
+    "InitialMIGCombination",
 ]
 
 type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
@@ -154,6 +156,32 @@ class OperationPurpose(Enum):
     MERGE = "merge"
     SPLIT = "split"
     PLAIN = "plain"
+
+
+class TrainingPhase(Enum):
+    PHASE_1 = 1
+    PHASE_2 = 2
+
+
+class InitialMIGCombination(Enum):
+    C7 = (MIGProfile.MIG_7G_40GB,)
+    C4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
+    C4_2_1 = (
+        MIGProfile.MIG_4G_20GB,
+        MIGProfile.MIG_2G_10GB,
+        MIGProfile.MIG_1G_10GB,
+    )
+    C3_2_2 = (
+        MIGProfile.MIG_3G_20GB,
+        MIGProfile.MIG_2G_10GB,
+        MIGProfile.MIG_2G_10GB,
+    )
+    C2_2_2_1 = (
+        MIGProfile.MIG_2G_10GB,
+        MIGProfile.MIG_2G_10GB,
+        MIGProfile.MIG_2G_10GB,
+        MIGProfile.MIG_1G_10GB,
+    )
 
 
 # --- Interfaces ---
@@ -633,6 +661,11 @@ class VramTransferAction:
 
 
 MIG_4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
+MIG_4_2_1 = (
+    MIGProfile.MIG_4G_20GB,
+    MIGProfile.MIG_2G_10GB,
+    MIGProfile.MIG_1G_10GB,
+)
 MIG_3_2_2 = (
     MIGProfile.MIG_3G_20GB,
     MIGProfile.MIG_2G_10GB,
@@ -708,6 +741,11 @@ class ResourceManagerAction(Enum):
         AgentId.CODING,
         profiles=MIG_2_2_2_1,
     )
+    SPLIT_7_TO_4_2_1_CODING = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
+    )
     SPLIT_4_TO_2_2_CODING = MigAction(
         "split",
         AgentId.CODING,
@@ -731,6 +769,11 @@ class ResourceManagerAction(Enum):
         AgentId.RAG,
         profiles=MIG_2_2_2_1,
     )
+    SPLIT_7_TO_4_2_1_RAG = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
+    )
     SPLIT_4_TO_2_2_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_2)
     SPLIT_3_TO_2_1_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_1)
 
@@ -749,6 +792,11 @@ class ResourceManagerAction(Enum):
         "merge",
         AgentId.CODING,
         profiles=MIG_2_2_2_1,
+    )
+    MERGE_4_2_1_TO_7_CODING = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
     )
     MERGE_2_2_TO_4_CODING = MigAction(
         "merge",
@@ -772,6 +820,11 @@ class ResourceManagerAction(Enum):
         "merge",
         AgentId.RAG,
         profiles=MIG_2_2_2_1,
+    )
+    MERGE_4_2_1_TO_7_RAG = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
     )
     MERGE_2_2_TO_4_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_2)
     MERGE_2_1_TO_3_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_1)
@@ -911,19 +964,12 @@ class MIGProfileRule(ABC):
     ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...
 
     @abstractmethod
-    def get_best_split(
-        self, agent: Agent, desired_vram: Optional[float] = None
-    ) -> Tuple[LLMEngine, List[MIGProfile]] | None: ...
-
-    @abstractmethod
-    def get_best_merge(
-        self, agent: Agent, desired_vram: Optional[float] = None
-    ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...
-
-    @abstractmethod
     def has_exact_match(self, agent: Agent, mig: MIGProfile) -> bool: ...
 
     @abstractmethod
     def get_best_exact_match(
-        self, agent: Agent, mig: MIGProfile
+        self,
+        agent: Agent,
+        mig: MIGProfile,
+        all_engines: Optional[List[LLMEngine]] = None,
     ) -> LLMEngine | None: ...

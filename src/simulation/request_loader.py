@@ -9,9 +9,7 @@ from src.training.config import TRAINING_CONFIG
 
 
 class RequestLoader:
-    def __init__(self, phase: int = 0):
-        self.phase = phase
-        # State tracking for Phase 1 patterns
+    def __init__(self):
         self.agent_patterns = {
             m.AgentId.CODING: random.choice(list(AgentPattern)),
             m.AgentId.RAG: random.choice(list(AgentPattern)),
@@ -63,9 +61,6 @@ class RequestLoader:
         else:
             items = random.sample(all_items, 25000)
 
-        assert self.phase == 1
-
-        # Phase 1: dynamic time-based sampling using Poisson arrivals
         # Reset random seed behavior so patterns are truly stochastic
         random.seed()
 

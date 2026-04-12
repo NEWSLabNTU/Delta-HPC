@@ -35,7 +35,9 @@ class BenchRequestLoader:
         current_time = start_time
 
         max_time = (
-            start_time + BENCH_CONFIG.benchmark_length * TRAINING_CONFIG.action_interval
+            start_time
+            + BENCH_CONFIG.benchmark_length * TRAINING_CONFIG.action_interval
+            + 360  # small buffer
         )
 
         if self.workload == Workload.HYBRID:
@@ -52,10 +54,7 @@ class BenchRequestLoader:
                 phase_end = current_time + duration
 
                 rates_in_phase = []
-                while (
-                    current_time < phase_end
-                    and current_time < max_time
-                ):
+                while current_time < phase_end and current_time < max_time:
                     rate = random.uniform(min_rate, max_rate)
                     rates_in_phase.append(rate)
                     current_time += random.expovariate(rate)

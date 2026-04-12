@@ -17,8 +17,8 @@ class TrainingConfig:
         return cls(config_path)
 
     @property
-    def phase(self) -> int:
-        return self._data["phase"]
+    def phase(self) -> m.TrainingPhase:
+        return m.TrainingPhase(self._data["phase"])
 
     @property
     def sb3_norm(self) -> bool:
@@ -77,68 +77,73 @@ class TrainingConfig:
         return float(self._data["normalization"]["vram_transfer_amount"])
 
     @property
+    def _ppo_cfg(self) -> dict:
+        phase_key = f"phase_{self.phase.value}"
+        return self._data["PPO"][phase_key]
+
+    @property
     def episode_length(self) -> int:
-        return self._data["PPO"]["episode_length"]
+        return self._ppo_cfg["episode_length"]
 
     @property
     def rl_n_steps(self) -> int:
-        return self._data["PPO"]["n_steps"]
-
-    @property
-    def rl_lr_max(self) -> float:
-        return float(self._data["PPO"]["lr_max"])
-
-    @property
-    def rl_lr_min(self) -> float:
-        return float(self._data["PPO"]["lr_min"])
+        return self._ppo_cfg["n_steps"]
 
     @property
     def rl_batch_size(self) -> int:
-        return self._data["PPO"]["batch_size"]
+        return self._ppo_cfg["batch_size"]
 
     @property
     def rl_n_epochs(self) -> int:
-        return self._data["PPO"]["n_epochs"]
+        return self._ppo_cfg["n_epochs"]
+
+    @property
+    def rl_lr_max(self) -> float:
+        return float(self._ppo_cfg["lr_max"])
+
+    @property
+    def rl_lr_min(self) -> float:
+        return float(self._ppo_cfg["lr_min"])
 
     @property
     def rl_gamma(self) -> float:
-        return float(self._data["PPO"]["gamma"])
+        return float(self._ppo_cfg["gamma"])
 
     @property
     def rl_gae_lambda(self) -> float:
-        return float(self._data["PPO"]["gae_lambda"])
+        return float(self._ppo_cfg["gae_lambda"])
 
     @property
     def rl_clip_range(self) -> float:
-        return float(self._data["PPO"]["clip_range"])
+        return float(self._ppo_cfg["clip_range"])
 
     @property
     def rl_enable_ent_coef_schd(self) -> bool:
-        return bool(self._data["PPO"]["ent_coef_schd"])
+        return bool(self._ppo_cfg["ent_coef_schd"])
 
     @property
     def rl_ent_coef(self) -> float:
-        return float(self._data["PPO"]["ent_coef"])
+        return float(self._ppo_cfg["ent_coef"])
 
     @property
     def rl_min_ent_coef(self) -> float:
-        return float(self._data["PPO"]["min_ent_coef"])
+        return float(self._ppo_cfg["min_ent_coef"])
 
     @property
     def rl_max_ent_coef(self) -> float:
-        return float(self._data["PPO"]["max_ent_coef"])
+        return float(self._ppo_cfg["max_ent_coef"])
 
     @property
     def rl_net_arch_pi(self) -> List[int]:
-        return self._data["PPO"]["net_arch"]["pi"]
+        return self._ppo_cfg["net_arch"]["pi"]
 
     @property
     def rl_net_arch_vf(self) -> List[int]:
-        return self._data["PPO"]["net_arch"]["vf"]
+        return self._ppo_cfg["net_arch"]["vf"]
 
     @property
-    def split_merge_cooldown_steps(self) -> int:
-        return int(self._data["action_mask"]["split_merge_cooldown_steps"])
+    def action_cooldown(self) -> int:
+        return int(self._data["action_mask"]["action_cooldown"])
 
     def pattern_duration(self, pattern: AgentPattern) -> Tuple[float, float]:
         match pattern:

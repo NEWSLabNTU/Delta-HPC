@@ -44,10 +44,10 @@ class AgentStats:
         Dict[Literal["steps", "amount"], int],
     ] = field(
         default_factory=lambda: {
-            "split": {"steps": 5},
-            "merge": {"steps": 5},
-            "give": {"steps": 5, "amount": 0},
-            "receive": {"steps": 5, "amount": 0},
+            "split": {"steps": TRAINING_CONFIG.action_cooldown},
+            "merge": {"steps": TRAINING_CONFIG.action_cooldown},
+            "give": {"steps": TRAINING_CONFIG.action_cooldown, "amount": 0},
+            "receive": {"steps": TRAINING_CONFIG.action_cooldown, "amount": 0},
         }
     )
     pending_request_count: int = 0
@@ -102,11 +102,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
     def reset_last_actions(self) -> None:
         for stats in self._agent_stats.values():
-            stats.action_history["split"]["steps"] = 5
-            stats.action_history["merge"]["steps"] = 5
-            stats.action_history["receive"]["steps"] = 5
+            stats.action_history["split"]["steps"] = TRAINING_CONFIG.action_cooldown
+            stats.action_history["merge"]["steps"] = TRAINING_CONFIG.action_cooldown
+            stats.action_history["receive"]["steps"] = TRAINING_CONFIG.action_cooldown
             stats.action_history["receive"]["amount"] = 0
-            stats.action_history["give"]["steps"] = 5
+            stats.action_history["give"]["steps"] = TRAINING_CONFIG.action_cooldown
             stats.action_history["give"]["amount"] = 0
 
     def set_last_action(
