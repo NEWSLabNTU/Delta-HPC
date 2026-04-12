@@ -45,8 +45,8 @@ training:
       gamma: 0.995
       gae_lambda: 0.90
       clip_range: 0.2
-      ent_coef_schd: true
-      ent_coef: 0.02
+      ent_coef_schd: false
+      ent_coef: 0.01
       min_ent_coef: 0.01
       max_ent_coef: 0.05
       net_arch:
@@ -88,7 +88,9 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 2.0 # reconfiguration penalty
+    gamma: 10.0 # reconfiguration penalty
     scaling: 0.1
     clipping: -30.0
-    dynamic_penalty: true
+    quality_bonus: true
+    gpu_affinity: true
+    gpu_affinity_bonus: 5.0

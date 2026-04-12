@@ -75,19 +75,14 @@ def main():
 
         # Apply phase-based masking
         if phase == m.TrainingPhase.PHASE_1:
-            # Mask VRAM Transfer
-            for act_id, action in enumerate(m.ResourceManagerAction):
-                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
-                    action.value, m.VramTransferAction
-                ):
-                    mask[act_id] = False
-        elif phase == m.TrainingPhase.PHASE_2:
             # Mask MIG Split/Merge
             for act_id, action in enumerate(m.ResourceManagerAction):
                 if action != m.ResourceManagerAction.NO_ACTION and isinstance(
                     action.value, m.MigAction
                 ):
                     mask[act_id] = False
+        elif phase == m.TrainingPhase.PHASE_2:
+            pass
 
         valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
         action = random.choice(valid_actions)
@@ -109,7 +104,7 @@ def main():
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")
 
-        reward = compute_reward(state_data["requests"], action, sim.current_time, 0.25)
+        reward = compute_reward(state_data["requests"], action, sim.current_time, agents=sim.agents)
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively

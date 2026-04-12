@@ -7,5 +7,5 @@ workloads:
     rate: [0.9, 1.1]
     duration: [3900.0, 4100.0]
   busy:
-    rate: [2.9, 3.1]
+    rate: [3.5, 4.0]
     duration: [2300.0, 2500.0]

@@ -251,6 +251,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "kv_cache_utilization": kv,
             "avg_composite_latency": latent_proportions,
             "n_mig_instance": n_mig,
+            "agent_owns_mig": self._get_agent_owns_mig(agents),
             "mig_geometry": self._get_mig_geometry(agents),
             "current_budget": self._get_current_budget(),
             "downtime_ratio": self._get_downtime_ratio(),
@@ -541,9 +542,10 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats[agent_id] = instances / TRAINING_CONFIG.norm_mig_geometry
         return stats
 
-    def _get_mig_geometry(
+    def _get_agent_owns_mig(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, Tuple[float, ...]]:
+        """Per-agent count of each MIG profile (normalized), used in the observation."""
         result: Dict[m.AgentId, Tuple[float, ...]] = {}
         divisor = TRAINING_CONFIG.norm_mig_geometry
         for agent_id, agent in agents.items():
@@ -553,6 +555,29 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     counts[e.mig_profile.idx] += 1
             result[agent_id] = tuple(c / divisor for c in counts)  # type: ignore
         return result
+
+    def _get_mig_geometry(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[int, List[float]]:
+        """GPU-keyed normalized MIG size per agent: {gpu_idx: [size_agent0, size_agent1, ...]}.
+
+        Permanent engines are excluded.
+        Agents are ordered by their enum value for deterministic indexing.
+        Values are normalized by norm_mig_geometry.
+        """
+        agents_ordered = sorted(agents.keys(), key=lambda a: a.value)
+        raw: Dict[int, List[int]] = {}
+        for agent_id, agent in agents.items():
+            for e in agent.engines:
+                if e.is_permanent:
+                    continue  # skip permanent GPU
+                gpu = e.gpu
+                if gpu not in raw:
+                    raw[gpu] = [0] * len(agents_ordered)
+                agent_idx = agents_ordered.index(agent_id)
+                raw[gpu][agent_idx] += e.mig_profile.size
+        divisor = TRAINING_CONFIG.norm_mig_geometry
+        return {gpu: [s / divisor for s in sizes] for gpu, sizes in raw.items()}
 
     def _get_total_sm_ratio(
         self, agents: Dict[m.AgentId, m.Agent]

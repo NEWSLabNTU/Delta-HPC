@@ -47,15 +47,13 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim = simulator
         self.action_space = spaces.Discrete(35)
 
-        self.global_step = 0
-
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 2 agents
-        # Per Agent: 4 scalar metrics + history_len + 5*6 (util, latency, q_len, q_trend, run_req) + 1 mig instance + 5 mig geometry + 6 action metrics = 46 + history_len
+        # Per Agent: 4 scalar metrics + history_len + 5*6 (util, latency, q_len, q_trend, run_req) + 1 mig instance + 5 agent_owns_mig + 6 action metrics = 46 + history_len
         per_agent_features = 46 + history_len
-        # Global Flags/Budget/Downtime + 8 Agent Ratios: 11
-        total_features = 2 * per_agent_features + 11
+        # Global Flags/Budget/Downtime + 8 Agent Ratios + 4 MIG geometry (2 GPUs × 2 agents): 15
+        total_features = 2 * per_agent_features + 15
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -162,9 +160,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             n_mig = state_data["n_mig_instance"][aid]
             obs_list.append(float(n_mig))
 
-            # 5 MIG Geometry
-            geometry = state_data["mig_geometry"][aid]
-            obs_list.extend([float(x) for x in geometry])
+            # 5 Agent-Owns-MIG: per-profile count (1g, 2g, 3g, 4g, 7g)
+            agent_owns_mig = state_data["agent_owns_mig"][aid]
+            obs_list.extend([float(x) for x in agent_owns_mig])
 
             # 6 action metrics
             obs_list.append(float(state_data["last_split"][aid]))
@@ -189,6 +187,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data.get("agent_vram_ratio", 0.0)))
         obs_list.append(float(state_data.get("agent_sm_ratio", 0.0)))
 
+        # MIG Geometry: 4 values — GPU 0 [coding, rag] and GPU 1 [coding, rag] (pre-normalized)
+        mig_geom = state_data["mig_geometry"]
+        for gpu_idx in (0, 1):
+            for s in mig_geom.get(gpu_idx, [0.0, 0.0]):
+                obs_list.append(float(s))
+
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
@@ -196,10 +200,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         action: int,
         reqs: Dict[m.AgentId, List[m.Request]],
         current_time: float,
-        progress_ratio: float,
     ) -> float:
         enum_action = list(m.ResourceManagerAction)[action]
-        return compute_reward(reqs, enum_action, current_time, progress_ratio)
+        return compute_reward(reqs, enum_action, current_time, agents=self.sim.agents)
 
     def _is_action_valid(self, action: int) -> bool:
         return self._current_action_mask[action]
@@ -225,12 +228,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         )
 
         # 3. Compute new state and reward
-        self.global_step += 1
-        progress_ratio = self.global_step / TRAINING_CONFIG.total_timesteps
-
         obs = self._get_obs(state_data)
         reward = self._calculate_reward(
-            action, state_data["requests"], self.sim.current_time, progress_ratio
+            action, state_data["requests"], self.sim.current_time
         )
 
         self.current_step += 1
@@ -355,12 +355,7 @@ def train(ckpt: Optional[Path] = None) -> None:
 
     def lr_schedule(progress_remaining: float) -> float:
         """Linearly decays from lr_max (start) to lr_min (end)."""
-        if TRAINING_CONFIG.dynamic_penalty:
-            if progress_remaining > 0.75:
-                return lr_max
-            return lr_min + (lr_max - lr_min) * (progress_remaining / 0.75)
-        else:
-            return lr_min + (lr_max - lr_min) * progress_remaining
+        return lr_min + (lr_max - lr_min) * progress_remaining
 
     model: MaskablePPO
     if ckpt is not None:

@@ -842,7 +842,8 @@ class EnvironmentStateData(TypedDict):
     kv_cache_utilization: Dict[AgentId, Tuple[float, ...]]
     avg_composite_latency: Dict[AgentId, Tuple[float, ...]]
     n_mig_instance: Dict[AgentId, float]
-    mig_geometry: Dict[AgentId, Tuple[float, ...]]
+    agent_owns_mig: Dict[AgentId, Tuple[float, ...]]
+    mig_geometry: Dict[int, List[float]]
     current_budget: float
     recovery_flag: bool
     avg_running_requests: Dict[AgentId, Tuple[float, ...]]

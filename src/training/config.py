@@ -206,8 +206,16 @@ class TrainingConfig:
         return self._data["reward"]["clipping"]
 
     @property
-    def dynamic_penalty(self) -> bool:
-        return self._data["reward"].get("dynamic_penalty", False)
+    def quality_bonus(self) -> bool:
+        return self._data["reward"].get("quality_bonus", False)
+
+    @property
+    def gpu_affinity(self) -> bool:
+        return self._data["reward"].get("gpu_affinity", False)
+
+    @property
+    def gpu_affinity_bonus(self) -> float:
+        return float(self._data["reward"].get("gpu_affinity_bonus", 5.0))
 
     @property
     def total_timesteps(self) -> int:
