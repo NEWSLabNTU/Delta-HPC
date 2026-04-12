@@ -1,5 +1,5 @@
 training:
-  phase: 2
+  phase: 1
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -18,13 +18,13 @@ training:
     queue_length_trend_clamp: 3.0
     default_waiting_qj: 1.0
   PPO:
-    phase_1:
-      episode_length: 1024
-      n_steps: 256
+    phase_1: # vram transfer
+      episode_length: 512
+      n_steps: 2048
       lr_max: 3.0e-4
       lr_min: 5.0e-5
-      batch_size: 64
-      n_epochs: 15
+      batch_size: 128
+      n_epochs: 20
       gamma: 0.995
       gae_lambda: 0.90
       clip_range: 0.2
@@ -35,13 +35,13 @@ training:
       net_arch:
         pi: [128, 128]
         vf: [512, 512]
-    phase_2:
-      episode_length: 512
-      n_steps: 2048
+    phase_2: # vram transfer + mig action
+      episode_length: 1024
+      n_steps: 256
       lr_max: 3.0e-4
       lr_min: 5.0e-5
-      batch_size: 128
-      n_epochs: 20
+      batch_size: 64
+      n_epochs: 15
       gamma: 0.995
       gae_lambda: 0.90
       clip_range: 0.2

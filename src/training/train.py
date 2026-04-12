@@ -84,15 +84,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         if phase == m.TrainingPhase.PHASE_1:
             for act_id, action in enumerate(m.ResourceManagerAction):
                 if action != m.ResourceManagerAction.NO_ACTION and isinstance(
-                    action.value, m.VramTransferAction
-                ):
-                    mask[act_id] = False
-        elif phase == m.TrainingPhase.PHASE_2:
-            for act_id, action in enumerate(m.ResourceManagerAction):
-                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
                     action.value, m.MigAction
                 ):
                     mask[act_id] = False
+        elif phase == m.TrainingPhase.PHASE_2:
+            # Enable all actions
+            pass
 
         # Cooldown (Per-Agent)
         cooldown_steps = TRAINING_CONFIG.action_cooldown
@@ -280,6 +277,12 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
 def train(ckpt: Optional[Path] = None) -> None:
     phase = TRAINING_CONFIG.phase
+
+    if phase == m.TrainingPhase.PHASE_2 and ckpt is None:
+        raise ValueError(
+            "Training Phase 2 requires a checkpoint (--ckpt) from Phase 1."
+        )
+
     run_name = f"{TIMESTAMP}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
