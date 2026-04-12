@@ -6,7 +6,8 @@ import gymnasium as gym
 from pathlib import Path
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from typing import List
+import numpy.typing as npt
+from typing import Any, Dict, List, Optional, Tuple
 
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
@@ -23,7 +24,7 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         self,
         simulator: m.Simulator,
         workload: Workload,
-        baseline_mode: BenchMode = None,
+        baseline_mode: BenchMode,
     ):
         super().__init__(simulator, enable_log=False)
         self.workload = workload
@@ -34,30 +35,30 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         # Overwrite episode length
         self.max_steps = BENCH_CONFIG.benchmark_length
 
-    def reset(self, *, seed=None, options=None):
-        gym.Env.reset(self, seed=seed)
+    def reset(
+        self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
+    ) -> Tuple[npt.NDArray[np.float32], Dict[str, Any]]:
+        gym.Env[npt.NDArray[np.float32], int].reset(self, seed=seed)
         self.current_step = 0
         self.load_turn = 0
         self.episode_count += 1
 
         # Determine initialization mode for baselines
-        mode_str = "random"
-        if self.baseline_mode == BenchMode.BASELINE_7G:
-            mode_str = "7g"
-        elif self.baseline_mode == BenchMode.BASELINE_2_2_2_1:
-            mode_str = "2_2_2_1"
+        mode_str = {
+            BenchMode.BASELINE_7G: "7g",
+            BenchMode.BASELINE_2_2_2_1: "2_2_2_1",
+            BenchMode.RL: "random",
+        }[self.baseline_mode]
 
         # Internal SIM_CONFIG state is now managed via generate_initial_state()
         self.sim.reset(mode=mode_str)
 
         # Step 2: Initialize workload and simulator
         self.request_loader = BenchRequestLoader(self.workload)
-        requests = []
+        requests: List[m.Request] = []
         for aid in m.AgentId:
             requests.extend(
-                self.request_loader.generate_requests(
-                    agent_id=aid, turn=self.load_turn
-                )
+                self.request_loader.generate_requests(agent_id=aid, turn=self.load_turn)
             )
 
         self.sim.init_simulator(requests, BENCH_CONFIG.benchmark_length)
@@ -75,11 +76,11 @@ class BenchRunner:
         self.workload = workload
         self.mode = mode  # "RL", "7g", "2_2_2_1"
         self.ckpt_path = ckpt_path
-        self.results = {}
+        self.results: Dict[str, Any] = {}
 
     def run(self):
-        agents = {}
-        engines = {}  # Sim reset will rebuild these
+        agents: Dict[m.AgentId, m.Agent] = {}
+        engines: Dict[str, m.LLMEngine] = {}  # Sim reset will rebuild these
         for aid in m.AgentId:
             agents[aid] = AgentImpl(aid)
 
@@ -87,7 +88,7 @@ class BenchRunner:
         env = BenchMIGResourceEnv(
             sim,
             self.workload,
-            baseline_mode=self.mode if self.mode != BenchMode.RL else None,
+            baseline_mode=self.mode,
         )
 
         model = None
@@ -104,34 +105,40 @@ class BenchRunner:
             else:
                 venv = vec_env
 
-            custom_objects = {
+            custom_objects: Dict[str, Any] = {
                 "learning_rate": 0.0,
                 "clip_range": 0.2,
-                "lr_schedule": lambda _: 0.0,
+                "lr_schedule": lambda: 0.0,
             }
-            model = MaskablePPO.load(
+            model = MaskablePPO.load(  # type: ignore
                 self.ckpt_path,
                 env=venv,
                 device="cuda",
                 custom_objects=custom_objects,
                 verbose=1,
             )
-            obs = venv.reset()
+            obs = venv.reset()  # type: ignore
         else:
             obs, _ = env.reset()
 
         # Display Initial State
         print(f"\n[Initial State: {self.mode.name}]")
-        state_info = [
+        state_info: List[List[str]] = [
             [
                 e["gpu"],
                 e["agent"],
                 e["mig"],
-                "✓" if e.get("is-permanent", False) else " "
+                "✓" if e.get("is-permanent", False) else " ",
             ]
             for e in utils.SIM_CONFIG.initial_state
         ]
-        print(tabulate.tabulate(state_info, headers=["GPU", "Agent", "MIG", "Perm"], tablefmt="fancy_outline"))
+        print(
+            tabulate.tabulate(
+                state_info,
+                headers=["GPU", "Agent", "MIG", "Perm"],
+                tablefmt="fancy_outline",
+            )
+        )
 
         # Metrics tracking
         total_steps = BENCH_CONFIG.benchmark_length
@@ -140,11 +147,13 @@ class BenchRunner:
         merge_count = {aid: 0 for aid in m.AgentId}
         transfer_count = {aid: 0 for aid in m.AgentId}
         last_merge_split_time = {aid: 0.0 for aid in m.AgentId}
-        action_durations = {aid: [] for aid in m.AgentId}
-        completed_reqs_map = {aid: {} for aid in m.AgentId}
+        action_durations: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
+        completed_reqs_map: Dict[m.AgentId, Dict[str, m.Request]] = {
+            aid: {} for aid in m.AgentId
+        }
         presence_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
 
-        for step in tqdm(
+        for _ in tqdm(
             range(total_steps),
             desc=f"{self.mode.name:<5} | {self.workload.name:<8}",
             leave=True,
@@ -153,7 +162,7 @@ class BenchRunner:
             if self.mode == BenchMode.RL:
                 assert model is not None
                 action_masks = env.action_masks()
-                action_np, _ = model.predict(
+                action_np, _ = model.predict(  # type: ignore
                     obs, action_masks=action_masks, deterministic=True
                 )
                 action = int(action_np[0])
@@ -174,7 +183,8 @@ class BenchRunner:
                         split_count[act_val.victim] += 1
                     elif act_val.action == "merge":
                         merge_count[act_val.victim] += 1
-                elif isinstance(act_val, m.VramTransferAction):
+                else:
+                    # VRAMTransfer
                     involved_agents = [act_val.giver, act_val.receiver]
                     transfer_count[act_val.giver] += 1
 
@@ -186,7 +196,7 @@ class BenchRunner:
                     last_merge_split_time[aid] = env.sim.current_time
 
             if self.mode == BenchMode.RL:
-                obs, _, _, _ = venv.step([action])
+                obs, _, _, _ = venv.step([action])  # type: ignore
             else:
                 obs, _, _, _, _ = env.step(action)
 
@@ -208,8 +218,8 @@ class BenchRunner:
                         completed_reqs_map[aid][req.id] = req
 
         # Extract Episode Metrics
-        ttft_list = {aid: [] for aid in m.AgentId}
-        tpot_list = {aid: [] for aid in m.AgentId}
+        ttft_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
+        tpot_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
         tokens_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
 
         for aid, req_map in completed_reqs_map.items():
@@ -229,6 +239,7 @@ class BenchRunner:
                 tpot_list[aid].append(tpot)
 
                 # Check serving engine MIG profile
+                assert req.serving_engine is not None
                 tokens_by_mig[aid][req.serving_engine.mig_profile] += (
                     req.generated_tokens
                 )
@@ -267,7 +278,7 @@ class BenchRunner:
         # Workload summary aggregation
         workload_summary = {}
         for aid, phases in env.phase_history.items():
-            summary = {}
+            summary: Dict[str, Dict[str, float]] = {}
             for p in phases:
                 pat = p["pattern"]
                 if pat not in summary:
@@ -275,7 +286,7 @@ class BenchRunner:
                 summary[pat]["total_duration"] += p["duration"]
                 summary[pat]["weighted_rate"] += p["avg_rate"] * p["duration"]
 
-            final_phases = []
+            final_phases: List[Dict[str, Any]] = []
             total_ben_dur = sum(s["total_duration"] for s in summary.values())
             for pat in sorted(summary.keys()):
                 s = summary[pat]
@@ -297,22 +308,20 @@ class BenchRunner:
         self.results = res
 
 
-def print_metrics_table(mode_name: str, workload_name: str, results: dict):
+def print_metrics_table(mode_name: str, workload_name: str, results: Dict[str, Any]):
     print(f"\nMode: {mode_name} | Workload: {workload_name}")
 
     # Filter out workload_summary and then iterate
     agents = [k for k in results.keys() if k != "workload_summary"]
-    for i, aid in enumerate(agents):
+    for aid in agents:
         metrics = results[aid]
 
         ttft_str = "/".join([f"{x:.3f}" for x in metrics["ttft_percentiles"]])
         tpot_str = "/".join([f"{x:.3f}" for x in metrics["tpot_quartiles"]])
         avg_q_str = f"{metrics['avg_waiting_queue']:.3f}"
-        smt_str = (
-            f"{metrics['split_count']}/{metrics['merge_count']}/{metrics['transfer_count']}"
-        )
+        smt_str = f"{metrics['split_count']}/{metrics['merge_count']}/{metrics['transfer_count']}"
 
-        mig_tokens = []
+        mig_tokens: List[str] = []
         for mig in sorted(
             metrics["token_mig_percentages"].keys(), key=lambda m: m.size
         ):
@@ -321,7 +330,7 @@ def print_metrics_table(mode_name: str, workload_name: str, results: dict):
                 mig_tokens.append(f"{mig.size}g: {val:.1f}%")
         mig_str = "\n".join(mig_tokens)
 
-        mig_existence = []
+        mig_existence: List[str] = []
         for mig in sorted(
             metrics["mig_existence_percentages"].keys(), key=lambda m: m.size
         ):
@@ -343,14 +352,14 @@ def print_metrics_table(mode_name: str, workload_name: str, results: dict):
         print(tabulate.tabulate(table_data, tablefmt="fancy_outline"))
 
 
-def print_workload_summary_table(results: dict):
+def print_workload_summary_table(results: Dict[str, Any]):
     summary = results.get("workload_summary", {})
     if not summary:
         return
 
     print("\nWorkload Summary (Actual Patterns Encountered)")
     headers = ["Agent", "Pattern", "Avg Rate (req/s)", "Duration (s)", "Proportion (%)"]
-    table_data = []
+    table_data: List[str | List[str]] = []
 
     for j, aid in enumerate(sorted(summary.keys())):
         if j > 0:

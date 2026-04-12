@@ -1,5 +1,5 @@
 import random
-from typing import List
+from typing import Dict, List, TypedDict
 
 import src.simulation.models as m
 from src.simulation.request import RequestImpl
@@ -9,10 +9,18 @@ from src.bench.models import Workload
 from src.training.config import TRAINING_CONFIG
 
 
+class PhaseHistoryType(TypedDict):
+    pattern: str
+    avg_rate: float
+    duration: float
+
+
 class BenchRequestLoader:
     def __init__(self, workload: Workload):
         self.workload = workload
-        self.phase_history = {}  # {agent_id: [ {pattern, avg_rate, duration} ]}
+        self.phase_history: Dict[
+            m.AgentId, List[PhaseHistoryType]
+        ] = {}  # {agent_id: [ {pattern, avg_rate, duration} ]}
         if workload != Workload.HYBRID:
             self.min_rate, self.max_rate = BENCH_CONFIG.get_rate_range(workload)
 
@@ -53,7 +61,7 @@ class BenchRequestLoader:
                 phase_start_time = current_time
                 phase_end = current_time + duration
 
-                rates_in_phase = []
+                rates_in_phase: List[float] = []
                 while current_time < phase_end and current_time < max_time:
                     rate = random.uniform(min_rate, max_rate)
                     rates_in_phase.append(rate)

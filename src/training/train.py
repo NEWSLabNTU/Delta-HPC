@@ -366,7 +366,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             "learning_rate": lr_schedule,
             "tensorboard_log": f"./tboard/{run_name}",
         }
-        model = MaskablePPO.load(
+        model = MaskablePPO.load(  # type: ignore
             ckpt,
             env=env,
             device="cuda",
