@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import random
 from collections import defaultdict
 from sortedcontainers import SortedList
 from typing import Any, List, Dict, Optional, Tuple, cast
@@ -726,7 +724,7 @@ class SimulatorImpl(m.Simulator):
             current_step,
         )
 
-    def reset(self) -> None:
+    def reset(self, mode: str = "random") -> None:
         """Resets the simulator to its initial hardware and agent state."""
         self._current_time = 0.0
         self._events.clear()
@@ -734,9 +732,13 @@ class SimulatorImpl(m.Simulator):
         self._engines.clear()
         utils.USED_EIDS.clear()
 
+        # Step 1: Generate the initial hardware state based on mode
+        utils.SIM_CONFIG.generate_initial_state(mode)
+
         for aid in m.AgentId:
             self._agents[aid] = AgentImpl(aid)
 
+        # Step 2: Initialize engines for all GPUs
         for eng_conf in utils.SIM_CONFIG.initial_state:
             mig = m.MIGProfile.from_string(eng_conf["mig"])
             gpu = int(eng_conf["gpu"])
@@ -755,30 +757,6 @@ class SimulatorImpl(m.Simulator):
             )
             agent.add_engine(eng)
             self._engines[eid] = eng
-
-        # Random initialization for GPU 0 and 1 if not already populated
-        populated_gpus = {int(conf["gpu"]) for conf in utils.SIM_CONFIG.initial_state}
-        for gpu in [0, 1]:
-            if gpu in populated_gpus:
-                continue
-
-            # Select a random combination
-            combo = random.choice(list(m.InitialMIGCombination)).value
-            for mig in combo:
-                # Assign GPU 0 to Coding and GPU 1 to RAG
-                aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
-                agent = self._agents[aid]
-                eid = utils.generate_engine_id(gpu, mig.string)
-                eng = LLMEngineImpl.create(
-                    gpu=gpu,
-                    engine_id=eid,
-                    owner=agent,
-                    mig_profile=mig,
-                    current_time=0.0,
-                    is_permanent=False,
-                )
-                agent.add_engine(eng)
-                self._engines[eid] = eng
 
         self._environment_state.reset_for_next_interval(0.0, self._agents)
         self._environment_state.refresh_budget()

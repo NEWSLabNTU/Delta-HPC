@@ -1,21 +1,17 @@
 import argparse
-from pathlib import Path
-import numpy as np
-import gymnasium as gym
-from tqdm import tqdm
-from typing import List
 import tabulate
+import numpy as np
+from tqdm import tqdm
+import gymnasium as gym
+from pathlib import Path
+from sb3_contrib import MaskablePPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from typing import List
 
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
-import src.simulation.utils as utils
-
 from src.training.train import MIGResourceEnv
-
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from sb3_contrib import MaskablePPO
-
 from src.bench.models import BenchMode, Workload
 from src.bench.config import BENCH_CONFIG
 from src.bench.request_loader import BenchRequestLoader
@@ -43,54 +39,32 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         self.load_turn = 0
         self.episode_count += 1
 
-        # Override initial state for baselines if needed
-        original_initial_state = utils.SIM_CONFIG.initial_state
-        if self.baseline_mode in [BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1]:
-            new_state = []
-            # 1. Preserve permanent engines (GPU 2)
-            for conf in original_initial_state:
-                if conf.get("is-permanent", False):
-                    new_state.append(conf)
+        # Determine initialization mode for baselines
+        mode_str = "random"
+        if self.baseline_mode == BenchMode.BASELINE_7G:
+            mode_str = "7g"
+        elif self.baseline_mode == BenchMode.BASELINE_2_2_2_1:
+            mode_str = "2_2_2_1"
 
-            # 2. Explicitly add GPU 0 (Coding) and GPU 1 (RAG)
-            for gpu in [0, 1]:
-                aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
-                if self.baseline_mode == BenchMode.BASELINE_7G:
-                    profiles = m.InitialMIGCombination.C7.value
-                else:  # BASELINE_2_2_2_1
-                    profiles = m.InitialMIGCombination.C2_2_2_1.value
+        # Internal SIM_CONFIG state is now managed via generate_initial_state()
+        self.sim.reset(mode=mode_str)
 
-                for prof in profiles:
-                    new_state.append(
-                        {
-                            "gpu": gpu,
-                            "mig": prof.string,
-                            "agent": aid.value,
-                            "is-permanent": False,
-                        }
-                    )
-            utils.SIM_CONFIG.initial_state = new_state
-
-        try:
-            self.sim.reset()
-
-            self.request_loader = BenchRequestLoader(self.workload)
-            requests = []
-            for aid in m.AgentId:
-                requests.extend(
-                    self.request_loader.generate_requests(
-                        agent_id=aid, turn=self.load_turn
-                    )
+        # Step 2: Initialize workload and simulator
+        self.request_loader = BenchRequestLoader(self.workload)
+        requests = []
+        for aid in m.AgentId:
+            requests.extend(
+                self.request_loader.generate_requests(
+                    agent_id=aid, turn=self.load_turn
                 )
+            )
 
-            self.sim.init_simulator(requests, BENCH_CONFIG.benchmark_length)
-            self.sim.run()  # advance to the first action interval
-            self.phase_history = self.request_loader.phase_history
+        self.sim.init_simulator(requests, BENCH_CONFIG.benchmark_length)
+        self.sim.run()  # advance to the first action interval
+        self.phase_history = self.request_loader.phase_history
 
-            state_data = self.sim.get_state(self.current_step)
-            obs = self._get_obs(state_data)
-        finally:
-            utils.SIM_CONFIG.initial_state = original_initial_state
+        state_data = self.sim.get_state(self.current_step)
+        obs = self._get_obs(state_data)
 
         return obs, {}
 
