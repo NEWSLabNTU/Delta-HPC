@@ -59,17 +59,17 @@ training:
       duration: [2200.0, 2600.0]
       rate:
         CodingAgent: [3.5, 4.5]
-        RAGAgent: [6.0, 7.0]
+        RAGAgent: [4.5, 5.5]
     idle:
       duration: [2200.0, 2600.0]
       rate:
         CodingAgent: [0.1, 0.2]
-        RAGAgent: [0.5, 1.0]
+        RAGAgent: [0.1, 0.5]
     balanced:
       duration: [2200.0, 2600.0]
       rate:
         CodingAgent: [0.5, 1.0]
-        RAGAgent: [2.0, 3.0]
+        RAGAgent: [1.0, 2.0]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes
@@ -92,5 +92,5 @@ training:
     scaling: 0.1
     clipping: -30.0
     quality_bonus: true
-    gpu_affinity: true
-    gpu_affinity_bonus: 5.0
+    gpu_affinity: false
+    gpu_affinity_bonus: 3.0

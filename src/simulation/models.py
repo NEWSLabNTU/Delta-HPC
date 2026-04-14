@@ -192,6 +192,9 @@ class Request(ABC):
     @abstractmethod
     def id(self) -> str: ...
 
+    @abstractmethod
+    def clone(self) -> Request: ...
+
     @property
     @abstractmethod
     def agent_id(self) -> AgentId: ...

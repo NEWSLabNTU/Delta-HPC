@@ -2,12 +2,13 @@ simulation:
   initial_state:
     engines:
       # Permanent Engines for backups
+      # Left normal engines initialized randomly
       - gpu: 2
-        mig: 1g.10gb
+        mig: 4g.20gb
         agent: CodingAgent
         is-permanent: true
       - gpu: 2
-        mig: 1g.10gb
+        mig: 3g.20gb
         agent: RAGAgent
         is-permanent: true
 

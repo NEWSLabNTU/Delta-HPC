@@ -107,9 +107,6 @@ def compute_reward(
     else:
         affinity_bonus = 0.0
 
-    print(f"quality_bonus: {quality_bonus}")
-    print(f"total_penalty: {total_penalty}")
-    print(f"affinity_bonus: {affinity_bonus}")
     total_reward = (
         -total_penalty - omega + quality_bonus + affinity_bonus
     ) * TRAINING_CONFIG.scaling

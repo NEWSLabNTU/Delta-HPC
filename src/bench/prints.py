@@ -48,7 +48,7 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
     headers = ["Agent", "Pattern", "Avg Rate (req/s)", "Duration (s)", "Proportion (%)"]
     table_data: List[str | List[str]] = []
 
-    for j, aid in enumerate(sorted(summary.keys())):
+    for j, aid in enumerate(sorted(summary.keys(), key=lambda a: a.value)):
         if j > 0:
             table_data.append(tabulate.SEPARATING_LINE)
 

@@ -19,7 +19,6 @@ class RequestImpl(m.Request):
         self._prompt_tokens = prompt_tokens
         self._arrival_time = arrival_time
         self._original_id = original_id
-
         self._serving_engine = None
         self._completion_tokens = 0
         self._decode_time = 0.0
@@ -29,6 +28,15 @@ class RequestImpl(m.Request):
         self._start_time: Optional[float] = None
         self._first_token_time: Optional[float] = None
         self._finish_time: Optional[float] = None
+
+    def clone(self) -> m.Request:
+        return RequestImpl(
+            id=self._id,
+            agent_id=self._agent_id,
+            prompt_tokens=self._prompt_tokens,
+            arrival_time=self._arrival_time,
+            original_id=self._original_id,
+        )
 
     @property
     def id(self) -> str:
