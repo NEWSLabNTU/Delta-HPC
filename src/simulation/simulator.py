@@ -602,7 +602,10 @@ class SimulatorImpl(m.Simulator):
         self._redistribute_agent_waiting_requests(agent)
         for eng in agent.engines:
             if eng.waiting_queue and len(eng.running_queue) == 0:
-                evt = eng.step(self._current_time, next_arrival_time=None)
+                evt = eng.step(
+                    self._current_time,
+                    next_arrival_time=self._peak_next_stopping_evt(agent.agent_id),
+                )
                 if evt:
                     self._events.add(evt)
 

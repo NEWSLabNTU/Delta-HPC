@@ -138,11 +138,15 @@ class LLMEngineImpl(m.LLMEngine):
 
     def _get_tpot(self, concurrent_requests: int) -> float:
         """Calculate Time Per Output Token using linear regression params with Gaussian noise."""
+        if concurrent_requests == 0:
+            return 0.0
         mu = self._tpot_alpha + self._tpot_beta * concurrent_requests
         return max(0.0, random.gauss(mu, self._tpot_sigma))
 
     def _get_prefill_time(self, num_tokens: int) -> float:
         """Calculate prefill time using polynomial regression params with Gaussian noise"""
+        if num_tokens == 0:
+            return 0.0
         mu = self._prefill_alpha + self._prefill_beta * num_tokens
         return max(0.0, random.gauss(mu, self._prefill_sigma))
 
@@ -317,17 +321,6 @@ class LLMEngineImpl(m.LLMEngine):
                     r.decode_time += duration
                     if r.first_token_time is None:
                         r.first_token_time = self._current_time + duration
-
-                # Cleanup prefill_requests
-                new_prefill: List[m.Request] = []
-                for req in self._running_queue.prefill_requests:
-                    if req.prefill_completed:
-                        req.state = m.RequestState.DECODING
-                        self._running_queue.decoding_requests.append(req)
-                    else:
-                        new_prefill.append(req)
-                self._running_queue.prefill_requests = new_prefill
-
             else:
                 num_decodes = len(self._running_queue.decoding_requests)
                 duration = self._get_tpot(num_decodes)
@@ -337,6 +330,16 @@ class LLMEngineImpl(m.LLMEngine):
                     r.decode_time += duration
                     if r.first_token_time is None:
                         r.first_token_time = self._current_time + duration
+
+            # Cleanup prefill_requests
+            new_prefill: List[m.Request] = []
+            for req in self._running_queue.prefill_requests:
+                if req.prefill_completed:
+                    req.state = m.RequestState.DECODING
+                    self._running_queue.decoding_requests.append(req)
+                else:
+                    new_prefill.append(req)
+            self._running_queue.prefill_requests = new_prefill
 
             # Advance Time
             self._current_time += duration
