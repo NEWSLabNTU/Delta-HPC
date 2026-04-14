@@ -88,9 +88,8 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 10.0 # reconfiguration penalty
+    gamma: 15.0 # reconfiguration penalty
     scaling: 0.1
     clipping: -30.0
     quality_bonus: true
-    gpu_affinity: false
-    gpu_affinity_bonus: 3.0
+    gpu_affinity_bonus: 1.0

@@ -1,5 +1,6 @@
-import time
+import os
 import argparse
+from datetime import datetime
 from pathlib import Path
 import gymnasium as gym
 from gymnasium import spaces
@@ -33,7 +34,9 @@ from src.training.callbacks import (
 )
 
 
-TIMESTAMP = time.strftime("%Y%m%d_%H%M%S")
+TIMESTAMP = os.environ.get(
+    "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+)
 
 
 class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
@@ -277,12 +280,6 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
 def train(ckpt: Optional[Path] = None) -> None:
     phase = TRAINING_CONFIG.phase
-
-    # if phase == m.TrainingPhase.PHASE_2 and ckpt is None:
-    #     raise ValueError(
-    #         "Training Phase 2 requires a checkpoint (--ckpt) from Phase 1."
-    #     )
-
     run_name = f"{TIMESTAMP}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
@@ -362,7 +359,7 @@ def train(ckpt: Optional[Path] = None) -> None:
         print(f"Loading model from checkpoint: {ckpt}")
         custom_objects: Dict[str, Any] = {
             "learning_rate": lr_schedule,
-            "tensorboard_log": f"./tboard/{run_name}",
+            "tensorboard_log": f"./tboard/actives/{run_name}",
         }
         model = MaskablePPO.load(  # type: ignore
             ckpt,
@@ -371,7 +368,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             custom_objects=custom_objects,
         )
         # Ensure tensorboard logger is properly setup for the new run
-        model.tensorboard_log = f"./tboard/{run_name}"
+        model.tensorboard_log = f"./tboard/actives/{run_name}"
     else:
         model = MaskablePPO(
             "MlpPolicy",
@@ -390,7 +387,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             if not TRAINING_CONFIG.rl_enable_ent_coef_schd
             else TRAINING_CONFIG.rl_max_ent_coef,
             device="cuda",
-            tensorboard_log=f"./tboard/{run_name}",
+            tensorboard_log=f"./tboard/actives/{run_name}",
         )
 
     # 3. Setup Callbacks

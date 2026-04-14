@@ -1,3 +1,4 @@
+import os
 import yaml
 from pathlib import Path
 from typing import Literal, Tuple, List
@@ -210,10 +211,6 @@ class TrainingConfig:
         return self._data["reward"].get("quality_bonus", False)
 
     @property
-    def gpu_affinity(self) -> bool:
-        return self._data["reward"].get("gpu_affinity", False)
-
-    @property
     def gpu_affinity_bonus(self) -> float:
         return float(self._data["reward"].get("gpu_affinity_bonus", 5.0))
 
@@ -222,6 +219,5 @@ class TrainingConfig:
         return self._data["total_timesteps"]
 
 
-# Automatically load from default path
-project_root = Path(".")
-TRAINING_CONFIG = TrainingConfig.load(project_root / "configs" / "training_config.yaml")
+config_path_env = os.environ.get("TRAINING_CONFIG_PATH", "configs/training_config.yaml")
+TRAINING_CONFIG = TrainingConfig.load(Path(config_path_env))

@@ -102,10 +102,9 @@ def compute_reward(
         quality_bonus = 0.0
 
     # GPU affinity bonus
-    if TRAINING_CONFIG.gpu_affinity and agents is not None:
+    affinity_bonus = 0.0
+    if agents is not None and TRAINING_CONFIG.gpu_affinity_bonus != 0:
         affinity_bonus = _compute_gpu_affinity_bonus(agents)
-    else:
-        affinity_bonus = 0.0
 
     total_reward = (
         -total_penalty - omega + quality_bonus + affinity_bonus
