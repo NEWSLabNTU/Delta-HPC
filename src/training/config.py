@@ -1,7 +1,7 @@
 import os
 import yaml
 from pathlib import Path
-from typing import Literal, Tuple, List
+from typing import Any, Dict, Literal, Tuple, List
 
 import src.simulation.models as m
 from src.training.models import AgentPattern
@@ -78,7 +78,7 @@ class TrainingConfig:
         return float(self._data["normalization"]["vram_transfer_amount"])
 
     @property
-    def _ppo_cfg(self) -> dict:
+    def _ppo_cfg(self) -> Dict[str, Any]:
         phase_key = f"phase_{self.phase.value}"
         return self._data["PPO"][phase_key]
 

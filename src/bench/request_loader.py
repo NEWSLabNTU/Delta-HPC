@@ -1,18 +1,12 @@
 import random
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, Optional
 
 import src.simulation.models as m
 from src.simulation.request import RequestImpl
 import src.simulation.utils as utils
 from src.bench.config import BENCH_CONFIG
-from src.bench.models import Workload
+from src.bench.models import Workload, PhaseHistoryType
 from src.training.config import TRAINING_CONFIG
-
-
-class PhaseHistoryType(TypedDict):
-    pattern: str
-    avg_rate: float
-    duration: float
 
 
 class BenchRequestLoader:

@@ -34,7 +34,7 @@ from src.training.callbacks import (
 )
 
 
-TIMESTAMP = os.environ.get(
+TRAINING_RUN_ID = os.environ.get(
     "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
 )
 
@@ -70,7 +70,9 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.max_steps: int = TRAINING_CONFIG.episode_length
         self.load_turn: int = 0
         self.episode_count: int = 0
-        self._logger = TrainingLogger(enabled=enable_log)
+        self._logger = TrainingLogger(
+            log_dir=f"logs/train/{TRAINING_RUN_ID}", enabled=enable_log
+        )
         self.request_loader = RequestLoader()
         self._current_action_mask: npt.NDArray[np.bool_] = self.action_masks()
         self.enable_replenish: bool = True
@@ -280,7 +282,7 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
 def train(ckpt: Optional[Path] = None) -> None:
     phase = TRAINING_CONFIG.phase
-    run_name = f"{TIMESTAMP}_phase_{phase.value}"
+    run_name = f"{TRAINING_RUN_ID}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:

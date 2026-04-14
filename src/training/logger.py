@@ -1,5 +1,4 @@
 from pathlib import Path
-from datetime import datetime
 from typing import Dict
 
 import src.simulation.models as m
@@ -12,14 +11,10 @@ class TrainingLogger:
     supporting conditional logging (sampling).
     """
 
-    def __init__(
-        self, log_dir: str = "logs", enabled: bool = True, log_frequency: int = 1
-    ):
+    def __init__(self, log_dir: str, enabled: bool = True, log_frequency: int = 1):
         self.enabled = enabled
         self.log_frequency = log_frequency  # Log every N steps
-        self.log_dir = (
-            Path(log_dir) / "train" / datetime.now().strftime("%Y%m%d_%H%M%S")
-        )
+        self.log_dir = Path(log_dir)
         self.file = None
         self._ensure_dir()
 

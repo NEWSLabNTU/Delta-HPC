@@ -6,35 +6,41 @@ from datetime import datetime
 import itertools
 import time
 import subprocess
+from typing import Dict, Iterator, Mapping, Set, Tuple, Any, Union, cast
+
+type Tree = Union[Mapping[str, "Tree"], Any]
 
 
-def load_yaml(path: Path) -> dict:
+def load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
 
-def save_yaml(data: dict, path: Path):
+def save_yaml(data: Dict[str, Any], path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False)
 
 
-def dict_get(d: dict, keys: tuple):
+def dict_get(d: Dict[str, Any], keys: Tuple[str, ...]):
     v = d
     for k in keys:
         v = v[k]
     return v
 
 
-def dict_set(d: dict, keys: tuple, value):
+def dict_set(d: Dict[str, Any], keys: Tuple[str, ...], value: Any):
     v = d
     for k in keys[:-1]:
         v = v[k]
     v[keys[-1]] = value
 
 
-def iter_leaves(d, current_path=()):
-    if isinstance(d, dict):
+def iter_leaves(
+    d: Tree, current_path: Tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], Any]]:
+    if isinstance(d, Mapping):
+        d = cast(Mapping[str, Tree], d)
         for k, v in d.items():
             yield from iter_leaves(v, current_path + (k,))
     else:
@@ -57,7 +63,7 @@ def main():
     base_config = load_yaml(args.base_config)
     grid_config = load_yaml(args.grid_config)
 
-    grid_params = {}
+    grid_params: Dict[Tuple[str, ...], Any] = {}
 
     # Validate keys in grid config exist in base config
     # Ensure exact tree format
@@ -95,7 +101,7 @@ def main():
         print("Creating tmux session 'hpc'")
         subprocess.run(["tmux", "new-session", "-d", "-s", "hpc"])
 
-    seen_ids = set()
+    seen_ids: Set[str] = set()
 
     for idx, combo in enumerate(combinations):
         config_copy = copy.deepcopy(base_config)

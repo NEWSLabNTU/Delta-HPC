@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import TypedDict
 
 
 class BenchMode(Enum):
@@ -12,3 +13,9 @@ class Workload(Enum):
     BALANCED = "balanced"
     BUSY = "busy"
     HYBRID = "hybrid"
+
+
+class PhaseHistoryType(TypedDict):
+    pattern: str
+    avg_rate: float
+    duration: float

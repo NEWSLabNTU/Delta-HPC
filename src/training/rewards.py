@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import src.simulation.models as m
 from src.training.config import TRAINING_CONFIG
@@ -14,7 +14,7 @@ def _compute_gpu_affinity_bonus(agents: Dict[m.AgentId, m.Agent]) -> float:
     bonus_per_pure_gpu = TRAINING_CONFIG.gpu_affinity_bonus
 
     # Collect the set of agent owners per GPU (excluding GPU 2)
-    gpu_owners: Dict[int, set] = {}
+    gpu_owners: Dict[int, Set[m.AgentId]] = {}
     for agent_id, agent in agents.items():
         for e in agent.engines:
             if e.is_permanent:

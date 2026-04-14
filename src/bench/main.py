@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
-from src.bench.models import BenchMode, Workload
+from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
 from src.bench.request_loader import BenchRequestLoader
 from src.bench.prints import print_metrics, print_workloads
@@ -221,10 +221,10 @@ class BenchRunner:
 
 
 def _get_workload_summary(
-    phase_history: Dict[m.AgentId, List[Dict[str, Any]]],
+    phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
 ) -> Dict[m.AgentId, List[Dict[str, Any]]]:
     # Workload summary aggregation
-    workload_summary = {}
+    workload_summary: Dict[m.AgentId, List[Dict[str, Any]]] = {}
     for aid, phases in phase_history.items():
         summary: Dict[str, Dict[str, float]] = {}
         for p in phases:
