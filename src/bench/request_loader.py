@@ -1,5 +1,5 @@
 import random
-from typing import Dict, List, TypedDict
+from typing import Dict, List, Optional, TypedDict
 
 import src.simulation.models as m
 from src.simulation.request import RequestImpl
@@ -16,8 +16,9 @@ class PhaseHistoryType(TypedDict):
 
 
 class BenchRequestLoader:
-    def __init__(self, workload: Workload):
+    def __init__(self, workload: Workload, seed: Optional[int] = None):
         self.workload = workload
+        self._base_seed = seed if seed is not None else BENCH_CONFIG.seed
         self.phase_history: Dict[
             m.AgentId, List[PhaseHistoryType]
         ] = {}  # {agent_id: [ {pattern, avg_rate, duration} ]}
@@ -39,7 +40,9 @@ class BenchRequestLoader:
         else:
             items = all_items
 
-        random.seed()  # true randomization
+        # Seed deterministically: base_seed combined with agent index for uniqueness
+        agent_idx = list(m.AgentId).index(agent_id)
+        random.seed(self._base_seed ^ (agent_idx * 0x9E3779B9))
         current_time = start_time
 
         max_time = (

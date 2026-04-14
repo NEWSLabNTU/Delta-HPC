@@ -2,6 +2,7 @@ import yaml
 from pathlib import Path
 from typing import Tuple
 
+import src.simulation.models as m
 from src.bench.models import Workload
 
 
@@ -11,6 +12,8 @@ class BenchConfig:
             data = yaml.safe_load(f)
             self._workloads = data["workloads"]
             self._length = data["benchmark-length"]
+            self._phase = data.get("phase", 2)
+            self._seed = data.get("seed", 42)
 
     def get_rate_range(self, workload: Workload) -> Tuple[float, float]:
         cfg = self._workloads[workload.value]["rate"]
@@ -23,6 +26,14 @@ class BenchConfig:
     @property
     def benchmark_length(self) -> int:
         return int(self._length)
+
+    @property
+    def phase(self) -> m.TrainingPhase:
+        return m.TrainingPhase(self._phase)
+
+    @property
+    def seed(self) -> int:
+        return int(self._seed)
 
 
 # Automatically load from default path
