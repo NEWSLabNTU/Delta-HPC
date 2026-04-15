@@ -9,6 +9,7 @@ from src.simulation.simulator import SimulatorImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.agent import AgentImpl
 
+from src.training.models import TrainingPhase
 from src.training.rewards import compute_reward
 
 
@@ -20,7 +21,7 @@ def main():
     )
     args = parser.parse_args()
 
-    phase = m.TrainingPhase(args.phase)
+    phase = TrainingPhase(args.phase)
     print(f"Starting simulation in {phase.name}...")
 
     print("Loading config and datasets...")
@@ -74,14 +75,14 @@ def main():
         mask = sim.get_action_mask()
 
         # Apply phase-based masking
-        if phase == m.TrainingPhase.PHASE_1:
+        if phase == TrainingPhase.PHASE_1:
             # Mask MIG Split/Merge
             for act_id, action in enumerate(m.ResourceManagerAction):
                 if action != m.ResourceManagerAction.NO_ACTION and isinstance(
                     action.value, m.MigAction
                 ):
                     mask[act_id] = False
-        elif phase == m.TrainingPhase.PHASE_2:
+        elif phase == TrainingPhase.PHASE_2:
             pass
 
         valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
@@ -104,7 +105,9 @@ def main():
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")
 
-        reward = compute_reward(state_data["requests"], action, sim.current_time, agents=sim.agents)
+        reward = compute_reward(
+            state_data["requests"], action, sim.current_time, agents=sim.agents
+        )
         print(f"  Reward: {reward:.4f}")
 
         # Count remaining arrival events to replenish proactively

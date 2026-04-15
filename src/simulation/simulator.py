@@ -723,7 +723,9 @@ class SimulatorImpl(m.Simulator):
             current_step,
         )
 
-    def reset(self, mode: str = "random") -> None:
+    def reset(
+        self, init_mode: m.InitialMIGCombination = m.InitialMIGCombination.RANDOM
+    ) -> None:
         """Resets the simulator to its initial hardware and agent state."""
         self._current_time = 0.0
         self._events.clear()
@@ -732,7 +734,7 @@ class SimulatorImpl(m.Simulator):
         utils.USED_EIDS.clear()
 
         # Step 1: Generate the initial hardware state based on mode
-        utils.SIM_CONFIG.generate_initial_state(mode)
+        utils.SIM_CONFIG.generate_initial_state(init_mode)
 
         for aid in m.AgentId:
             self._agents[aid] = AgentImpl(aid)

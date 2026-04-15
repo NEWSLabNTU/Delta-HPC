@@ -13,13 +13,15 @@ class BenchMIGResourceEnv(MIGResourceEnv):
     def __init__(
         self,
         simulator: m.Simulator,
-        baseline_mode: BenchMode,
+        bench_mode: BenchMode,
         requests: List[m.Request],
+        init_mode: m.InitialMIGCombination,
     ):
         super().__init__(simulator, enable_log=False)
-        self.baseline_mode = baseline_mode
+        self.bench_mode = bench_mode
         self.enable_replenish = False
         self._requests = requests
+        self._init_mode = init_mode
 
         # Overwrite episode length
         self.max_steps = BENCH_CONFIG.benchmark_length
@@ -36,15 +38,7 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         self.load_turn = 0
         self.episode_count += 1
 
-        # Determine initialization mode for baselines
-        mode_str = {
-            BenchMode.BASELINE_7G: "7g",
-            BenchMode.BASELINE_2_2_2_1: "2_2_2_1",
-            BenchMode.RL: "random",
-        }[self.baseline_mode]
-
-        # Internal SIM_CONFIG state is now managed via generate_initial_state()
-        self.sim.reset(mode=mode_str)
+        self.sim.reset(init_mode=self._init_mode)
 
         # Use cloned pre-built requests to avoid state corruption between trials
         requests = [req.clone() for req in self._requests]

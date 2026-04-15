@@ -2,8 +2,8 @@ import yaml
 from pathlib import Path
 from typing import Tuple
 
-import src.simulation.models as m
 from src.bench.models import Workload
+from src.training.models import TrainingPhase
 
 
 class BenchConfig:
@@ -28,8 +28,8 @@ class BenchConfig:
         return int(self._length)
 
     @property
-    def phase(self) -> m.TrainingPhase:
-        return m.TrainingPhase(self._phase)
+    def phase(self) -> TrainingPhase:
+        return TrainingPhase(self._phase)
 
     @property
     def seed(self) -> int:

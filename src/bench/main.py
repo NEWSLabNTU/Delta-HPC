@@ -12,6 +12,7 @@ import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
+from src.training.models import TrainingPhase
 from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
@@ -25,14 +26,16 @@ class BenchRunner:
         workload: Workload,
         mode: BenchMode,
         requests: List[m.Request],
+        init_mode: m.InitialMIGCombination = m.InitialMIGCombination.RANDOM,
     ):
         self.workload = workload
         self.mode = mode  # "RL", "7g", "2_2_2_1"
         self.requests = requests
+        self._init_mode = init_mode
 
     def _display_initial_state(self):
         # Display Initial State
-        print(f"\n[Initial State: {self.mode.name}]")
+        print("\n[Initial State]")
         state_info: List[List[str]] = [
             [
                 e["gpu"],
@@ -59,8 +62,9 @@ class BenchRunner:
         sim = SimulatorImpl(agents=agents, engines=engines, no_log=True)
         env = BenchMIGResourceEnv(
             sim,
-            baseline_mode=self.mode,
+            bench_mode=self.mode,
             requests=self.requests,
+            init_mode=self._init_mode,
         )
 
         model = None
@@ -102,8 +106,6 @@ class BenchRunner:
             aid: {} for aid in m.AgentId
         }
         presence_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
-
-        print_banner(self.mode, ckpt.parent.name if ckpt is not None else "")
         self._display_initial_state()
 
         for _ in tqdm(
@@ -265,10 +267,10 @@ def main():
     args.ckpts = cast(List[str], args.ckpts)
     args.ckpts.reverse()
 
-    modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
+    bench_modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
     if args.bl:
-        modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
-    if not modes:
+        bench_modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
+    if not bench_modes:
         parser.error("No benchmark to run. Use --ckpt for RL and --bl for baselines.")
 
     print("\n" + "=" * 60)
@@ -286,15 +288,29 @@ def main():
     print_workloads(_get_workload_summary(shared_loader.phase_history))
 
     # Run each mode sequentially with the same pre-built workload
-    for mode in modes:
+    for mode in bench_modes:
         ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
-        r = BenchRunner(
-            workload=Workload.HYBRID,
-            mode=mode,
-            requests=shared_requests,
-        )
-        results = r.run(ckpt=ckpt)
-        print_metrics(results)
+        print_banner(mode, ckpt.parent.name if ckpt is not None else "")
+
+        init_modes = []
+        match BENCH_CONFIG.phase:
+            case TrainingPhase.PHASE_1:
+                init_modes = list(m.InitialMIGCombination)
+                init_modes.remove(m.InitialMIGCombination.RANDOM)
+            case TrainingPhase.PHASE_2:
+                init_modes = [m.InitialMIGCombination.RANDOM]
+            case _:
+                raise ValueError("Unknonw training phase")
+
+        for init_mode in init_modes:
+            r = BenchRunner(
+                workload=Workload.HYBRID,
+                mode=mode,
+                requests=shared_requests,
+                init_mode=init_mode,
+            )
+            results = r.run(ckpt=ckpt)
+            print_metrics(results)
 
     print("\nBenchmark Suite Completed.")
 

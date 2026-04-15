@@ -25,7 +25,7 @@ def print_banner(mode: BenchMode, running_id: str):
 
 
 def print_metrics(results: Dict[str, Any]):
-    for aid, metrics in results.items():
+    def format_metrics(metrics: Dict[str, Any]) -> List[str]:
         ttft_str = "/".join([f"{x:.3f}" for x in metrics["ttft_percentiles"]])
         tpot_str = "/".join([f"{x:.3f}" for x in metrics["tpot_quartiles"]])
         avg_q_str = f"{metrics['avg_waiting_queue']:.3f}"
@@ -47,18 +47,28 @@ def print_metrics(results: Dict[str, Any]):
             mig_existence.append(f"{mig.size}g: {val:.1f}%")
         existence_str = "\n".join(mig_existence)
 
-        # Build vertical data
-        table_data = [
-            ["TTFT (P25/50/75/99)", ttft_str],
-            ["TPOT (P25/50/75)", tpot_str],
-            ["Avg Q", avg_q_str],
-            ["S/M/T", smt_str],
-            ["Tokens By MIG (%)", mig_str],
-            ["MIG Existence (%)", existence_str],
-        ]
+        return [ttft_str, tpot_str, avg_q_str, smt_str, mig_str, existence_str]
 
-        print(f"\n● Agent: {aid}")
-        print(tabulate.tabulate(table_data, tablefmt="fancy_outline"))
+    coding_metrics = format_metrics(results[m.AgentId.CODING.value])
+    rag_metrics = format_metrics(results[m.AgentId.RAG.value])
+
+    table_data = [
+        ["TTFT (P25/50/75/99)", coding_metrics[0], rag_metrics[0]],
+        ["TPOT (P25/50/75)", coding_metrics[1], rag_metrics[1]],
+        ["Avg Q", coding_metrics[2], rag_metrics[2]],
+        ["S/M/T", coding_metrics[3], rag_metrics[3]],
+        ["Tokens By MIG (%)", coding_metrics[4], rag_metrics[4]],
+        ["MIG Existence (%)", coding_metrics[5], rag_metrics[5]],
+    ]
+
+    print("\n● Aggregate Metrics")
+    print(
+        tabulate.tabulate(
+            table_data,
+            headers=["Metric", "Coding Agent", "RAG Agent"],
+            tablefmt="fancy_outline",
+        )
+    )
 
 
 def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):

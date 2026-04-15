@@ -37,7 +37,6 @@ __all__ = [
     "ResourceManagerAction",
     "VramTransferAction",
     "MigAction",
-    "TrainingPhase",
     "InitialMIGCombination",
 ]
 
@@ -158,11 +157,6 @@ class OperationPurpose(Enum):
     PLAIN = "plain"
 
 
-class TrainingPhase(Enum):
-    PHASE_1 = 1
-    PHASE_2 = 2
-
-
 class InitialMIGCombination(Enum):
     C7 = (MIGProfile.MIG_7G_40GB,)
     C4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
@@ -182,6 +176,7 @@ class InitialMIGCombination(Enum):
         MIGProfile.MIG_2G_10GB,
         MIGProfile.MIG_1G_10GB,
     )
+    RANDOM = ()
 
 
 # --- Interfaces ---
@@ -642,7 +637,9 @@ class Simulator(ABC):
     def run(self) -> bool: ...
 
     @abstractmethod
-    def reset(self, mode: str = "random") -> None: ...
+    def reset(
+        self, init_mode: InitialMIGCombination = InitialMIGCombination.RANDOM
+    ) -> None: ...
 
     @abstractmethod
     def get_action_mask(self) -> List[bool]: ...

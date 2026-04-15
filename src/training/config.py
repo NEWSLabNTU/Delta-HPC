@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Tuple, List
 
 import src.simulation.models as m
-from src.training.models import AgentPattern
+from src.training.models import AgentPattern, TrainingPhase
 
 
 class TrainingConfig:
@@ -18,8 +18,8 @@ class TrainingConfig:
         return cls(config_path)
 
     @property
-    def phase(self) -> m.TrainingPhase:
-        return m.TrainingPhase(self._data["phase"])
+    def phase(self) -> TrainingPhase:
+        return TrainingPhase(self._data["phase"])
 
     @property
     def sb3_norm(self) -> bool:

@@ -6,7 +6,7 @@ gpu := "MIG-9ac89393-4759-5270-8347-c8e1b56d4df7"
 test-env:
     which python
 
-bench bl="" ckpt:
+bench ckpt bl="":
     python -m src.bench.main {{ if bl != "" { "--bl" } else { "" } }} --ckpt {{ckpt}}
 
 bench-all phase="2":
@@ -27,3 +27,6 @@ grid-search conf:
 
 clean:
     rm logs/*.jsonl logs/*.log test.log
+
+lint:
+    ruff check src

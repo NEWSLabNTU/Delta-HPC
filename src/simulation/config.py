@@ -37,24 +37,26 @@ class SimulationConfig:
             model=data["model"],
         )
 
-    def generate_initial_state(self, mode: str) -> None:
+    def generate_initial_state(self, init_mode: m.InitialMIGCombination) -> None:
         """
         Initializes the initial_state list based on the requested mode.
-        Supported modes: "7g", "2_2_2_1", "random".
         """
         # Start with permanent engines only
         new_state = [e for e in self._base_engines if e.get("is-permanent", False)]
 
         for gpu in [0, 1]:
             aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
-            if mode == "7g":
-                combo = m.InitialMIGCombination.C7.value
-            elif mode == "2_2_2_1":
-                combo = m.InitialMIGCombination.C2_2_2_1.value
-            elif mode == "random":
-                combo = random.choice(list(m.InitialMIGCombination)).value
-            else:
-                raise ValueError(f"Unknown initialization mode: {mode}")
+
+            match init_mode:
+                case m.InitialMIGCombination.RANDOM:
+                    choices = [
+                        c
+                        for c in m.InitialMIGCombination
+                        if c != m.InitialMIGCombination.RANDOM
+                    ]
+                    combo = random.choice(choices).value
+                case _:
+                    combo = init_mode.value
 
             for mig in combo:
                 new_state.append(

@@ -1,11 +1,14 @@
+from typing import Dict, Any, List, Tuple, Optional, cast
 import os
 import argparse
 from datetime import datetime
 from pathlib import Path
+
+import torch
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-
+import numpy.typing as npt
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import (
     CheckpointCallback,
@@ -14,19 +17,17 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-import torch
-import numpy.typing as npt
-from typing import Dict, Any, List, Tuple, Optional, cast
 
 import src.simulation.models as m
 from src.simulation.request_loader import RequestLoader
-from src.training.logger import TrainingLogger
-from src.training.config import TRAINING_CONFIG
-from src.training.rewards import compute_reward
 from src.simulation.agent import AgentImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
+from src.training.logger import TrainingLogger
+from src.training.config import TRAINING_CONFIG
+from src.training.models import TrainingPhase
+from src.training.rewards import compute_reward
 from src.training.callbacks import (
     SaveVecNormalizeCallback,
     EntCoefSchedulerCallback,
@@ -81,16 +82,16 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def logger(self) -> TrainingLogger:
         return self._logger
 
-    def get_phase_action_mask(self, phase: m.TrainingPhase) -> npt.NDArray[np.bool_]:
+    def get_phase_action_mask(self, phase: TrainingPhase) -> npt.NDArray[np.bool_]:
         mask = self.sim.get_action_mask()
 
-        if phase == m.TrainingPhase.PHASE_1:
+        if phase == TrainingPhase.PHASE_1:
             for act_id, action in enumerate(m.ResourceManagerAction):
                 if action != m.ResourceManagerAction.NO_ACTION and isinstance(
                     action.value, m.MigAction
                 ):
                     mask[act_id] = False
-        elif phase == m.TrainingPhase.PHASE_2:
+        elif phase == TrainingPhase.PHASE_2:
             # Enable all actions
             pass
 
