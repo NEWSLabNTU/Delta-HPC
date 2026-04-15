@@ -93,13 +93,15 @@ def main():
 
     print(f"Found {len(combinations)} combinations to train.")
 
-    # Ensure tmux session hpc exists
+    session_name = base_config.get("training", {}).get("tmux_session", "hpc")
+
+    # Ensure tmux session exists
     session_check = subprocess.run(
-        ["tmux", "has-session", "-t", "hpc"], stderr=subprocess.DEVNULL
+        ["tmux", "has-session", "-t", session_name], stderr=subprocess.DEVNULL
     )
     if session_check.returncode != 0:
-        print("Creating tmux session 'hpc'")
-        subprocess.run(["tmux", "new-session", "-d", "-s", "hpc"])
+        print(f"Creating tmux session '{session_name}'")
+        subprocess.run(["tmux", "new-session", "-d", "-s", session_name])
 
     seen_ids: Set[str] = set()
 
@@ -126,8 +128,8 @@ def main():
             f"python -m src.training.train; bash"
         )
 
-        tmux_cmd = ["tmux", "new-window", "-t", "hpc", "-n", timestamp, cmd_str]
-        print(f"[{idx + 1}/{len(combinations)}] Launching training with ID {timestamp}")
+        tmux_cmd = ["tmux", "new-window", "-t", session_name, "-n", timestamp, cmd_str]
+        print(f"[{idx + 1}/{len(combinations)}] Launching training with ID {timestamp} in session {session_name}")
         subprocess.run(tmux_cmd, check=True)
 
 

@@ -1,5 +1,6 @@
 training:
   phase: 2
+  tmux_session: "hpc-from-phase-1"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
