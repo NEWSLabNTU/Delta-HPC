@@ -15,7 +15,8 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         simulator: m.Simulator,
         bench_mode: BenchMode,
         requests: List[m.Request],
-        init_mode: m.InitialMIGCombination,
+        init_mode: m.InitialMIGCombination
+        | Tuple[m.InitialMIGCombination, m.InitialMIGCombination],
     ):
         super().__init__(simulator, enable_log=False)
         self.bench_mode = bench_mode

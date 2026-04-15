@@ -6,6 +6,7 @@ class BenchMode(Enum):
     RL = "RL"
     BASELINE_7G = "7g"
     BASELINE_2_2_2_1 = "2_2_2_1"
+    BASELINE_STATIC = "static"
 
 
 class Workload(Enum):

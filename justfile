@@ -29,4 +29,4 @@ clean:
     rm logs/*.jsonl logs/*.log test.log
 
 lint:
-    ruff check src
+    ruff check src --fix && ruff format src

@@ -4,7 +4,7 @@ import random
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 import src.simulation.models as m
 
@@ -37,17 +37,26 @@ class SimulationConfig:
             model=data["model"],
         )
 
-    def generate_initial_state(self, init_mode: m.InitialMIGCombination) -> None:
+    def generate_initial_state(
+        self,
+        init_mode: m.InitialMIGCombination
+        | Tuple[m.InitialMIGCombination, m.InitialMIGCombination],
+    ) -> None:
         """
         Initializes the initial_state list based on the requested mode.
         """
         # Start with permanent engines only
         new_state = [e for e in self._base_engines if e.get("is-permanent", False)]
 
+        mode_tuple = (
+            init_mode if isinstance(init_mode, tuple) else (init_mode, init_mode)
+        )
+
         for gpu in [0, 1]:
             aid = m.AgentId.CODING if gpu == 0 else m.AgentId.RAG
+            current_mode = mode_tuple[gpu]
 
-            match init_mode:
+            match current_mode:
                 case m.InitialMIGCombination.RANDOM:
                     choices = [
                         c
@@ -56,7 +65,7 @@ class SimulationConfig:
                     ]
                     combo = random.choice(choices).value
                 case _:
-                    combo = init_mode.value
+                    combo = current_mode.value
 
             for mig in combo:
                 new_state.append(

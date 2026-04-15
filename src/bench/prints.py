@@ -93,3 +93,34 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
             )
 
     print(tabulate.tabulate(table_data, headers=headers, tablefmt="fancy_outline"))
+
+
+def print_matrix_metrics(
+    matrix_results: Dict[
+        m.InitialMIGCombination,
+        Dict[m.InitialMIGCombination, Dict[str, Dict[str, Any]]],
+    ],
+):
+    col_keys = list(list(matrix_results.values())[0].keys())
+    headers = ["GPU 0 \\ GPU 1"] + [c.name for c in col_keys]
+
+    for aid in [m.AgentId.CODING, m.AgentId.RAG]:
+        table_data = []
+        for row_key, col_dict in matrix_results.items():
+            row_data = [row_key.name]
+            for col_key in col_keys:
+                results = col_dict[col_key]
+                metrics = results[aid.value]
+
+                ttft = metrics["ttft_percentiles"]
+                p25, p50, p75, p99 = ttft[0], ttft[1], ttft[2], ttft[3]
+                trans = metrics.get("transfer_count", 0)
+
+                cell_str = f"{p25:.2f}/{p50:.2f}/{p75:.2f}/{p99:.2f}/{trans}"
+                row_data.append(cell_str)
+
+            table_data.append(row_data)
+
+        print(f"\n● Phase 1 Performance Matrix ({aid.name} Agent)")
+        print("Format: TTFT @ 25 / 50 / 75 / 99 / Transfers")
+        print(tabulate.tabulate(table_data, headers=headers, tablefmt="fancy_outline"))

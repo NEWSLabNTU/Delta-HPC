@@ -724,7 +724,11 @@ class SimulatorImpl(m.Simulator):
         )
 
     def reset(
-        self, init_mode: m.InitialMIGCombination = m.InitialMIGCombination.RANDOM
+        self,
+        init_mode: m.InitialMIGCombination
+        | Tuple[
+            m.InitialMIGCombination, m.InitialMIGCombination
+        ] = m.InitialMIGCombination.RANDOM,
     ) -> None:
         """Resets the simulator to its initial hardware and agent state."""
         self._current_time = 0.0

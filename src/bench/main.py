@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 import argparse
 from pathlib import Path
 
@@ -17,7 +17,12 @@ from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
 from src.bench.request_loader import BenchRequestLoader
-from src.bench.prints import print_banner, print_metrics, print_workloads
+from src.bench.prints import (
+    print_banner,
+    print_metrics,
+    print_workloads,
+    print_matrix_metrics,
+)
 
 
 class BenchRunner:
@@ -26,7 +31,10 @@ class BenchRunner:
         workload: Workload,
         mode: BenchMode,
         requests: List[m.Request],
-        init_mode: m.InitialMIGCombination = m.InitialMIGCombination.RANDOM,
+        init_mode: m.InitialMIGCombination
+        | Tuple[
+            m.InitialMIGCombination, m.InitialMIGCombination
+        ] = m.InitialMIGCombination.RANDOM,
     ):
         self.workload = workload
         self.mode = mode  # "RL", "7g", "2_2_2_1"
@@ -35,6 +43,9 @@ class BenchRunner:
 
     def _display_initial_state(self):
         # Display Initial State
+        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
+            print(f"\n[Initial State] {self._init_mode}")
+            return
         print("\n[Initial State]")
         state_info: List[List[str]] = [
             [
@@ -53,7 +64,7 @@ class BenchRunner:
             )
         )
 
-    def run(self, ckpt: Optional[Path] = None) -> Dict[str, Any]:
+    def run(self, ckpt: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
         agents: Dict[m.AgentId, m.Agent] = {}
         engines: Dict[str, m.LLMEngine] = {}  # Sim reset will rebuild these
         for aid in m.AgentId:
@@ -190,7 +201,7 @@ class BenchRunner:
                 )
 
         # Synthesize results
-        res: Dict[str, Any] = {}
+        res: Dict[str, Dict[str, Any]] = {}
         for aid in m.AgentId:
             total_tokens = sum(tokens_by_mig[aid].values())
             res[aid.value] = {
@@ -269,7 +280,10 @@ def main():
 
     bench_modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
     if args.bl:
-        bench_modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
+        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
+            bench_modes.extend([BenchMode.BASELINE_STATIC])
+        else:
+            bench_modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
     if not bench_modes:
         parser.error("No benchmark to run. Use --ckpt for RL and --bl for baselines.")
 
@@ -292,17 +306,34 @@ def main():
         ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
         print_banner(mode, ckpt.parent.name if ckpt is not None else "")
 
-        init_modes = []
-        match BENCH_CONFIG.phase:
-            case TrainingPhase.PHASE_1:
-                init_modes = list(m.InitialMIGCombination)
-                init_modes.remove(m.InitialMIGCombination.RANDOM)
-            case TrainingPhase.PHASE_2:
-                init_modes = [m.InitialMIGCombination.RANDOM]
-            case _:
-                raise ValueError("Unknonw training phase")
+        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
+            init_modes = list(m.InitialMIGCombination)
+            init_modes.remove(m.InitialMIGCombination.RANDOM)
 
-        for init_mode in init_modes:
+            matrix_results: Dict[
+                m.InitialMIGCombination, Dict[m.InitialMIGCombination, Dict[str, Any]]
+            ] = {}
+            for init_mode_coding in init_modes:
+                matrix_results[init_mode_coding] = {}
+                for init_mode_rag in init_modes:
+                    mode_tuple = (init_mode_coding, init_mode_rag)
+                    r = BenchRunner(
+                        workload=Workload.HYBRID,
+                        mode=mode,
+                        requests=shared_requests,
+                        init_mode=mode_tuple,
+                    )
+                    results = r.run(ckpt=ckpt)
+                    matrix_results[init_mode_coding][init_mode_rag] = results
+            print_matrix_metrics(matrix_results)
+
+        elif BENCH_CONFIG.phase == TrainingPhase.PHASE_2:
+            init_mode = m.InitialMIGCombination.RANDOM
+            if mode == BenchMode.BASELINE_7G:
+                init_mode = m.InitialMIGCombination.C7
+            elif mode == BenchMode.BASELINE_2_2_2_1:
+                init_mode = m.InitialMIGCombination.C2_2_2_1
+
             r = BenchRunner(
                 workload=Workload.HYBRID,
                 mode=mode,
@@ -311,6 +342,8 @@ def main():
             )
             results = r.run(ckpt=ckpt)
             print_metrics(results)
+        else:
+            raise ValueError("Unknown training phase")
 
     print("\nBenchmark Suite Completed.")
 

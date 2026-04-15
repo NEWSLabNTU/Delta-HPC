@@ -178,6 +178,11 @@ class InitialMIGCombination(Enum):
     )
     RANDOM = ()
 
+    def __repr__(self) -> str:
+        if self == InitialMIGCombination.RANDOM:
+            return "RANDOM"
+        return " | ".join([p.string for p in self.value])
+
 
 # --- Interfaces ---
 
@@ -638,7 +643,11 @@ class Simulator(ABC):
 
     @abstractmethod
     def reset(
-        self, init_mode: InitialMIGCombination = InitialMIGCombination.RANDOM
+        self,
+        init_mode: InitialMIGCombination
+        | Tuple[
+            InitialMIGCombination, InitialMIGCombination
+        ] = InitialMIGCombination.RANDOM,
     ) -> None: ...
 
     @abstractmethod
