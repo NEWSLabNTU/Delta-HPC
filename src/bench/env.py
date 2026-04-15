@@ -3,7 +3,7 @@ import gymnasium as gym
 import numpy.typing as npt
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.bench.models import BenchMode, Workload
+from src.bench.models import BenchMode
 from src.bench.config import BENCH_CONFIG
 from src.training.train import MIGResourceEnv
 import src.simulation.models as m
@@ -13,12 +13,10 @@ class BenchMIGResourceEnv(MIGResourceEnv):
     def __init__(
         self,
         simulator: m.Simulator,
-        workload: Workload,
         baseline_mode: BenchMode,
         requests: List[m.Request],
     ):
         super().__init__(simulator, enable_log=False)
-        self.workload = workload
         self.baseline_mode = baseline_mode
         self.enable_replenish = False
         self._requests = requests

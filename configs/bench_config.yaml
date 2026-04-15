@@ -1,5 +1,5 @@
-phase: 2
-seed: 99
+phase: 1
+seed: 89
 benchmark-length: 1024
 workloads:
   idle:

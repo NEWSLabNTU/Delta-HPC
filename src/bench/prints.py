@@ -2,11 +2,29 @@ import tabulate
 from typing import Any, Dict, List
 
 import src.simulation.models as m
+from src.bench.models import BenchMode
 
 
-def print_metrics(mode_name: str, workload_name: str, results: Dict[str, Any]):
-    print(f"\nMode: {mode_name} | Workload: {workload_name}")
+def print_banner(mode: BenchMode, running_id: str):
+    width = 60
 
+    def print_row(text: str):
+        n_space = width - 2 - len(text)
+        half = n_space // 2
+        left = half
+        right = half if n_space % 2 == 0 else half + 1
+        print("#" + " " * left + text + " " * right + "#")
+
+    print()
+    print("#" * width)
+    print_row(mode.name)
+    if running_id:
+        print_row(running_id)
+    print("#" * width)
+    print()
+
+
+def print_metrics(results: Dict[str, Any]):
     for aid, metrics in results.items():
         ttft_str = "/".join([f"{x:.3f}" for x in metrics["ttft_percentiles"]])
         tpot_str = "/".join([f"{x:.3f}" for x in metrics["tpot_quartiles"]])

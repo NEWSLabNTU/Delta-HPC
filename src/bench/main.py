@@ -1,21 +1,22 @@
+from typing import Any, Dict, List, Optional, cast
 import argparse
+from pathlib import Path
+
 import tabulate
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from typing import Any, Dict, List
 
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
+import src.simulation.utils as utils
+from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
 from src.bench.request_loader import BenchRequestLoader
-from src.bench.prints import print_metrics, print_workloads
-from src.bench.env import BenchMIGResourceEnv
-import src.simulation.utils as utils
+from src.bench.prints import print_banner, print_metrics, print_workloads
 
 
 class BenchRunner:
@@ -23,14 +24,11 @@ class BenchRunner:
         self,
         workload: Workload,
         mode: BenchMode,
-        ckpt_path: Path,
         requests: List[m.Request],
     ):
         self.workload = workload
         self.mode = mode  # "RL", "7g", "2_2_2_1"
-        self.ckpt_path = ckpt_path
         self.requests = requests
-        self.results: Dict[str, Any] = {}
 
     def _display_initial_state(self):
         # Display Initial State
@@ -52,7 +50,7 @@ class BenchRunner:
             )
         )
 
-    def run(self):
+    def run(self, ckpt: Optional[Path] = None) -> Dict[str, Any]:
         agents: Dict[m.AgentId, m.Agent] = {}
         engines: Dict[str, m.LLMEngine] = {}  # Sim reset will rebuild these
         for aid in m.AgentId:
@@ -61,7 +59,6 @@ class BenchRunner:
         sim = SimulatorImpl(agents=agents, engines=engines, no_log=True)
         env = BenchMIGResourceEnv(
             sim,
-            self.workload,
             baseline_mode=self.mode,
             requests=self.requests,
         )
@@ -70,9 +67,8 @@ class BenchRunner:
         venv = None
         if self.mode == BenchMode.RL:
             vec_env = DummyVecEnv([lambda: env])
-            norm_path = self.ckpt_path.with_name(
-                f"{self.ckpt_path.stem}_vecnormalize.pkl"
-            )
+            assert ckpt is not None
+            norm_path = ckpt.with_name(f"{ckpt.stem}_vecnormalize.pkl")
             if norm_path.exists():
                 venv = VecNormalize.load(str(norm_path), vec_env)
                 venv.training = False
@@ -86,7 +82,7 @@ class BenchRunner:
                 "lr_schedule": lambda: 0.0,
             }
             model = MaskablePPO.load(  # type: ignore
-                self.ckpt_path,
+                ckpt,
                 env=venv,
                 device="cuda",
                 custom_objects=custom_objects,
@@ -95,8 +91,6 @@ class BenchRunner:
             obs = venv.reset()  # type: ignore
         else:
             obs, _ = env.reset()
-
-        self._display_initial_state()
 
         # Metrics tracking
         total_steps = BENCH_CONFIG.benchmark_length
@@ -108,6 +102,9 @@ class BenchRunner:
             aid: {} for aid in m.AgentId
         }
         presence_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
+
+        print_banner(self.mode, ckpt.parent.name if ckpt is not None else "")
+        self._display_initial_state()
 
         for _ in tqdm(
             range(total_steps),
@@ -191,7 +188,7 @@ class BenchRunner:
                 )
 
         # Synthesize results
-        res = {}
+        res: Dict[str, Any] = {}
         for aid in m.AgentId:
             total_tokens = sum(tokens_by_mig[aid].values())
             res[aid.value] = {
@@ -217,7 +214,7 @@ class BenchRunner:
                 },
             }
 
-        self.results = res
+        return res
 
 
 def _get_workload_summary(
@@ -257,7 +254,7 @@ def _get_workload_summary(
 def main():
     parser = argparse.ArgumentParser(description="Run Performance Benchmarks")
     parser.add_argument(
-        "--ckpt", type=Path, default=None, help="Path to RL Checkpoint Zip"
+        "--ckpts", type=Path, nargs="+", default=None, help="Path to RL Checkpoint Zip"
     )
     parser.add_argument(
         "--bl",
@@ -265,10 +262,10 @@ def main():
         help="Run the baseline benchmarks",
     )
     args = parser.parse_args()
+    args.ckpts = cast(List[str], args.ckpts)
+    args.ckpts.reverse()
 
-    modes: List[BenchMode] = []
-    if args.ckpt:
-        modes.append(BenchMode.RL)
+    modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
     if args.bl:
         modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
     if not modes:
@@ -290,14 +287,14 @@ def main():
 
     # Run each mode sequentially with the same pre-built workload
     for mode in modes:
+        ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
         r = BenchRunner(
             workload=Workload.HYBRID,
             mode=mode,
-            ckpt_path=args.ckpt,
             requests=shared_requests,
         )
-        r.run()
-        print_metrics(mode.name, r.workload.name, r.results)
+        results = r.run(ckpt=ckpt)
+        print_metrics(results)
 
     print("\nBenchmark Suite Completed.")
 
