@@ -20,3 +20,4 @@ class PhaseHistoryType(TypedDict):
     pattern: str
     avg_rate: float
     duration: float
+    start_time: float

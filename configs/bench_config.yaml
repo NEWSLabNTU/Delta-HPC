@@ -1,6 +1,6 @@
-phase: 1
-seed: 69
-benchmark-length: 256
+phase: 2
+seed: 32
+benchmark-length: 1024
 workloads:
   idle:
     rate: [0.3, 0.4]

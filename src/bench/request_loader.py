@@ -87,6 +87,7 @@ class BenchRequestLoader:
                         if rates_in_phase
                         else 0,
                         "duration": current_time - phase_start_time,
+                        "start_time": phase_start_time,
                     }
                 )
         else:
@@ -121,6 +122,7 @@ class BenchRequestLoader:
                     if rates_in_phase
                     else 0,
                     "duration": current_time - phase_start_time,
+                    "start_time": phase_start_time,
                 }
             )
 

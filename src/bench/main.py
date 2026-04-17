@@ -31,6 +31,7 @@ class BenchRunner:
         workload: Workload,
         mode: BenchMode,
         requests: List[m.Request],
+        phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
         init_mode: m.InitialMIGCombination
         | Tuple[
             m.InitialMIGCombination, m.InitialMIGCombination
@@ -39,6 +40,7 @@ class BenchRunner:
         self.workload = workload
         self.mode = mode  # "RL", "7g", "2_2_2_1"
         self.requests = requests
+        self.phase_history = phase_history
         self._init_mode = init_mode
 
     def _display_initial_state(self):
@@ -176,7 +178,11 @@ class BenchRunner:
         # Extract Episode Metrics
         ttft_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
         tpot_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
-        tokens_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
+        patterns = [w.value for w in Workload if w != Workload.HYBRID]
+        tokens_by_mig = {
+            aid: {pat: {prof: 0 for prof in m.MIGProfile} for pat in patterns}
+            for aid in m.AgentId
+        }
 
         for aid, req_map in completed_reqs_map.items():
             for req in req_map.values():
@@ -196,14 +202,35 @@ class BenchRunner:
 
                 # Check serving engine MIG profile
                 assert req.serving_engine is not None
-                tokens_by_mig[aid][req.serving_engine.mig_profile] += (
+
+                arrival = req.arrival_time
+                req_pattern = None
+                if aid in self.phase_history:
+                    for ph in self.phase_history[aid]:
+                        if (
+                            ph["start_time"]
+                            <= arrival
+                            < ph["start_time"] + ph["duration"]
+                        ):
+                            req_pattern = ph["pattern"]
+                            break
+
+                assert req_pattern is not None
+                tokens_by_mig[aid][req_pattern][req.serving_engine.mig_profile] += (
                     req.generated_tokens
                 )
 
         # Synthesize results
         res: Dict[str, Dict[str, Any]] = {}
         for aid in m.AgentId:
-            total_tokens = sum(tokens_by_mig[aid].values())
+            token_mig_percentages = {}
+            for pat in patterns:
+                total_tokens = sum(tokens_by_mig[aid][pat].values())
+                token_mig_percentages[pat] = {
+                    k: (v / total_tokens * 100 if total_tokens > 0 else 0)
+                    for k, v in tokens_by_mig[aid][pat].items()
+                }
+
             res[aid.value] = {
                 "ttft_percentiles": np.percentile(
                     ttft_list[aid], [25, 50, 75, 99]
@@ -217,10 +244,7 @@ class BenchRunner:
                 "split_count": split_count[aid],
                 "merge_count": merge_count[aid],
                 "transfer_count": transfer_count[aid],
-                "token_mig_percentages": {
-                    k: (v / total_tokens * 100 if total_tokens > 0 else 0)
-                    for k, v in tokens_by_mig[aid].items()
-                },
+                "token_mig_percentages": token_mig_percentages,
                 "mig_existence_percentages": {
                     prof: (count / total_steps * 100)
                     for prof, count in presence_by_mig[aid].items()
@@ -321,6 +345,7 @@ def main():
                         workload=Workload.HYBRID,
                         mode=mode,
                         requests=shared_requests,
+                        phase_history=shared_loader.phase_history,
                         init_mode=mode_tuple,
                     )
                     results = r.run(ckpt=ckpt)
@@ -338,6 +363,7 @@ def main():
                 workload=Workload.HYBRID,
                 mode=mode,
                 requests=shared_requests,
+                phase_history=shared_loader.phase_history,
                 init_mode=init_mode,
             )
             results = r.run(ckpt=ckpt)

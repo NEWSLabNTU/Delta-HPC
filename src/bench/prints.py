@@ -32,11 +32,17 @@ def print_metrics(results: Dict[str, Any]):
         smt_str = f"{metrics['split_count']}/{metrics['merge_count']}/{metrics['transfer_count']}"
 
         mig_tokens: List[str] = []
-        for mig in sorted(
-            metrics["token_mig_percentages"].keys(), key=lambda m: m.size
-        ):
-            val = metrics["token_mig_percentages"][mig]
-            mig_tokens.append(f"{mig.size}g: {val:.1f}%")
+        for pat in ["idle", "balanced", "busy"]:
+            pat_dict = metrics["token_mig_percentages"].get(pat, {})
+            pat_str_parts = []
+            for mig in sorted(pat_dict.keys(), key=lambda m: m.size, reverse=True):
+                val = pat_dict[mig]
+                if val > 0.05:
+                    pat_str_parts.append(f"{mig.size}g: {val:.0f}%")
+            if pat_str_parts:
+                mig_tokens.append(f"[{pat}] " + ", ".join(pat_str_parts))
+            else:
+                mig_tokens.append(f"[{pat}] n/a")
         mig_str = "\n".join(mig_tokens)
 
         mig_existence: List[str] = []
