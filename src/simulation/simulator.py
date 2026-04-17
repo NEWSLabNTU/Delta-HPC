@@ -54,11 +54,6 @@ class SimulatorImpl(m.Simulator):
     def interval_requests(self) -> Dict[m.AgentId, List[m.Request]]:
         return self._environment_state.interval_requests
 
-    def get_steps_since(
-        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey
-    ) -> int:
-        return self._environment_state.get_steps_since(agent_id, event_type)
-
     def need_requests_replenish(self) -> List[m.AgentId]:
         return [
             aid
@@ -321,9 +316,7 @@ class SimulatorImpl(m.Simulator):
         self._environment_state.record_queue_length_advance(
             self._current_time, self._agents
         )
-        state_data = self._environment_state.get_state(
-            self._current_time, self._agents, self._engines, 0
-        )
+        state_data = self._environment_state.get_state(self._current_time, self._agents)
         self._logger.log_environment_state(self._current_time, state_data)
         self._environment_state.reset_for_next_interval(
             self._current_time, self._agents
@@ -716,12 +709,7 @@ class SimulatorImpl(m.Simulator):
         return False  # Finished simulation
 
     def get_state(self, current_step: int) -> m.EnvironmentStateData:
-        return self._environment_state.get_state(
-            self._current_time,
-            self._agents,
-            self._engines,
-            current_step,
-        )
+        return self._environment_state.get_state(self._current_time, self._agents)
 
     def reset(
         self,
@@ -780,6 +768,13 @@ class SimulatorImpl(m.Simulator):
             ] = True
             return mask
 
+        # Cooldown (Per-Agent)
+        cooldown_steps = TRAINING_CONFIG.action_cooldown
+        transfer_blocked = any(
+            self._environment_state.get_steps_since(aid, "give") < cooldown_steps
+            for aid in self._agents.keys()
+        )
+
         for act_id, action in enumerate(m.ResourceManagerAction):
             if action == m.ResourceManagerAction.NO_ACTION:
                 mask[act_id] = True
@@ -787,6 +782,9 @@ class SimulatorImpl(m.Simulator):
 
             val = action.value
             if isinstance(val, m.VramTransferAction):
+                if transfer_blocked:
+                    mask[act_id] = False
+                    continue
                 giver = self._agents[val.giver]
                 has_exact_match = utils.MIG_RULES.has_exact_match(giver, val.mig)
                 # Note: has_exact_match doesn't need all_engines as it's just a boolean existence check
@@ -795,19 +793,31 @@ class SimulatorImpl(m.Simulator):
                 victim = self._agents[val.victim]
                 match val.action:
                     case "split":
-                        mask[act_id] = (
-                            utils.MIG_RULES.get_best_specific_split(
-                                victim, val.profiles
+                        if (
+                            self._environment_state.get_steps_since(val.victim, "merge")
+                            < cooldown_steps
+                        ):
+                            mask[act_id] = False
+                        else:
+                            mask[act_id] = (
+                                utils.MIG_RULES.get_best_specific_split(
+                                    victim, val.profiles
+                                )
+                                is not None
                             )
-                            is not None
-                        )
                     case "merge":
-                        mask[act_id] = (
-                            utils.MIG_RULES.get_best_specific_merge(
-                                victim, val.profiles
+                        if (
+                            self._environment_state.get_steps_since(val.victim, "split")
+                            < cooldown_steps
+                        ):
+                            mask[act_id] = False
+                        else:
+                            mask[act_id] = (
+                                utils.MIG_RULES.get_best_specific_merge(
+                                    victim, val.profiles
+                                )
+                                is not None
                             )
-                            is not None
-                        )
                     case _:
                         raise ValueError(f"Unknown MIG action: {val.action}")
 

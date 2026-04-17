@@ -656,11 +656,6 @@ class Simulator(ABC):
     @abstractmethod
     def get_state(self, current_step: int) -> EnvironmentStateData: ...
 
-    @abstractmethod
-    def get_steps_since(
-        self, agent_id: AgentId, event_type: ActionHistoryKey
-    ) -> int: ...
-
 
 @dataclass
 class VramTransferAction:
@@ -875,7 +870,6 @@ class EnvironmentStateData(TypedDict):
     agent_n_mig_ratio: float
     agent_vram_ratio: float
     agent_sm_ratio: float
-    progress_ratio: float
 
 
 type ActionHistoryKey = Literal["split", "merge", "give", "receive"]

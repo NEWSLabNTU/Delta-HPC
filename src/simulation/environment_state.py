@@ -209,8 +209,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self,
         current_time: float,
         agents: Dict[m.AgentId, m.Agent],
-        engines: Dict[str, m.LLMEngine],
-        current_step: int,
     ) -> m.EnvironmentStateData:
         # 1. Collect all metrics via (normalized) getters
         arrival_rate = self._get_normalized_arrival_rate(agents, current_time)
@@ -275,7 +273,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "agent_n_mig_ratio": ratios["agent_n_mig_ratio"],
             "agent_vram_ratio": ratios["agent_vram_ratio"],
             "agent_sm_ratio": ratios["agent_sm_ratio"],
-            "progress_ratio": current_step / TRAINING_CONFIG.episode_length,
         }
         return state_data
 
@@ -606,7 +603,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_split(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm = TRAINING_CONFIG.norm_last_action
+        norm = float(TRAINING_CONFIG.action_cooldown)
         return {
             aid: min(self._agent_stats[aid].action_history["split"]["steps"], norm)
             / norm
@@ -616,7 +613,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_merge(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm = TRAINING_CONFIG.norm_last_action
+        norm = float(TRAINING_CONFIG.action_cooldown)
         return {
             aid: min(self._agent_stats[aid].action_history["merge"]["steps"], norm)
             / norm
@@ -626,7 +623,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_give(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm = TRAINING_CONFIG.norm_last_action
+        norm = float(TRAINING_CONFIG.action_cooldown)
         return {
             aid: min(self._agent_stats[aid].action_history["give"]["steps"], norm)
             / norm
@@ -636,7 +633,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_receive(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm = TRAINING_CONFIG.norm_last_action
+        norm = float(TRAINING_CONFIG.action_cooldown)
         return {
             aid: min(self._agent_stats[aid].action_history["receive"]["steps"], norm)
             / norm
@@ -646,7 +643,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_give_amount(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm_action = TRAINING_CONFIG.norm_last_action
+        norm_action = float(TRAINING_CONFIG.action_cooldown)
         norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
         res: Dict[m.AgentId, float] = {}
         for aid in agents.keys():
@@ -662,7 +659,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_last_receive_amount(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, float]:
-        norm_action = TRAINING_CONFIG.norm_last_action
+        norm_action = float(TRAINING_CONFIG.action_cooldown)
         norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
         res: Dict[m.AgentId, float] = {}
         for aid in agents.keys():

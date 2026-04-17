@@ -95,32 +95,6 @@ class MIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             # Enable all actions
             pass
 
-        # Cooldown (Per-Agent)
-        cooldown_steps = TRAINING_CONFIG.action_cooldown
-        transfer_blocked = any(
-            self.sim.get_steps_since(agent.agent_id, "give") < cooldown_steps
-            for agent in self.sim.agents.values()
-        )
-
-        for act_id, action in enumerate(m.ResourceManagerAction):
-            if action == m.ResourceManagerAction.NO_ACTION:
-                continue
-            val = action.value
-
-            if isinstance(val, m.VramTransferAction):
-                if transfer_blocked:
-                    mask[act_id] = False
-                continue
-            assert isinstance(val, m.MigAction)
-
-            aid = val.victim
-            if val.action == "split":
-                if self.sim.get_steps_since(aid, "merge") < cooldown_steps:
-                    mask[act_id] = False
-            elif val.action == "merge":
-                if self.sim.get_steps_since(aid, "split") < cooldown_steps:
-                    mask[act_id] = False
-
         return np.array(mask, dtype=np.bool_)
 
     def action_masks(self) -> npt.NDArray[np.bool_]:

@@ -70,10 +70,6 @@ class TrainingConfig:
         return float(self._data["normalization"]["mig_geometry"])
 
     @property
-    def norm_last_action(self) -> float:
-        return float(self._data["normalization"]["last_action"])
-
-    @property
     def norm_vram_transfer_amount(self) -> float:
         return float(self._data["normalization"]["vram_transfer_amount"])
 
