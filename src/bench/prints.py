@@ -34,7 +34,7 @@ def print_metrics(results: Dict[str, Any]):
         mig_tokens: List[str] = []
         for pat in ["idle", "balanced", "busy"]:
             pat_dict = metrics["token_mig_percentages"].get(pat, {})
-            pat_str_parts = []
+            pat_str_parts: List[str] = []
             for mig in sorted(pat_dict.keys(), key=lambda m: m.size, reverse=True):
                 val = pat_dict[mig]
                 if val > 0.05:
@@ -111,7 +111,7 @@ def print_matrix_metrics(
     headers = ["GPU 0 \\ GPU 1"] + [c.name for c in col_keys]
 
     for aid in [m.AgentId.CODING, m.AgentId.RAG]:
-        table_data = []
+        table_data: List[List[str]] = []
         for row_key, col_dict in matrix_results.items():
             row_data = [row_key.name]
             for col_key in col_keys:
