@@ -3,11 +3,11 @@ seed: 32
 benchmark-length: 1024
 workloads:
   idle:
-    rate: [0.3, 0.4]
-    duration: [2300.0, 2500.0]
-  balanced:
-    rate: [0.9, 1.1]
-    duration: [2300.0, 2500.0]
+    rate: [ 0.3, 0.4 ]
+    duration: [ 2300.0, 2500.0 ]
+  even:
+    rate: [ 0.9, 1.1 ]
+    duration: [ 2300.0, 2500.0 ]
   busy:
-    rate: [3.9, 4.1]
-    duration: [2300.0, 2500.0]
+    rate: [ 3.9, 4.1 ]
+    duration: [ 2300.0, 2500.0 ]

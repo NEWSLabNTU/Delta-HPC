@@ -150,8 +150,11 @@ class TrainingConfig:
             case AgentPattern.IDLE:
                 cfg = self._data["patterns"]["idle"]["duration"]
                 return float(cfg[0]), float(cfg[1])
-            case AgentPattern.BALANCED:
-                cfg = self._data["patterns"]["balanced"]["duration"]
+            case AgentPattern.EVEN:
+                cfg = self._data["patterns"]["even"]["duration"]
+                return float(cfg[0]), float(cfg[1])
+            case AgentPattern.BURST:
+                cfg = self._data["patterns"]["burst"]["duration"]
                 return float(cfg[0]), float(cfg[1])
 
     def pattern_rate(
@@ -164,8 +167,11 @@ class TrainingConfig:
             case AgentPattern.IDLE:
                 cfg = self._data["patterns"]["idle"]["rate"][agent_id.value]
                 return float(cfg[0]), float(cfg[1])
-            case AgentPattern.BALANCED:
-                cfg = self._data["patterns"]["balanced"]["rate"][agent_id.value]
+            case AgentPattern.EVEN:
+                cfg = self._data["patterns"]["even"]["rate"][agent_id.value]
+                return float(cfg[0]), float(cfg[1])
+            case AgentPattern.BURST:
+                cfg = self._data["patterns"]["burst"]["rate"][agent_id.value]
                 return float(cfg[0]), float(cfg[1])
 
     @property
@@ -180,8 +186,8 @@ class TrainingConfig:
     def refresh_period(self) -> float:
         return self._data["reconfig"]["refresh"] * 60
 
-    def qf(self, mig: m.MIGProfile) -> float:
-        return self._data["reward"]["Q"][mig.string]
+    def qf(self, mig: m.MIGProfile, agent_id: m.AgentId) -> float:
+        return self._data["reward"]["Q"][agent_id.value][mig.string]
 
     def alpha(self, agent: m.AgentId) -> float:
         return self._data["reward"]["alpha"][agent.value]

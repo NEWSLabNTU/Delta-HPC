@@ -500,7 +500,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
                     if req.generated_tokens > 0
                     else 0.0
                 )
-                q_j = TRAINING_CONFIG.qf(mig)
+                q_j = TRAINING_CONFIG.qf(mig, agent_id)
                 composite = (w_t * ttft + w_p * tpot) / q_j
                 if req.serving_engine.is_permanent:
                     perm_latencies.append(composite)

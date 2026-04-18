@@ -76,8 +76,6 @@ class RequestLoader:
             # Rotate pattern if time crossed
             if current_time >= self.agent_pattern_end_times[agent_id]:
                 patterns = list(AgentPattern)
-                if self.agent_patterns[agent_id] in patterns:
-                    patterns.remove(self.agent_patterns[agent_id])
                 new_pattern = random.choice(patterns)
 
                 self.agent_patterns[agent_id] = new_pattern

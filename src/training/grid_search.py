@@ -122,14 +122,16 @@ def main():
         save_yaml(config_copy, snapshot_path)
 
         cmd_str = (
-            f"cd /home/yclo/hpc && source .venv/bin/activate && "
+            f"cd /home/yclo/Delta-HPC && source .venv/bin/activate && "
             f"export TRAINING_CONFIG_PATH='{snapshot_path}' && "
             f"export TRAINING_RUN_ID='{timestamp}' && "
             f"python -m src.training.train; bash"
         )
 
         tmux_cmd = ["tmux", "new-window", "-t", session_name, "-n", timestamp, cmd_str]
-        print(f"[{idx + 1}/{len(combinations)}] Launching training with ID {timestamp} in session {session_name}")
+        print(
+            f"[{idx + 1}/{len(combinations)}] Launching training with ID {timestamp} in session {session_name}"
+        )
         subprocess.run(tmux_cmd, check=True)
 
 

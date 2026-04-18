@@ -1,6 +1,6 @@
 training:
   phase: 2
-  tmux_session: "hpc-from-phase-1"
+  tmux_session: "hpc"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -18,11 +18,12 @@ training:
     queue_length_trend_clamp: 3.0
     default_waiting_qj: 1.0
   PPO:
-    phase_1: # vram transfer
+    phase_1:
+      # vram transfer
       episode_length: 512
       n_steps: 2048
-      lr_max: 3.0e-4
-      lr_min: 5.0e-5
+      lr_max: 3e-4
+      lr_min: 5e-5
       batch_size: 128
       n_epochs: 20
       gamma: 0.995
@@ -33,13 +34,14 @@ training:
       min_ent_coef: 0.01
       max_ent_coef: 0.05
       net_arch:
-        pi: [256, 256]
-        vf: [512, 512]
-    phase_2: # vram transfer + mig action
+        pi: [ 256, 256 ]
+        vf: [ 512, 512 ]
+    phase_2:
+      # vram transfer + mig action
       episode_length: 1024
       n_steps: 256
-      lr_max: 3.0e-4
-      lr_min: 5.0e-5
+      lr_max: 3e-4
+      lr_min: 5e-5
       batch_size: 64
       n_epochs: 15
       gamma: 0.995
@@ -50,26 +52,31 @@ training:
       min_ent_coef: 0.005
       max_ent_coef: 0.03
       net_arch:
-        pi: [256, 256]
-        vf: [512, 512]
+        pi: [ 256, 256 ]
+        vf: [ 512, 512 ]
   action_mask:
     action_cooldown: 10
   patterns:
     busy:
-      duration: [2200.0, 2600.0]
+      duration: [ 2200.0, 2600.0 ]
       rate:
-        CodingAgent: [3.5, 4.5]
-        RAGAgent: [4.5, 5.5]
+        CodingAgent: [ 3.0, 4.0 ]
+        RAGAgent: [ 4.5, 5.5 ]
     idle:
-      duration: [2200.0, 2600.0]
+      duration: [ 2200.0, 2600.0 ]
       rate:
-        CodingAgent: [0.1, 0.2]
-        RAGAgent: [0.1, 0.5]
-    balanced:
-      duration: [2200.0, 2600.0]
+        CodingAgent: [ 0.2, 0.5 ]
+        RAGAgent: [ 0.1, 0.5 ]
+    even:
+      duration: [ 2200.0, 2600.0 ]
       rate:
-        CodingAgent: [0.5, 1.0]
-        RAGAgent: [1.0, 2.0]
+        CodingAgent: [ 1.0, 2.5 ]
+        RAGAgent: [ 1.0, 2.0 ]
+    burst:
+      duration: [ 300.0, 700.0 ] # Short duration (3-6 steps)
+      rate:
+        CodingAgent: [ 4.0, 5.0 ] # Very high
+        RAGAgent: [ 6.0, 8.0 ]
   reconfig:
     budget: 150.0 # seconds
     refresh: 15.0 # minutes
@@ -77,12 +84,19 @@ training:
     # Reward function:
     # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
     # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
-    Q: # quality-incentive factor
-      7g.40gb: 10.0
-      4g.20gb: 3.0
-      3g.20gb: 3.0
-      2g.10gb: 1.0
-      1g.10gb: 1.0
+    Q:
+      CodingAgent:
+        7g.40gb: 15.0
+        4g.20gb: 5.0
+        3g.20gb: 5.0
+        2g.10gb: 1.0
+        1g.10gb: 1.0
+      RAGAgent:
+        7g.40gb: 10.0
+        4g.20gb: 3.0
+        3g.20gb: 3.0
+        2g.10gb: 1.0
+        1g.10gb: 1.0
     alpha:
       CodingAgent: 1.1
       RAGAgent: 1.0
@@ -90,6 +104,6 @@ training:
     w_tpot: 0.2 # weight in latency penalty
     gamma: 15.0 # reconfiguration penalty
     scaling: 0.1
-    clipping: -30.0
+    clipping: -30
     quality_bonus: true
     gpu_affinity_bonus: 0.0

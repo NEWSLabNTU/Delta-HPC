@@ -11,7 +11,7 @@ class BenchMode(Enum):
 
 class Workload(Enum):
     IDLE = "idle"
-    BALANCED = "balanced"
+    EVEN = "even"
     BUSY = "busy"
     HYBRID = "hybrid"
 

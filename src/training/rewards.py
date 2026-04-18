@@ -73,13 +73,13 @@ def compute_reward(
                 q_j = (
                     TRAINING_CONFIG.default_waiting_qj
                     if req.prefilled_tokens == 0
-                    else TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
+                    else TRAINING_CONFIG.qf(req.serving_engine.mig_profile, agent_id)
                 )
             else:
                 assert req.generated_tokens > 0
                 ttft = req.first_token_time - req.arrival_time
                 tpot = req.decode_time / req.generated_tokens
-                q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile)
+                q_j = TRAINING_CONFIG.qf(req.serving_engine.mig_profile, agent_id)
 
             if use_quality_bonus:
                 # Latency without Qf denominator

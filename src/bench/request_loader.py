@@ -49,7 +49,7 @@ class BenchRequestLoader:
             while current_time < max_time:
                 # Pick a random workload phase
                 phase_workload = random.choice(
-                    [Workload.IDLE, Workload.BALANCED, Workload.BUSY]
+                    [Workload.IDLE, Workload.EVEN, Workload.BUSY]
                 )
                 min_rate, max_rate = BENCH_CONFIG.get_rate_range(phase_workload)
                 min_dur, max_dur = BENCH_CONFIG.get_duration_range(phase_workload)

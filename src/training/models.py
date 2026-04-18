@@ -4,7 +4,8 @@ from enum import Enum
 class AgentPattern(Enum):
     BUSY = "busy"
     IDLE = "idle"
-    BALANCED = "balanced"
+    EVEN = "even"
+    BURST = "burst"
 
 
 class TrainingPhase(Enum):
