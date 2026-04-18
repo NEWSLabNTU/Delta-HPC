@@ -37,4 +37,5 @@ explicit = true
 dev = [
     "ruff>=0.15.9",
     "sortedcontainers-stubs>=2.4.3",
+    "types-tabulate>=0.10.0.20260408",
 ]

@@ -6,7 +6,7 @@ from datetime import datetime
 import itertools
 import time
 import subprocess
-from typing import Dict, Iterator, Mapping, Set, Tuple, Any, Union, cast
+from typing import Dict, Iterator, List, Mapping, Set, Tuple, Any, Union, cast
 
 type Tree = Union[Mapping[str, "Tree"], Any]
 
@@ -128,7 +128,15 @@ def main():
             f"python -m src.training.train; bash"
         )
 
-        tmux_cmd = ["tmux", "new-window", "-t", session_name, "-n", timestamp, cmd_str]
+        tmux_cmd: List[str] = [
+            "tmux",
+            "new-window",
+            "-t",
+            session_name,
+            "-n",
+            timestamp,
+            cmd_str,
+        ]
         print(
             f"[{idx + 1}/{len(combinations)}] Launching training with ID {timestamp} in session {session_name}"
         )

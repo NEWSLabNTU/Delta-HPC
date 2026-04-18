@@ -80,7 +80,15 @@ def print_metrics(results: Dict[str, Any]):
                     mig_vals.append(f"{pat_dict[mig]:3.0f}%")
                 row_data.append(" | ".join(mig_vals))
             mat_data.append(row_data)
-        print(tabulate.tabulate(mat_data, headers=headers, tablefmt="fancy_outline", stralign="right", headersalign="center"))
+        print(
+            tabulate.tabulate(
+                mat_data,
+                headers=headers,
+                tablefmt="fancy_outline",
+                stralign="right",
+                headersalign="center",
+            )
+        )
 
     print("\n● Joint Workload Occurrences (%)")
     occ_headers = ["Coding \\ RAG"] + patterns
@@ -91,7 +99,15 @@ def print_metrics(results: Dict[str, Any]):
         for pat_r in patterns:
             row_data.append(f"{occurrences[pat_c][pat_r]:3.0f}%")
         occ_data.append(row_data)
-    print(tabulate.tabulate(occ_data, headers=occ_headers, tablefmt="fancy_outline", stralign="right", headersalign="center"))
+    print(
+        tabulate.tabulate(
+            occ_data,
+            headers=occ_headers,
+            tablefmt="fancy_outline",
+            stralign="right",
+            headersalign="center",
+        )
+    )
 
 
 def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
@@ -115,7 +131,11 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
                 ]
             )
 
-    print(tabulate.tabulate(table_data, headers=headers, tablefmt="fancy_outline", headersalign="center"))
+    print(
+        tabulate.tabulate(
+            table_data, headers=headers, tablefmt="fancy_outline", headersalign="center"
+        )
+    )
 
 
 def print_matrix_metrics(
@@ -146,4 +166,11 @@ def print_matrix_metrics(
 
         print(f"\n● Phase 1 Performance Matrix ({aid.name} Agent)")
         print("Format: TTFT @ 25 / 50 / 75 / 99 / Transfers")
-        print(tabulate.tabulate(table_data, headers=headers, tablefmt="fancy_outline", headersalign="center"))
+        print(
+            tabulate.tabulate(
+                table_data,
+                headers=headers,
+                tablefmt="fancy_outline",
+                headersalign="center",
+            )
+        )
