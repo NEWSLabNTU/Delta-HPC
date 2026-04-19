@@ -198,6 +198,7 @@ def print_matrix_metrics(
             )
         )
 
+
 def print_initial_state(init_mode: Any):
     # Display Initial State
     if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:

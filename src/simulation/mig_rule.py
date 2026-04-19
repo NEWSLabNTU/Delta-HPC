@@ -220,7 +220,10 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         )
 
     def select_best_split_action(
-        self, agent: m.Agent, mask: List[bool], all_actions: List[m.ResourceManagerAction]
+        self,
+        agent: m.Agent,
+        mask: List[bool],
+        all_actions: List[m.ResourceManagerAction],
     ) -> m.ResourceManagerAction | None:
         best_action = None
         min_running = float("inf")
@@ -242,7 +245,10 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         return best_action
 
     def select_best_merge_action(
-        self, agent: m.Agent, mask: List[bool], all_actions: List[m.ResourceManagerAction]
+        self,
+        agent: m.Agent,
+        mask: List[bool],
+        all_actions: List[m.ResourceManagerAction],
     ) -> m.ResourceManagerAction | None:
         best_action = None
         min_avg_running = float("inf")
