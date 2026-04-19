@@ -23,7 +23,7 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def __init__(self, simulator: m.Simulator) -> None:
         super().__init__()
         self.sim = simulator
-        self.action_space = spaces.Discrete(35)
+        self.action_space = spaces.Discrete(len(m.ResourceManagerAction))
 
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
@@ -45,7 +45,7 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.load_turn: int = 0
         self.episode_count: int = 0
         self._current_action_mask: npt.NDArray[np.bool_] = np.zeros(
-            (35,), dtype=np.bool_
+            (len(m.ResourceManagerAction),), dtype=np.bool_
         )
 
     def get_phase_action_mask(self, phase: TrainingPhase) -> npt.NDArray[np.bool_]:

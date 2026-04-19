@@ -46,10 +46,10 @@ class EntCoefSchedulerCallback(BaseCallback):
         # new_ent_coef = self.initial_ent_coef + progress * (
         #     self.final_ent_coef - self.initial_ent_coef
         # )
-        if progress < 0.25:
+        if progress < 0.20:
             new_ent_coef = self.initial_ent_coef
         else:
-            r = (progress - 0.25) / 0.75
+            r = (progress - 0.20) / 0.80
             new_ent_coef = (
                 (self.initial_ent_coef + self.final_ent_coef) / 2
                 if r < 0.5

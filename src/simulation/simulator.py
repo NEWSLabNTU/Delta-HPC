@@ -184,7 +184,7 @@ class SimulatorImpl(m.Simulator):
                     "new_profile": data["new_profile"],
                     "agent_id": data["agent_id"],
                     "gpu": data["gpu"],
-                    "receiver_id": None,
+                    "receiver_id": data.get("receiver_id"),
                 }
                 for e in engs:
                     per_engine_payload: m.ShutdownMergePayload = {
@@ -206,8 +206,8 @@ class SimulatorImpl(m.Simulator):
                     "new_profiles": data["new_profiles"],
                     "agent_id": data["agent_id"],
                     "gpu": data["gpu"],
-                    "receiver_id": None,
-                    "received_profile": None,
+                    "receiver_id": data.get("receiver_id"),
+                    "received_profile": data.get("received_profile"),
                 }
                 evt = e.trigger_shutdown(split_payload, self._current_time)
                 if evt:
@@ -285,7 +285,12 @@ class SimulatorImpl(m.Simulator):
                         drain_cost = eng.predict_drain_time()
                         boot_cost = max(
                             (
-                                utils.SIM_CONFIG.get_restart_time(val.victim, p)
+                                utils.SIM_CONFIG.get_restart_time(
+                                    val.receiver
+                                    if val.transfer_profile == p
+                                    else val.victim,
+                                    p,
+                                )
                                 for p in new_profiles
                             ),
                             default=0.0,
@@ -301,7 +306,10 @@ class SimulatorImpl(m.Simulator):
                             (e.predict_drain_time() for e in engs), default=0.0
                         )
                         boot_cost = utils.SIM_CONFIG.get_restart_time(
-                            val.victim, new_profile
+                            val.receiver
+                            if val.transfer_profile == new_profile
+                            else val.victim,
+                            new_profile,
                         )
                         cost = drain_cost + boot_cost
                 case _:
@@ -332,6 +340,21 @@ class SimulatorImpl(m.Simulator):
                 self._environment_state.set_last_action(aid, "split")
             elif action.value.action == "merge":
                 self._environment_state.set_last_action(aid, "merge")
+
+        if (
+            action != m.ResourceManagerAction.NO_ACTION
+            and getattr(action.value, "receiver", None) is not None
+        ):
+            giver = getattr(
+                action.value, "victim", getattr(action.value, "giver", None)
+            )
+            receiver = action.value.receiver
+            mig_size = getattr(
+                action.value, "transfer_profile", getattr(action.value, "mig", None)
+            ).size
+            if giver and receiver and mig_size:
+                self._environment_state.set_last_action(giver, "give", mig_size)
+                self._environment_state.set_last_action(receiver, "receive", mig_size)
 
         if action != m.ResourceManagerAction.NO_ACTION:
             if self._comming_budget_refresh is not None:
@@ -376,6 +399,8 @@ class SimulatorImpl(m.Simulator):
                         "new_profiles": new_profiles,
                         "agent_id": agent_id,
                         "gpu": eng.gpu,
+                        "receiver_id": m_action.receiver,
+                        "received_profile": m_action.transfer_profile,
                     },
                 )
                 self._handle_resource_manager_trigger_mig_decision(mig_decision)
@@ -399,6 +424,8 @@ class SimulatorImpl(m.Simulator):
                         "new_profile": new_profile,
                         "agent_id": agent_id,
                         "gpu": engs[0].gpu,
+                        "receiver_id": m_action.receiver,
+                        "received_profile": m_action.transfer_profile,
                     },
                 )
                 self._handle_resource_manager_trigger_mig_decision(mig_decision)
@@ -787,7 +814,6 @@ class SimulatorImpl(m.Simulator):
                     continue
                 giver = self._agents[val.giver]
                 has_exact_match = utils.MIG_RULES.has_exact_match(giver, val.mig)
-                # Note: has_exact_match doesn't need all_engines as it's just a boolean existence check
                 mask[act_id] = has_exact_match
             else:  # MIGAction
                 victim = self._agents[val.victim]
@@ -820,6 +846,11 @@ class SimulatorImpl(m.Simulator):
                             )
                     case _:
                         raise ValueError(f"Unknown MIG action: {val.action}")
+
+                # If this MIG action includes a transfer, apply transfer constraints
+                if mask[act_id] and getattr(val, "transfer_profile", None) is not None:
+                    if transfer_blocked:
+                        mask[act_id] = False
 
             # Additional budget check
             if mask[act_id]:  # Only check if the action is otherwise possible

@@ -178,7 +178,11 @@ class BenchRunner:
                     stats["split_count"][act_val.victim] += 1
                 elif act_val.action == "merge":
                     stats["merge_count"][act_val.victim] += 1
-            else:
+
+                # If it's a combined action, also count the transfer
+                if act_val.receiver is not None:
+                    stats["transfer_count"][act_val.victim] += 1
+            elif isinstance(act_val, m.VramTransferAction):
                 stats["transfer_count"][act_val.giver] += 1
 
     def _tick_step_stats(self, stats: Dict[str, Any]):

@@ -693,6 +693,8 @@ class MigAction:
     action: Literal["split", "merge"]
     victim: AgentId
     profiles: Tuple[MIGProfile, ...]
+    transfer_profile: Optional[MIGProfile] = None
+    receiver: Optional[AgentId] = None
 
 
 class ResourceManagerAction(Enum):
@@ -835,6 +837,266 @@ class ResourceManagerAction(Enum):
     )
     MERGE_2_2_TO_4_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_2)
     MERGE_2_1_TO_3_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_1)
+
+    # Combined Splits and Transfers
+    # CODING giving to RAG
+    SPLIT_7_TO_4_3_TRANS_CODING_4_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_4_3_TRANS_CODING_3_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_3_2_2_TRANS_CODING_3_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_3_2_2_TRANS_CODING_2_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_2_2_2_1_TRANS_CODING_2_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_2_2_2_1_TRANS_CODING_1_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_CODING_4_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_CODING_2_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_CODING_1_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_4_TO_2_2_TRANS_CODING_2_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_2,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_3_TO_2_1_TRANS_CODING_2_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.RAG,
+    )
+    SPLIT_3_TO_2_1_TRANS_CODING_1_RAG = MigAction(
+        "split",
+        AgentId.CODING,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.RAG,
+    )
+    # RAG giving to CODING
+    SPLIT_7_TO_4_3_TRANS_RAG_4_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_4_3_TRANS_RAG_3_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_3_2_2_TRANS_RAG_3_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_3_2_2_TRANS_RAG_2_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_2_2_2_1_TRANS_RAG_2_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_2_2_2_1_TRANS_RAG_1_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_RAG_4_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_RAG_2_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_7_TO_4_2_1_TRANS_RAG_1_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_4_TO_2_2_TRANS_RAG_2_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_2,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_3_TO_2_1_TRANS_RAG_2_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_2G_10GB,
+        receiver=AgentId.CODING,
+    )
+    SPLIT_3_TO_2_1_TRANS_RAG_1_CODING = MigAction(
+        "split",
+        AgentId.RAG,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_1G_10GB,
+        receiver=AgentId.CODING,
+    )
+
+    # Combined Merges and Transfers
+    # CODING giving to RAG
+    MERGE_4_3_TO_7_TRANS_CODING_7_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.RAG,
+    )
+    MERGE_3_2_2_TO_7_TRANS_CODING_7_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.RAG,
+    )
+    MERGE_2_2_2_1_TO_7_TRANS_CODING_7_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.RAG,
+    )
+    MERGE_4_2_1_TO_7_TRANS_CODING_7_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.RAG,
+    )
+    MERGE_2_2_TO_4_TRANS_CODING_4_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_2,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.RAG,
+    )
+    MERGE_2_1_TO_3_TRANS_CODING_3_RAG = MigAction(
+        "merge",
+        AgentId.CODING,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.RAG,
+    )
+    # RAG giving to CODING
+    MERGE_4_3_TO_7_TRANS_RAG_7_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_4_3,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.CODING,
+    )
+    MERGE_3_2_2_TO_7_TRANS_RAG_7_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_3_2_2,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.CODING,
+    )
+    MERGE_2_2_2_1_TO_7_TRANS_RAG_7_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_2_2_2_1,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.CODING,
+    )
+    MERGE_4_2_1_TO_7_TRANS_RAG_7_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_4_2_1,
+        transfer_profile=MIGProfile.MIG_7G_40GB,
+        receiver=AgentId.CODING,
+    )
+    MERGE_2_2_TO_4_TRANS_RAG_4_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_2_2,
+        transfer_profile=MIGProfile.MIG_4G_20GB,
+        receiver=AgentId.CODING,
+    )
+    MERGE_2_1_TO_3_TRANS_RAG_3_CODING = MigAction(
+        "merge",
+        AgentId.RAG,
+        profiles=MIG_2_1,
+        transfer_profile=MIGProfile.MIG_3G_20GB,
+        receiver=AgentId.CODING,
+    )
 
 
 # --- Management Interfaces ---

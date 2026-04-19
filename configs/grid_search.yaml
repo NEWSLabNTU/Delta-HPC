@@ -1,8 +1,6 @@
 training:
-  phase:
-    - 1
-    - 2
   reward:
     gamma:
+      - 10.0
       - 15.0
       - 20.0

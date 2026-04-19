@@ -1,6 +1,6 @@
 training:
   phase: 2
-  tmux_session: "hpc"
+  tmux_session: "hpc-71-actions-sameQ"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -34,25 +34,25 @@ training:
       min_ent_coef: 0.01
       max_ent_coef: 0.05
       net_arch:
-        pi: [ 256, 256 ]
+        pi: [ 512, 512 ]
         vf: [ 512, 512 ]
     phase_2:
       # vram transfer + mig action
       episode_length: 1024
-      n_steps: 256
+      n_steps: 2048
       lr_max: 3e-4
       lr_min: 5e-5
-      batch_size: 64
-      n_epochs: 15
+      batch_size: 256
+      n_epochs: 10
       gamma: 0.995
       gae_lambda: 0.90
       clip_range: 0.2
       ent_coef_schd: true
       ent_coef: 0.01
       min_ent_coef: 0.005
-      max_ent_coef: 0.03
+      max_ent_coef: 0.05
       net_arch:
-        pi: [ 256, 256 ]
+        pi: [ 512, 512 ]
         vf: [ 512, 512 ]
   action_mask:
     action_cooldown: 10
@@ -92,9 +92,9 @@ training:
         2g.10gb: 1.0
         1g.10gb: 1.0
       RAGAgent:
-        7g.40gb: 10.0
-        4g.20gb: 3.0
-        3g.20gb: 3.0
+        7g.40gb: 15.0
+        4g.20gb: 5.0
+        3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
     alpha:
