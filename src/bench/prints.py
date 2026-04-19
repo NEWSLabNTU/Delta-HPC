@@ -58,7 +58,7 @@ def print_metrics(results: Dict[str, Any]):
             table_data,
             headers=["Metric", "Coding Agent", "RAG Agent"],
             tablefmt="fancy_outline",
-            headersalign="center",
+            headersglobalalign="center",
         )
     )
 
@@ -86,7 +86,7 @@ def print_metrics(results: Dict[str, Any]):
                 headers=headers,
                 tablefmt="fancy_outline",
                 stralign="right",
-                headersalign="center",
+                headersglobalalign="center",
             )
         )
 
@@ -105,7 +105,7 @@ def print_metrics(results: Dict[str, Any]):
             headers=occ_headers,
             tablefmt="fancy_outline",
             stralign="right",
-            headersalign="center",
+            headersglobalalign="center",
         )
     )
 
@@ -133,7 +133,7 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
 
     print(
         tabulate.tabulate(
-            table_data, headers=headers, tablefmt="fancy_outline", headersalign="center"
+            table_data, headers=headers, tablefmt="fancy_outline", headersglobalalign="center"
         )
     )
 
@@ -171,6 +171,6 @@ def print_matrix_metrics(
                 table_data,
                 headers=headers,
                 tablefmt="fancy_outline",
-                headersalign="center",
+                headersglobalalign="center",
             )
         )

@@ -218,3 +218,75 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
                 len(e.running_queue) + len(e.waiting_queue),
             ),
         )
+
+    def select_best_split_action(
+        self, agent: m.Agent, mask: List[bool], all_actions: List[m.ResourceManagerAction]
+    ) -> m.ResourceManagerAction | None:
+        best_action = None
+        min_running = float("inf")
+
+        for i, action in enumerate(all_actions):
+            if (
+                mask[i]
+                and isinstance(action.value, m.MigAction)
+                and action.value.action == "split"
+                and action.value.victim == agent.agent_id
+            ):
+                res = self.get_best_specific_split(agent, action.value.profiles)
+                if res:
+                    eng, _ = res
+                    running = len(eng.running_queue)
+                    if running < min_running:
+                        min_running = running
+                        best_action = action
+        return best_action
+
+    def select_best_merge_action(
+        self, agent: m.Agent, mask: List[bool], all_actions: List[m.ResourceManagerAction]
+    ) -> m.ResourceManagerAction | None:
+        best_action = None
+        min_avg_running = float("inf")
+
+        for i, action in enumerate(all_actions):
+            if (
+                mask[i]
+                and isinstance(action.value, m.MigAction)
+                and action.value.action == "merge"
+                and action.value.victim == agent.agent_id
+            ):
+                res = self.get_best_specific_merge(agent, action.value.profiles)
+                if res:
+                    engs, _ = res
+                    avg_running = sum(len(e.running_queue) for e in engs) / len(engs)
+                    if avg_running < min_avg_running:
+                        min_avg_running = avg_running
+                        best_action = action
+        return best_action
+
+    def select_best_transfer_action(
+        self,
+        giver: m.Agent,
+        receiver_aid: m.AgentId,
+        mask: List[bool],
+        all_actions: List[m.ResourceManagerAction],
+        all_engines: List[m.LLMEngine],
+    ) -> m.ResourceManagerAction | None:
+        if giver.agent_id == receiver_aid:
+            return None
+
+        best_action = None
+        min_total_q = float("inf")
+
+        for i, action in enumerate(all_actions):
+            if mask[i] and isinstance(action.value, m.VramTransferAction):
+                val = action.value
+                if val.giver == giver.agent_id and val.receiver == receiver_aid:
+                    eng = self.get_best_exact_match(
+                        giver.agent_id, val.mig, receiver_aid, all_engines
+                    )
+                    if eng:
+                        total_q = len(eng.running_queue) + len(eng.waiting_queue)
+                        if total_q < min_total_q:
+                            min_total_q = total_q
+                            best_action = action
+        return best_action

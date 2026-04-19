@@ -978,3 +978,23 @@ class MIGProfileRule(ABC):
         receiver_aid: AgentId,  # Pass the ID of the agent RECEIVING the MIG
         all_engines: List[LLMEngine],
     ) -> LLMEngine | None: ...
+
+    @abstractmethod
+    def select_best_split_action(
+        self, agent: Agent, mask: List[bool], all_actions: List[ResourceManagerAction]
+    ) -> ResourceManagerAction | None: ...
+
+    @abstractmethod
+    def select_best_merge_action(
+        self, agent: Agent, mask: List[bool], all_actions: List[ResourceManagerAction]
+    ) -> ResourceManagerAction | None: ...
+
+    @abstractmethod
+    def select_best_transfer_action(
+        self,
+        giver: Agent,
+        receiver_aid: AgentId,
+        mask: List[bool],
+        all_actions: List[ResourceManagerAction],
+        all_engines: List[LLMEngine],
+    ) -> ResourceManagerAction | None: ...

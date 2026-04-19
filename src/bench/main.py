@@ -23,6 +23,7 @@ from src.bench.prints import (
     print_workloads,
     print_matrix_metrics,
 )
+from src.bench.heuristic import RuleBasedHeuristic
 
 
 class BenchRunner:
@@ -63,7 +64,7 @@ class BenchRunner:
                 state_info,
                 headers=["GPU", "Agent", "MIG", "Perm"],
                 tablefmt="fancy_outline",
-                headersalign="center",
+                headersglobalalign="center",
             )
         )
 
@@ -110,6 +111,10 @@ class BenchRunner:
         else:
             obs, _ = env.reset()
 
+        heuristic = None
+        if self.mode == BenchMode.BASELINE_HEURISTIC:
+            heuristic = RuleBasedHeuristic()
+
         # Metrics tracking
         total_steps = BENCH_CONFIG.benchmark_length
         queue_lengths_sum = {aid: 0 for aid in m.AgentId}
@@ -143,19 +148,23 @@ class BenchRunner:
             leave=True,
             ncols=100,
         ):
+            # Always update the internal mask (handles cooldowns/budget/etc.)
+            action_masks = env.action_masks()
+
             if self.mode == BenchMode.RL:
                 assert model is not None
-                action_masks = env.action_masks()
                 action_np, _ = model.predict(  # type: ignore
                     obs, action_masks=action_masks, deterministic=True
                 )
                 action = int(action_np[0])
+                enum_action = list(m.ResourceManagerAction)[action]
+            elif self.mode == BenchMode.BASELINE_HEURISTIC:
+                assert heuristic is not None
+                enum_action = heuristic.decide_action(env.sim)
+                action = list(m.ResourceManagerAction).index(enum_action)
             else:
-                action = list(m.ResourceManagerAction).index(
-                    m.ResourceManagerAction.NO_ACTION
-                )
-
-            enum_action = list(m.ResourceManagerAction)[action]
+                enum_action = m.ResourceManagerAction.NO_ACTION
+                action = list(m.ResourceManagerAction).index(enum_action)
 
             # Record merge/split/transfer counts and durations
             if enum_action != m.ResourceManagerAction.NO_ACTION:
@@ -327,19 +336,39 @@ def main():
     )
     parser.add_argument(
         "--bl",
-        action="store_true",
-        help="Run the baseline benchmarks",
+        nargs="+",
+        default=[],
+        help="Baselines to run (e.g., 7g, 2_2_2_1, static, heuristic)",
     )
     args = parser.parse_args()
     args.ckpts = cast(List[str], args.ckpts)
+    args.ckpts = cast(List[str], args.ckpts) if args.ckpts else []
     args.ckpts.reverse()
 
     bench_modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
-    if args.bl:
-        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-            bench_modes.extend([BenchMode.BASELINE_STATIC])
+    for bl in args.bl:
+        if bl == "7g":
+            bench_modes.append(BenchMode.BASELINE_7G)
+        elif bl == "2_2_2_1":
+            bench_modes.append(BenchMode.BASELINE_2_2_2_1)
+        elif bl == "heuristic":
+            bench_modes.append(BenchMode.BASELINE_HEURISTIC)
+        elif bl == "static":
+            bench_modes.append(BenchMode.BASELINE_STATIC)
+        elif bl == "all":
+            if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
+                bench_modes.extend([BenchMode.BASELINE_STATIC])
+            else:
+                bench_modes.extend(
+                    [
+                        BenchMode.BASELINE_7G,
+                        BenchMode.BASELINE_2_2_2_1,
+                        BenchMode.BASELINE_HEURISTIC,
+                    ]
+                )
         else:
-            bench_modes.extend([BenchMode.BASELINE_7G, BenchMode.BASELINE_2_2_2_1])
+            print(f"Unknown baseline: {bl}")
+
     if not bench_modes:
         parser.error("No benchmark to run. Use --ckpt for RL and --bl for baselines.")
 

@@ -14,6 +14,23 @@ class BenchConfig:
             self._length = data["benchmark-length"]
             self._phase = data.get("phase", 2)
             self._seed = data.get("seed", 42)
+            self._heuristic = data.get("heuristic", {"watermark_high": 20.0, "watermark_low": 5.0})
+
+    @property
+    def q_threshold_high(self) -> float:
+        return float(self._heuristic["q_threshold_high"])
+
+    @property
+    def q_threshold_low(self) -> float:
+        return float(self._heuristic["q_threshold_low"])
+
+    @property
+    def busy_threshold(self) -> float:
+        return float(self._heuristic["busy_threshold"])
+
+    @property
+    def idle_threshold(self) -> float:
+        return float(self._heuristic["idle_threshold"])
 
     def get_rate_range(self, workload: Workload) -> Tuple[float, float]:
         cfg = self._workloads[workload.value]["rate"]
