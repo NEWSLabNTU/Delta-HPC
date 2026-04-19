@@ -9,8 +9,11 @@ gpu := "MIG-9ac89393-4759-5270-8347-c8e1b56d4df7"
 test-env:
     which python
 
-bench ckpt bl="":
-    python -m src.bench.main {{ if bl != "" { "--bl" } else { "" } }} --ckpt {{ ckpt }}
+bench +ckpts:
+    python -m src.bench.main --ckpt {{ ckpts }}
+
+bench-bl +bl:
+    python -m src.bench.main --bl {{ bl }}
 
 bench-all phase="2":
     #!/usr/bin/env bash

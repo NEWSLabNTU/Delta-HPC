@@ -708,7 +708,7 @@ class SimulatorImpl(m.Simulator):
 
         return False  # Finished simulation
 
-    def get_state(self, current_step: int) -> m.EnvironmentStateData:
+    def get_state(self) -> m.EnvironmentStateData:
         return self._environment_state.get_state(self._current_time, self._agents)
 
     def reset(

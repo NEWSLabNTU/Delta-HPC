@@ -1,3 +1,4 @@
+from typing import List, Tuple
 import math
 import src.simulation.models as m
 import src.simulation.utils as utils
@@ -72,7 +73,7 @@ class RuleBasedHeuristic:
         return sum(raw_rs) / len(raw_rs)
 
     def decide_action(self, sim: m.Simulator) -> m.ResourceManagerAction:
-        state = sim.get_state(0)
+        state = sim.get_state()
         arrival_rates = {
             aid: self._denormalize_arrival_rate(r)
             for aid, r in state["arrival_rate"].items()
@@ -95,7 +96,7 @@ class RuleBasedHeuristic:
 
         # 2. Scale-Up Logic (Busy Agents or Agents with High Queue)
         # We act on agents that are either categorized as BUSY or already experiencing high queue pressure.
-        needs_scale_up = []
+        needs_scale_up: List[Tuple[m.AgentId, float]] = []
         for aid in m.AgentId:
             agent = sim.agents[aid]
             avg_waiting = self._get_agent_avg_waiting(state, aid, agent)
@@ -129,7 +130,7 @@ class RuleBasedHeuristic:
 
         # 3. Scale-Down Logic (Idle Agents or Agents with Low Queue)
         # We act on agents that are either categorized as IDLE or have consistently low running queues.
-        needs_scale_down = []
+        needs_scale_down: List[Tuple[m.AgentId, float]] = []
         for aid in m.AgentId:
             agent = sim.agents[aid]
             avg_running = self._get_agent_avg_running(state, aid, agent)

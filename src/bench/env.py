@@ -1,15 +1,19 @@
-import numpy as np
-import gymnasium as gym
-import numpy.typing as npt
 from typing import Any, Dict, List, Optional, Tuple
+import numpy as np
+import numpy.typing as npt
 
+from src.simulation.env import BaseMIGResourceEnv
 from src.bench.models import BenchMode
 from src.bench.config import BENCH_CONFIG
-from src.training.train import MIGResourceEnv
 import src.simulation.models as m
 
 
-class BenchMIGResourceEnv(MIGResourceEnv):
+class BenchMIGResourceEnv(BaseMIGResourceEnv):
+    """
+    Concrete Evaluation Environment for MIG Resource Management.
+    Handles fixed workloads and protects against destructive auto-resets.
+    """
+
     def __init__(
         self,
         simulator: m.Simulator,
@@ -18,36 +22,35 @@ class BenchMIGResourceEnv(MIGResourceEnv):
         init_mode: m.InitialMIGCombination
         | Tuple[m.InitialMIGCombination, m.InitialMIGCombination],
     ):
-        super().__init__(simulator, enable_log=False)
+        super().__init__(simulator)
         self.bench_mode = bench_mode
-        self.enable_replenish = False
         self._requests = requests
         self._init_mode = init_mode
+        self._is_initialized = False
 
         # Overwrite episode length
         self.max_steps = BENCH_CONFIG.benchmark_length
 
-    def action_masks(self) -> npt.NDArray[np.bool_]:
-        self._current_action_mask = self.get_phase_action_mask(BENCH_CONFIG.phase)
-        return self._current_action_mask
-
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None
     ) -> Tuple[npt.NDArray[np.float32], Dict[str, Any]]:
-        gym.Env[npt.NDArray[np.float32], int].reset(self, seed=seed)
-        self.current_step = 0
-        self.load_turn = 0
-        self.episode_count += 1
+        # If already initialized, we ignore subsequent resets to preserve state
+        # for the flush phase (prevents auto-reset from RL wrappers).
+        if self._is_initialized:
+            state_data = self.sim.get_state()
+            return self._get_obs(state_data), {}
 
+        # First reset: Initialize simulation with benchmark workload
+        super().reset(seed=seed)
+        self._is_initialized = True
+
+        # Setup Hardware
         self.sim.reset(init_mode=self._init_mode)
 
-        # Use cloned pre-built requests to avoid state corruption between trials
+        # Setup Workload (cloned to allow trial reuse)
         requests = [req.clone() for req in self._requests]
+        self.sim.init_simulator(requests, self.max_steps)
+        self.sim.run()
 
-        self.sim.init_simulator(requests, BENCH_CONFIG.benchmark_length)
-        self.sim.run()  # advance to the first action interval
-
-        state_data = self.sim.get_state(self.current_step)
-        obs = self._get_obs(state_data)
-
-        return obs, {}
+        state_data = self.sim.get_state()
+        return self._get_obs(state_data), {}

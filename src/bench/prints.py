@@ -2,7 +2,10 @@ import tabulate
 from typing import Any, Dict, List
 
 import src.simulation.models as m
+import src.simulation.utils as utils
 from src.bench.models import BenchMode, Workload
+from src.bench.config import BENCH_CONFIG
+from src.training.models import TrainingPhase
 
 
 def print_banner(mode: BenchMode, running_id: str):
@@ -39,7 +42,23 @@ def print_metrics(results: Dict[str, Any]):
             mig_existence.append(f"{mig.size}g: {val:.1f}%")
         existence_str = "\n".join(mig_existence)
 
-        return [ttft_str, tpot_str, avg_q_str, smt_str, existence_str]
+        overall_token_mig: List[str] = []
+        for mig in sorted(
+            metrics["overall_token_mig_percentages"].keys(),
+            key=lambda m: m.size,
+        ):
+            val = metrics["overall_token_mig_percentages"][mig]
+            overall_token_mig.append(f"{mig.size}g: {val:.1f}%")
+        overall_token_str = "\n".join(overall_token_mig)
+
+        return [
+            ttft_str,
+            tpot_str,
+            avg_q_str,
+            smt_str,
+            existence_str,
+            overall_token_str,
+        ]
 
     coding_metrics = format_metrics(results[m.AgentId.CODING.value])
     rag_metrics = format_metrics(results[m.AgentId.RAG.value])
@@ -50,6 +69,7 @@ def print_metrics(results: Dict[str, Any]):
         ["Avg Q", coding_metrics[2], rag_metrics[2]],
         ["S/M/T", coding_metrics[3], rag_metrics[3]],
         ["MIG Existence (%)", coding_metrics[4], rag_metrics[4]],
+        ["Tokens by MIG (%)", coding_metrics[5], rag_metrics[5]],
     ]
 
     print("\n● Aggregate Metrics")
@@ -133,7 +153,10 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
 
     print(
         tabulate.tabulate(
-            table_data, headers=headers, tablefmt="fancy_outline", headersglobalalign="center"
+            table_data,
+            headers=headers,
+            tablefmt="fancy_outline",
+            headersglobalalign="center",
         )
     )
 
@@ -174,3 +197,27 @@ def print_matrix_metrics(
                 headersglobalalign="center",
             )
         )
+
+def print_initial_state(init_mode: Any):
+    # Display Initial State
+    if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
+        print(f"\n[Initial State] {init_mode}")
+        return
+    print("\n[Initial State]")
+    state_info: List[List[str]] = [
+        [
+            str(e["gpu"]),
+            str(e["agent"]),
+            str(e["mig"]),
+            "✓" if e.get("is-permanent", False) else " ",
+        ]
+        for e in utils.SIM_CONFIG.initial_state
+    ]
+    print(
+        tabulate.tabulate(
+            state_info,
+            headers=["GPU", "Agent", "MIG", "Perm"],
+            tablefmt="fancy_outline",
+            headersglobalalign="center",
+        )
+    )

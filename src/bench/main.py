@@ -2,7 +2,6 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import argparse
 from pathlib import Path
 
-import tabulate
 import numpy as np
 from tqdm import tqdm
 from sb3_contrib import MaskablePPO
@@ -11,7 +10,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
-import src.simulation.utils as utils
 from src.training.models import TrainingPhase
 from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
@@ -22,6 +20,7 @@ from src.bench.prints import (
     print_metrics,
     print_workloads,
     print_matrix_metrics,
+    print_initial_state,
 )
 from src.bench.heuristic import RuleBasedHeuristic
 
@@ -29,6 +28,7 @@ from src.bench.heuristic import RuleBasedHeuristic
 class BenchRunner:
     def __init__(
         self,
+        ckpt: Optional[Path],
         workload: Workload,
         mode: BenchMode,
         requests: List[m.Request],
@@ -39,177 +39,181 @@ class BenchRunner:
         ] = m.InitialMIGCombination.RANDOM,
     ):
         self.workload = workload
-        self.mode = mode  # "RL", "7g", "2_2_2_1"
+        self.mode = mode
         self.requests = requests
         self.phase_history = phase_history
         self._init_mode = init_mode
+        self.model: Optional[MaskablePPO] = None
+        self.env: BenchMIGResourceEnv
+        self.venv: Optional[VecNormalize] = None
+        self.obs: Any = None
 
-    def _display_initial_state(self):
-        # Display Initial State
-        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-            print(f"\n[Initial State] {self._init_mode}")
-            return
-        print("\n[Initial State]")
-        state_info: List[List[str]] = [
-            [
-                e["gpu"],
-                e["agent"],
-                e["mig"],
-                "✓" if e.get("is-permanent", False) else " ",
-            ]
-            for e in utils.SIM_CONFIG.initial_state
-        ]
-        print(
-            tabulate.tabulate(
-                state_info,
-                headers=["GPU", "Agent", "MIG", "Perm"],
-                tablefmt="fancy_outline",
-                headersglobalalign="center",
-            )
-        )
+        self._setup_execution(ckpt)
 
-    def run(self, ckpt: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
-        agents: Dict[m.AgentId, m.Agent] = {}
-        engines: Dict[str, m.LLMEngine] = {}  # Sim reset will rebuild these
-        for aid in m.AgentId:
-            agents[aid] = AgentImpl(aid)
+    def run(self) -> Dict[str, Dict[str, Any]]:
+        """Executes a complete benchmark run including thermal-up and flush phases."""
+        # 1. Metrics Tracking Initialization
+        stats = self._init_stats_tracking()
 
-        sim = SimulatorImpl(agents=agents, engines=engines, no_log=True)
-        env = BenchMIGResourceEnv(
+        # 2. Display Context
+        print_initial_state(self._init_mode)
+
+        # 3. Main Simulation Loop
+        self._run_benchmark_loop(stats=stats)
+
+        # 4. Flush Phase
+        completed_reqs = self._flush_simulation(stats=stats)
+
+        # 5. Synthesis
+        return self._synthesize_results(completed_reqs=completed_reqs, stats=stats)
+
+    def _setup_execution(self, ckpt: Optional[Path]):
+        agents: Dict[m.AgentId, m.Agent] = {aid: AgentImpl(aid) for aid in m.AgentId}
+        sim = SimulatorImpl(agents=agents, engines={}, no_log=True)
+        self.env = BenchMIGResourceEnv(
             sim,
             bench_mode=self.mode,
             requests=self.requests,
             init_mode=self._init_mode,
         )
 
-        model = None
-        venv = None
+        model, venv = None, None
         if self.mode == BenchMode.RL:
-            vec_env = DummyVecEnv([lambda: env])
+            vec_env = DummyVecEnv([lambda: self.env])
             assert ckpt is not None
             norm_path = ckpt.with_name(f"{ckpt.stem}_vecnormalize.pkl")
-            if norm_path.exists():
-                venv = VecNormalize.load(str(norm_path), vec_env)
-                venv.training = False
-                venv.norm_reward = False
-            else:
-                venv = vec_env
+            assert norm_path.exists()
+            venv = VecNormalize.load(str(norm_path), vec_env)
+
+            venv.training = venv.norm_reward = False  # type: ignore
 
             custom_objects: Dict[str, Any] = {
                 "learning_rate": 0.0,
                 "clip_range": 0.2,
-                "lr_schedule": lambda: 0.0,
+                "lr_schedule": 0.0,
             }
             model = MaskablePPO.load(  # type: ignore
-                ckpt,
-                env=venv,
-                device="cuda",
-                custom_objects=custom_objects,
-                verbose=1,
+                ckpt, env=venv, device="cuda", custom_objects=custom_objects, verbose=1
             )
-            obs = venv.reset()  # type: ignore
+            self.obs = venv.reset()  # type: ignore
         else:
-            obs, _ = env.reset()
+            self.obs, _ = self.env.reset()
 
-        heuristic = None
-        if self.mode == BenchMode.BASELINE_HEURISTIC:
-            heuristic = RuleBasedHeuristic()
+        self.model = model
+        self.venv = venv
 
-        # Metrics tracking
-        total_steps = BENCH_CONFIG.benchmark_length
-        queue_lengths_sum = {aid: 0 for aid in m.AgentId}
-        split_count = {aid: 0 for aid in m.AgentId}
-        merge_count = {aid: 0 for aid in m.AgentId}
-        transfer_count = {aid: 0 for aid in m.AgentId}
-        completed_reqs_map: Dict[m.AgentId, Dict[str, m.Request]] = {
-            aid: {} for aid in m.AgentId
-        }
-        presence_by_mig = {aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId}
+    def _init_stats_tracking(self) -> Dict[str, Any]:
         patterns = [w.value for w in Workload if w != Workload.HYBRID]
-
-        def get_active_pattern(agent_id: m.AgentId, t: float) -> str:
-            pat = None
-            for ph in self.phase_history[agent_id]:
-                if ph["start_time"] <= t <= ph["start_time"] + ph["duration"] + 1e-5:
-                    pat = ph["pattern"]
-                    break
-            assert pat is not None, f"No pattern found for {agent_id} at t={t:.2f}s"
-            return pat
-
-        joint_phase_ticks = {
-            pat_c: {pat_r: 0 for pat_r in patterns} for pat_c in patterns
+        return {
+            "queue_lengths_sum": {aid: 0 for aid in m.AgentId},
+            "split_count": {aid: 0 for aid in m.AgentId},
+            "merge_count": {aid: 0 for aid in m.AgentId},
+            "transfer_count": {aid: 0 for aid in m.AgentId},
+            "completed_reqs_map": {aid: {} for aid in m.AgentId},
+            "presence_by_mig": {
+                aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId
+            },
+            "joint_phase_ticks": {pc: {pr: 0 for pr in patterns} for pc in patterns},
+            "patterns": patterns,
         }
 
-        self._display_initial_state()
+    def _run_benchmark_loop(
+        self,
+        stats: Dict[str, Any],
+    ):
+        heuristic = (
+            RuleBasedHeuristic() if self.mode == BenchMode.BASELINE_HEURISTIC else None
+        )
 
         for _ in tqdm(
-            range(total_steps),
+            range(BENCH_CONFIG.benchmark_length),
             desc=f"{self.mode.name:<5} | {self.workload.name:<8}",
             leave=True,
             ncols=100,
         ):
-            # Always update the internal mask (handles cooldowns/budget/etc.)
-            action_masks = env.action_masks()
+            # 1. Action Selection
+            action, enum_action = self._select_action(heuristic)
 
-            if self.mode == BenchMode.RL:
-                assert model is not None
-                action_np, _ = model.predict(  # type: ignore
-                    obs, action_masks=action_masks, deterministic=True
-                )
-                action = int(action_np[0])
-                enum_action = list(m.ResourceManagerAction)[action]
-            elif self.mode == BenchMode.BASELINE_HEURISTIC:
-                assert heuristic is not None
-                enum_action = heuristic.decide_action(env.sim)
-                action = list(m.ResourceManagerAction).index(enum_action)
+            # 2. Record Structural Actions (Merge/Split/Transfer)
+            self._record_structural_actions(enum_action, stats)
+
+            # 3. Environment Step
+            if self.mode == BenchMode.RL and self.venv:
+                self.obs, _, _, _ = self.venv.step([action])  # type: ignore
             else:
-                enum_action = m.ResourceManagerAction.NO_ACTION
-                action = list(m.ResourceManagerAction).index(enum_action)
+                assert self.env is not None
+                self.obs, _, _, _, _ = self.env.step(action)
 
-            # Record merge/split/transfer counts and durations
-            if enum_action != m.ResourceManagerAction.NO_ACTION:
-                act_val = enum_action.value
-                if isinstance(act_val, m.MigAction):
-                    if act_val.action == "split":
-                        split_count[act_val.victim] += 1
-                    elif act_val.action == "merge":
-                        merge_count[act_val.victim] += 1
-                else:
-                    # VRAMTransfer
-                    transfer_count[act_val.giver] += 1
+            # 4. Tick Statistics
+            self._tick_step_stats(stats)
 
-            if self.mode == BenchMode.RL:
-                obs, _, _, _ = venv.step([action])  # type: ignore
+    def _select_action(
+        self,
+        heuristic: Optional[RuleBasedHeuristic],
+    ) -> Tuple[int, m.ResourceManagerAction]:
+        assert self.env is not None
+        mask = self.env.action_masks()
+        if self.mode == BenchMode.RL:
+            assert self.model is not None
+            assert self.venv is not None
+            act_np, _ = self.model.predict(  # type: ignore
+                self.obs, action_masks=mask, deterministic=True
+            )
+            action = int(act_np[0])
+            return action, list(m.ResourceManagerAction)[action]
+        elif self.mode == BenchMode.BASELINE_HEURISTIC and heuristic:
+            enum_act = heuristic.decide_action(self.env.sim)
+            return list(m.ResourceManagerAction).index(enum_act), enum_act
+
+        no_action = m.ResourceManagerAction.NO_ACTION
+        return list(m.ResourceManagerAction).index(no_action), no_action
+
+    def _record_structural_actions(
+        self, enum_action: m.ResourceManagerAction, stats: Dict[str, Any]
+    ):
+        if enum_action != m.ResourceManagerAction.NO_ACTION:
+            act_val = enum_action.value
+            if isinstance(act_val, m.MigAction):
+                if act_val.action == "split":
+                    stats["split_count"][act_val.victim] += 1
+                elif act_val.action == "merge":
+                    stats["merge_count"][act_val.victim] += 1
             else:
-                obs, _, _, _, _ = env.step(action)
+                stats["transfer_count"][act_val.giver] += 1
 
-            curr_time = env.sim.current_time
-            pat_c = get_active_pattern(m.AgentId.CODING, curr_time)
-            pat_r = get_active_pattern(m.AgentId.RAG, curr_time)
-            joint_phase_ticks[pat_c][pat_r] += 1
+    def _tick_step_stats(self, stats: Dict[str, Any]):
+        assert self.env is not None
+        curr_time = self.env.sim.current_time
+        pat_c = self._get_active_pattern(m.AgentId.CODING, curr_time)
+        pat_r = self._get_active_pattern(m.AgentId.RAG, curr_time)
+        stats["joint_phase_ticks"][pat_c][pat_r] += 1
 
-            for aid, agent in env.sim.agents.items():
-                ql_sum = sum(
-                    len(e.waiting_queue)
-                    for e in agent.engines
-                    if e.status != m.EngineStatus.BOOTING
-                )
-                queue_lengths_sum[aid] += ql_sum
-                for engine in agent.engines:
-                    if not engine.is_permanent:
-                        presence_by_mig[aid][engine.mig_profile] += 1
+        for aid, agent in self.env.sim.agents.items():
+            ql_sum = sum(
+                len(e.waiting_queue)
+                for e in agent.engines
+                if e.status != m.EngineStatus.BOOTING
+            )
+            stats["queue_lengths_sum"][aid] += ql_sum
+            for engine in agent.engines:
+                if not engine.is_permanent:
+                    stats["presence_by_mig"][aid][engine.mig_profile] += 1
 
-            # Accumulate completed requests before potential environment resets clear them
-            for aid, reqs in env.sim.interval_requests.items():
-                for req in reqs:
-                    if req.is_finished and req.serving_engine is not None:
-                        completed_reqs_map[aid][req.id] = req
+        # Accumulate completed requests
+        for aid, reqs in self.env.sim.interval_requests.items():
+            for req in reqs:
+                if req.is_finished and req.serving_engine is not None:
+                    stats["completed_reqs_map"][aid][req.id] = req
 
-        # Flush period: wait for all requests to complete
+    def _flush_simulation(
+        self,
+        stats: Dict[str, Any],
+    ) -> Dict[m.AgentId, Dict[str, m.Request]]:
+        assert self.env is not None
         print(
             "\nBenchmark steps exhausted. Entering flush period to finish remaining requests..."
         )
-        no_action_idx = list(m.ResourceManagerAction).index(
+        no_action = list(m.ResourceManagerAction).index(
             m.ResourceManagerAction.NO_ACTION
         )
         flush_steps = 0
@@ -220,109 +224,128 @@ class BenchRunner:
             ncols=100,
             bar_format="{desc} | {n_fmt} steps [{elapsed}, {rate_fmt}]",
         ) as pbar:
-            while True:
-                total_q = sum(
-                    len(e.waiting_queue) + len(e.running_queue)
-                    for agent in env.sim.agents.values()
-                    for e in agent.engines
+            while self.env.sim.has_active_work():
+                inflight = sum(
+                    1
+                    for e in self.env.sim.events
+                    if e.event_type
+                    in [m.EventType.REQUEST_ARRIVAL, m.EventType.RAG_SEARCH_COMPLETE]
                 )
-                if total_q == 0:
-                    break
+                queue_q = sum(
+                    len(e.waiting_queue) + len(e.running_queue)
+                    for a in self.env.sim.agents.values()
+                    for e in a.engines
+                )
 
-                pbar.set_description(f"{self.mode.name:<5} | FLUSHING (Q: {total_q:<4})")
+                pbar.set_description(
+                    f"{self.mode.name:<5} | FLUSHING (P: {inflight + queue_q:<4})"
+                )
 
-                if self.mode == BenchMode.RL:
-                    obs, _, _, _ = venv.step([no_action_idx])  # type: ignore
+                if self.mode == BenchMode.RL and self.venv:
+                    self.obs, _, _, _ = self.venv.step([no_action])  # type: ignore
                 else:
-                    obs, _, _, _, _ = env.step(no_action_idx)
+                    self.obs, _, _, _, _ = self.env.step(no_action)
 
-                # Continue tracking existence during flush
-                for aid, agent in env.sim.agents.items():
-                    for engine in agent.engines:
-                        if not engine.is_permanent:
-                            presence_by_mig[aid][engine.mig_profile] += 1
+                # Record existence during flush
+                for aid, agent in self.env.sim.agents.items():
+                    for eng in agent.engines:
+                        if not eng.is_permanent:
+                            stats["presence_by_mig"][aid][eng.mig_profile] += 1
 
-                # Accumulate completed requests
-                for aid, reqs in env.sim.interval_requests.items():
+                # Accumulate completions
+                for aid, reqs in self.env.sim.interval_requests.items():
                     for req in reqs:
                         if req.is_finished and req.serving_engine is not None:
-                            completed_reqs_map[aid][req.id] = req
+                            stats["completed_reqs_map"][aid][req.id] = req
 
                 flush_steps += 1
                 pbar.update(1)
-                if (
-                    flush_steps > 1000
-                ):  # Safety escape (approx 33 hours simulation time at 120s/step)
+                if flush_steps > 1000:
                     print(
                         f"\n[Warning] Flush period timed out after {flush_steps} steps."
                     )
                     break
 
-        # Extract Episode Metrics
+        return stats["completed_reqs_map"]
+
+    def _synthesize_results(
+        self,
+        completed_reqs: Dict[m.AgentId, Dict[str, m.Request]],
+        stats: Dict[str, Any],
+    ) -> Dict[str, Dict[str, Any]]:
+        presence = stats["presence_by_mig"]
+        ql_sum = stats["queue_lengths_sum"]
+        patterns = stats["patterns"]
+        total_steps = BENCH_CONFIG.benchmark_length
+
         ttft_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
         tpot_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
-
         tokens_by_mig = {
             aid: {
-                pat_c: {pat_r: {prof: 0 for prof in m.MIGProfile} for pat_r in patterns}
-                for pat_c in patterns
+                pc: {pr: {prof: 0 for prof in m.MIGProfile} for pr in patterns}
+                for pc in patterns
             }
             for aid in m.AgentId
         }
 
-        for aid, req_map in completed_reqs_map.items():
+        for aid, req_map in completed_reqs.items():
             for req in req_map.values():
-                if req.first_token_time is not None:
-                    ttft = req.first_token_time - req.arrival_time
-                else:
-                    ttft = (
+                ttft = (
+                    (req.first_token_time - req.arrival_time)
+                    if req.first_token_time
+                    else (
                         req.finish_time - req.arrival_time if req.finish_time else 0.0
                     )
+                )
                 ttft_list[aid].append(ttft)
 
                 if req.generated_tokens > 0 and req.decode_time > 0:
-                    tpot = req.decode_time / req.generated_tokens
-                else:
-                    tpot = 0.0
-                tpot_list[aid].append(tpot)
+                    tpot_list[aid].append(req.decode_time / req.generated_tokens)
 
-                # Check serving engine MIG profile
+                # Track token migration attribution
+                r_pat_c = self._get_active_pattern(m.AgentId.CODING, req.arrival_time)
+                r_pat_r = self._get_active_pattern(m.AgentId.RAG, req.arrival_time)
                 assert req.serving_engine is not None
-
-                arrival = req.arrival_time
-                r_pat_c = get_active_pattern(m.AgentId.CODING, arrival)
-                r_pat_r = get_active_pattern(m.AgentId.RAG, arrival)
-
                 tokens_by_mig[aid][r_pat_c][r_pat_r][
                     req.serving_engine.mig_profile
                 ] += req.generated_tokens
 
-        # Synthesize results
         res: Dict[str, Dict[str, Any]] = {}
-
-        total_ticks = sum(sum(joint_phase_ticks[pc].values()) for pc in patterns)
-        joint_occurrences = {
-            pat_c: {
-                pat_r: (
-                    joint_phase_ticks[pat_c][pat_r] / total_ticks * 100
-                    if total_ticks > 0
-                    else 0
-                )
-                for pat_r in patterns
-            }
-            for pat_c in patterns
-        }
+        total_ticks = max(
+            1, sum(sum(stats["joint_phase_ticks"][pc].values()) for pc in patterns)
+        )
 
         for aid in m.AgentId:
-            token_mig_percentages = {}
-            for pat_c in patterns:
-                token_mig_percentages[pat_c] = {}
-                for pat_r in patterns:
-                    total_tokens = sum(tokens_by_mig[aid][pat_c][pat_r].values())
-                    token_mig_percentages[pat_c][pat_r] = {
-                        k: (v / total_tokens * 100 if total_tokens > 0 else 0)
-                        for k, v in tokens_by_mig[aid][pat_c][pat_r].items()
+            # Token distribution math
+            token_mig_percentages = {
+                pc: {
+                    pr: {
+                        k: (
+                            v / sum(tokens_by_mig[aid][pc][pr].values()) * 100
+                            if sum(tokens_by_mig[aid][pc][pr].values()) > 0
+                            else 0
+                        )
+                        for k, v in tokens_by_mig[aid][pc][pr].items()
                     }
+                    for pr in patterns
+                }
+                for pc in patterns
+            }
+
+            overall_tokens = {
+                prof: sum(
+                    tokens_by_mig[aid][pc][pr][prof]
+                    for pc in patterns
+                    for pr in patterns
+                )
+                for prof in m.MIGProfile
+            }
+            total_gen = sum(overall_tokens.values())
+            overall_token_mig_percentages = {
+                prof: (v / total_gen * 100)
+                for prof, v in overall_tokens.items()
+                if total_gen > 0
+            }
 
             res[aid.value] = {
                 "ttft_percentiles": np.percentile(
@@ -333,159 +356,202 @@ class BenchRunner:
                 "tpot_quartiles": np.percentile(tpot_list[aid], [25, 50, 75]).tolist()
                 if tpot_list[aid]
                 else [0, 0, 0],
-                "avg_waiting_queue": queue_lengths_sum[aid] / total_steps,
-                "split_count": split_count[aid],
-                "merge_count": merge_count[aid],
-                "transfer_count": transfer_count[aid],
+                "avg_waiting_queue": ql_sum[aid] / total_steps,
+                "split_count": stats["split_count"][aid],
+                "merge_count": stats["merge_count"][aid],
+                "transfer_count": stats["transfer_count"][aid],
                 "token_mig_percentages": token_mig_percentages,
-                "joint_occurrences": joint_occurrences,
+                "overall_token_mig_percentages": overall_token_mig_percentages,
+                "joint_occurrences": {
+                    pc: {
+                        pr: (stats["joint_phase_ticks"][pc][pr] / total_ticks * 100)
+                        for pr in patterns
+                    }
+                    for pc in patterns
+                },
                 "mig_existence_percentages": {
                     prof: (count / total_steps * 100)
-                    for prof, count in presence_by_mig[aid].items()
+                    for prof, count in presence[aid].items()
                 },
             }
 
         return res
 
+    def _get_active_pattern(self, agent_id: m.AgentId, t: float) -> str:
+        for ph in self.phase_history[agent_id]:
+            if ph["start_time"] <= t <= ph["start_time"] + ph["duration"] + 1e-5:
+                return ph["pattern"]
+        last_ph = self.phase_history[agent_id][-1]
+        if t > last_ph["start_time"] + last_ph["duration"]:
+            return last_ph["pattern"]
+        assert False, f"No pattern found for {agent_id} at t={t:.2f}s"
 
-def _get_workload_summary(
-    phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
-) -> Dict[m.AgentId, List[Dict[str, Any]]]:
-    # Workload summary aggregation
-    workload_summary: Dict[m.AgentId, List[Dict[str, Any]]] = {}
-    for aid, phases in phase_history.items():
-        summary: Dict[str, Dict[str, float]] = {}
-        for p in phases:
-            pat = p["pattern"]
-            if pat not in summary:
-                summary[pat] = {"total_duration": 0, "weighted_rate": 0}
-            summary[pat]["total_duration"] += p["duration"]
-            summary[pat]["weighted_rate"] += p["avg_rate"] * p["duration"]
+    @staticmethod
+    def get_workload_summary(
+        phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
+    ) -> Dict[m.AgentId, List[Dict[str, Any]]]:
+        workload_summary: Dict[m.AgentId, List[Dict[str, Any]]] = {}
+        for aid, phases in phase_history.items():
+            summary: Dict[str, Dict[str, float]] = {}
+            for p in phases:
+                pat = p["pattern"]
+                if pat not in summary:
+                    summary[pat] = {"total_duration": 0, "weighted_rate": 0}
+                summary[pat]["total_duration"] += p["duration"]
+                summary[pat]["weighted_rate"] += p["avg_rate"] * p["duration"]
 
-        final_phases: List[Dict[str, Any]] = []
-        total_ben_dur = sum(s["total_duration"] for s in summary.values())
-        for pat in sorted(summary.keys()):
-            s = summary[pat]
-            final_phases.append(
-                {
-                    "pattern": pat,
-                    "avg_rate": s["weighted_rate"] / s["total_duration"]
-                    if s["total_duration"] > 0
-                    else 0,
-                    "duration": s["total_duration"],
-                    "proportion": (s["total_duration"] / total_ben_dur * 100)
-                    if total_ben_dur > 0
-                    else 0,
-                }
+            final_phases: List[Dict[str, Any]] = []
+            total_ben_dur = sum(s["total_duration"] for s in summary.values())
+            for pat in sorted(summary.keys()):
+                s = summary[pat]
+                final_phases.append(
+                    {
+                        "pattern": pat,
+                        "avg_rate": s["weighted_rate"] / s["total_duration"]
+                        if s["total_duration"] > 0
+                        else 0,
+                        "duration": s["total_duration"],
+                        "proportion": (s["total_duration"] / total_ben_dur * 100)
+                        if total_ben_dur > 0
+                        else 0,
+                    }
+                )
+            workload_summary[aid] = final_phases
+        return workload_summary
+
+    @classmethod
+    def run_suite(cls):
+        args = cls._parse_args()
+        bench_modes = cls._resolve_bench_modes(args)
+
+        print(
+            "\n" + "=" * 60 + "\nSTARTING HYBRID BENCHMARKS\nUsing seed:",
+            BENCH_CONFIG.seed,
+            "\n" + "=" * 60,
+        )
+
+        # 1. Prepare Workload
+        print("Pre-generating workload requests...")
+        shared_loader = BenchRequestLoader(Workload.HYBRID, seed=BENCH_CONFIG.seed)
+        shared_requests: List[m.Request] = []
+        for aid in m.AgentId:
+            shared_requests.extend(
+                shared_loader.generate_requests(agent_id=aid, turn=0)
             )
-        workload_summary[aid] = final_phases
-    return workload_summary
+        print(f"Generated {len(shared_requests)} requests.")
+        print_workloads(cls.get_workload_summary(shared_loader.phase_history))
 
+        # 2. Run sequential trials
+        for mode in bench_modes:
+            ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
+            print_banner(mode, ckpt.parent.name if ckpt else "")
 
-def main():
-    parser = argparse.ArgumentParser(description="Run Performance Benchmarks")
-    parser.add_argument(
-        "--ckpts", type=Path, nargs="+", default=None, help="Path to RL Checkpoint Zip"
-    )
-    parser.add_argument(
-        "--bl",
-        nargs="+",
-        default=[],
-        help="Baselines to run (e.g., 7g, 2_2_2_1, static, heuristic)",
-    )
-    args = parser.parse_args()
-    args.ckpts = cast(List[str], args.ckpts)
-    args.ckpts = cast(List[str], args.ckpts) if args.ckpts else []
-    args.ckpts.reverse()
-
-    bench_modes: List[BenchMode] = [BenchMode.RL] * len(args.ckpts)
-    for bl in args.bl:
-        if bl == "7g":
-            bench_modes.append(BenchMode.BASELINE_7G)
-        elif bl == "2_2_2_1":
-            bench_modes.append(BenchMode.BASELINE_2_2_2_1)
-        elif bl == "heuristic":
-            bench_modes.append(BenchMode.BASELINE_HEURISTIC)
-        elif bl == "static":
-            bench_modes.append(BenchMode.BASELINE_STATIC)
-        elif bl == "all":
             if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-                bench_modes.extend([BenchMode.BASELINE_STATIC])
+                cls._run_phase_1_matrix(
+                    mode, shared_requests, shared_loader.phase_history, ckpt
+                )
             else:
-                bench_modes.extend(
-                    [
+                cls._run_phase_2_trial(
+                    mode, shared_requests, shared_loader.phase_history, ckpt
+                )
+
+        print("\nBenchmark Suite Completed.")
+
+    @classmethod
+    def _parse_args(cls) -> argparse.Namespace:
+        parser = argparse.ArgumentParser(description="Run Performance Benchmarks")
+        parser.add_argument(
+            "--ckpts",
+            type=Path,
+            nargs="+",
+            default=None,
+            help="Path to RL Checkpoint Zip",
+        )
+        parser.add_argument(
+            "--bl",
+            nargs="+",
+            default=[],
+            help="Baselines to run (e.g., 7g, 2_2_2_1, static, heuristic)",
+        )
+        args = parser.parse_args()
+        args.ckpts = cast(List[str], args.ckpts) if args.ckpts else []
+        args.ckpts.reverse()
+        return args
+
+    @classmethod
+    def _resolve_bench_modes(cls, args: argparse.Namespace) -> List[BenchMode]:
+        modes = [BenchMode.RL] * len(args.ckpts)
+        mapping = {m.value: m for m in BenchMode}
+        for bl in args.bl:
+            if bl == "all":
+                modes.extend(
+                    [BenchMode.BASELINE_STATIC]
+                    if BENCH_CONFIG.phase == TrainingPhase.PHASE_1
+                    else [
                         BenchMode.BASELINE_7G,
                         BenchMode.BASELINE_2_2_2_1,
                         BenchMode.BASELINE_HEURISTIC,
                     ]
                 )
-        else:
-            print(f"Unknown baseline: {bl}")
-
-    if not bench_modes:
-        parser.error("No benchmark to run. Use --ckpt for RL and --bl for baselines.")
-
-    print("\n" + "=" * 60)
-    print("STARTING HYBRID BENCHMARKS")
-    print(f"Using seed: {BENCH_CONFIG.seed}")
-    print("=" * 60)
-
-    # Pre-generate the shared workload once so all modes see identical request patterns
-    print("Pre-generating workload requests...")
-    shared_loader = BenchRequestLoader(Workload.HYBRID, seed=BENCH_CONFIG.seed)
-    shared_requests: List[m.Request] = []
-    for aid in m.AgentId:
-        shared_requests.extend(shared_loader.generate_requests(agent_id=aid, turn=0))
-    print(f"Generated {len(shared_requests)} requests.")
-    print_workloads(_get_workload_summary(shared_loader.phase_history))
-
-    # Run each mode sequentially with the same pre-built workload
-    for mode in bench_modes:
-        ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
-        print_banner(mode, ckpt.parent.name if ckpt is not None else "")
-
-        if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-            init_modes = list(m.InitialMIGCombination)
-            init_modes.remove(m.InitialMIGCombination.RANDOM)
-
-            matrix_results: Dict[
-                m.InitialMIGCombination, Dict[m.InitialMIGCombination, Dict[str, Any]]
-            ] = {}
-            for init_mode_coding in init_modes:
-                matrix_results[init_mode_coding] = {}
-                for init_mode_rag in init_modes:
-                    mode_tuple = (init_mode_coding, init_mode_rag)
-                    r = BenchRunner(
-                        workload=Workload.HYBRID,
-                        mode=mode,
-                        requests=shared_requests,
-                        phase_history=shared_loader.phase_history,
-                        init_mode=mode_tuple,
-                    )
-                    results = r.run(ckpt=ckpt)
-                    matrix_results[init_mode_coding][init_mode_rag] = results
-            print_matrix_metrics(matrix_results)
-
-        elif BENCH_CONFIG.phase == TrainingPhase.PHASE_2:
-            init_mode = m.InitialMIGCombination.RANDOM
-            if mode == BenchMode.BASELINE_7G:
-                init_mode = m.InitialMIGCombination.C7
-            elif mode == BenchMode.BASELINE_2_2_2_1:
-                init_mode = m.InitialMIGCombination.C2_2_2_1
-
-            r = BenchRunner(
-                workload=Workload.HYBRID,
-                mode=mode,
-                requests=shared_requests,
-                phase_history=shared_loader.phase_history,
-                init_mode=init_mode,
+            elif bl in mapping:
+                modes.append(mapping[bl])
+            else:
+                print(f"Unknown baseline: {bl}")
+        if not modes:
+            raise SystemExit(
+                "No benchmark to run. Use --ckpts for RL and --bl for baselines."
             )
-            results = r.run(ckpt=ckpt)
-            print_metrics(results)
-        else:
-            raise ValueError("Unknown training phase")
+        return modes
 
-    print("\nBenchmark Suite Completed.")
+    @classmethod
+    def _run_phase_1_matrix(
+        cls,
+        mode: BenchMode,
+        requests: List[m.Request],
+        phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
+        ckpt: Optional[Path],
+    ):
+        init_modes = [
+            im for im in m.InitialMIGCombination if im != m.InitialMIGCombination.RANDOM
+        ]
+        matrix_results: Dict[
+            m.InitialMIGCombination,
+            Dict[m.InitialMIGCombination, Dict[str, Dict[str, Any]]],
+        ] = {}
+        for im_coding in init_modes:
+            matrix_results[im_coding] = {}
+            for im_rag in init_modes:
+                runner = cls(
+                    ckpt,
+                    Workload.HYBRID,
+                    mode,
+                    requests,
+                    phase_history,
+                    (im_coding, im_rag),
+                )
+                matrix_results[im_coding][im_rag] = runner.run()
+        print_matrix_metrics(matrix_results)
+
+    @classmethod
+    def _run_phase_2_trial(
+        cls,
+        mode: BenchMode,
+        requests: List[m.Request],
+        phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
+        ckpt: Optional[Path],
+    ):
+        mapping = {
+            BenchMode.BASELINE_7G: m.InitialMIGCombination.C7,
+            BenchMode.BASELINE_2_2_2_1: m.InitialMIGCombination.C2_2_2_1,
+        }
+        init_mode = mapping.get(mode, m.InitialMIGCombination.RANDOM)
+        runner = cls(ckpt, Workload.HYBRID, mode, requests, phase_history, init_mode)
+        results = runner.run()
+        print_metrics(results)
+
+
+def main():
+    BenchRunner.run_suite()
 
 
 if __name__ == "__main__":

@@ -40,9 +40,7 @@ class BenchRequestLoader:
         current_time = start_time
 
         max_time = (
-            start_time
-            + BENCH_CONFIG.benchmark_length * TRAINING_CONFIG.action_interval
-            + 360  # small buffer
+            start_time + BENCH_CONFIG.benchmark_length * TRAINING_CONFIG.action_interval
         )
 
         if self.workload == Workload.HYBRID:
