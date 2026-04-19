@@ -133,7 +133,7 @@ class BenchRunner:
                 if ph["start_time"] <= t <= ph["start_time"] + ph["duration"] + 1e-5:
                     pat = ph["pattern"]
                     break
-            assert pat is not None
+            assert pat is not None, f"No pattern found for {agent_id} at t={t:.2f}s"
             return pat
 
         joint_phase_ticks = {
@@ -204,6 +204,59 @@ class BenchRunner:
                 for req in reqs:
                     if req.is_finished and req.serving_engine is not None:
                         completed_reqs_map[aid][req.id] = req
+
+        # Flush period: wait for all requests to complete
+        print(
+            "\nBenchmark steps exhausted. Entering flush period to finish remaining requests..."
+        )
+        no_action_idx = list(m.ResourceManagerAction).index(
+            m.ResourceManagerAction.NO_ACTION
+        )
+        flush_steps = 0
+
+        with tqdm(
+            unit="step",
+            leave=True,
+            ncols=100,
+            bar_format="{desc} | {n_fmt} steps [{elapsed}, {rate_fmt}]",
+        ) as pbar:
+            while True:
+                total_q = sum(
+                    len(e.waiting_queue) + len(e.running_queue)
+                    for agent in env.sim.agents.values()
+                    for e in agent.engines
+                )
+                if total_q == 0:
+                    break
+
+                pbar.set_description(f"{self.mode.name:<5} | FLUSHING (Q: {total_q:<4})")
+
+                if self.mode == BenchMode.RL:
+                    obs, _, _, _ = venv.step([no_action_idx])  # type: ignore
+                else:
+                    obs, _, _, _, _ = env.step(no_action_idx)
+
+                # Continue tracking existence during flush
+                for aid, agent in env.sim.agents.items():
+                    for engine in agent.engines:
+                        if not engine.is_permanent:
+                            presence_by_mig[aid][engine.mig_profile] += 1
+
+                # Accumulate completed requests
+                for aid, reqs in env.sim.interval_requests.items():
+                    for req in reqs:
+                        if req.is_finished and req.serving_engine is not None:
+                            completed_reqs_map[aid][req.id] = req
+
+                flush_steps += 1
+                pbar.update(1)
+                if (
+                    flush_steps > 1000
+                ):  # Safety escape (approx 33 hours simulation time at 120s/step)
+                    print(
+                        f"\n[Warning] Flush period timed out after {flush_steps} steps."
+                    )
+                    break
 
         # Extract Episode Metrics
         ttft_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
