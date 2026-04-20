@@ -20,7 +20,7 @@ bench-all phase="2":
     set -euo pipefail
     ckpts=$(python scripts/get_latest_ckpts.py {{ phase }})
     set -x
-    python -m src.bench.main --bl --ckpt $ckpts
+    python -m src.bench.main --bl all --ckpt $ckpts
 
 mock-train phase="2":
     python -m src.simulation.main --phase {{ phase }} > test.log
