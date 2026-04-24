@@ -4,6 +4,7 @@ from typing import Tuple
 
 from src.bench.models import Workload
 from src.training.models import TrainingPhase
+import src.simulation.models as m
 
 
 class BenchConfig:
@@ -18,21 +19,24 @@ class BenchConfig:
                 "heuristic", {"watermark_high": 20.0, "watermark_low": 5.0}
             )
 
-    @property
-    def q_threshold_high(self) -> float:
-        return float(self._heuristic["q_threshold_high"])
+
 
     @property
-    def q_threshold_low(self) -> float:
-        return float(self._heuristic["q_threshold_low"])
+    def utilization_factor(self) -> float:
+        return float(self._heuristic.get("utilization_factor", 0.8))
 
     @property
-    def busy_threshold(self) -> float:
-        return float(self._heuristic["busy_threshold"])
+    def high_threshold(self) -> float:
+        return float(self._heuristic.get("high_threshold", 1.2))
 
     @property
-    def idle_threshold(self) -> float:
-        return float(self._heuristic["idle_threshold"])
+    def low_threshold(self) -> float:
+        return float(self._heuristic.get("low_threshold", 0.8))
+
+    def get_service_rate(self, agent_id: m.AgentId, mig_profile: m.MIGProfile) -> float:
+        rates = self._heuristic.get("service_rates", {})
+        agent_rates = rates.get(agent_id.value, {})
+        return float(agent_rates.get(mig_profile.string, 0.0))
 
     def get_rate_range(self, workload: Workload) -> Tuple[float, float]:
         cfg = self._workloads[workload.value]["rate"]

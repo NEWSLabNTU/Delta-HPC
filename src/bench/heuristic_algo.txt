@@ -1,0 +1,50 @@
+ALGORITHM RuleBasedHeuristic(sim):
+    // 1. Calculate Scaling Ratios
+    FOR each agent in sim:
+        total_service_rate = SUM(service_rate of each active engine for agent)
+        scaling_ratio[agent] = arrival_rate[agent] / (0.8 * total_service_rate)
+
+    // 2. Identify Need for Scaling
+    needs_action = FALSE
+    FOR each agent in sim:
+        IF scaling_ratio[agent] > 1.2 (High Threshold) OR scaling_ratio[agent] < 0.8 (Low Threshold):
+            needs_action = TRUE
+
+    IF NOT needs_action OR no valid unmasked actions:
+        RETURN NO_ACTION
+
+    // 3. Evaluate Actions to Find Optimal Balance
+    best_action = NO_ACTION
+    current_deviation = SUM(ABS(scaling_ratio[agent] - 1.0) for each agent in sim)
+    best_deviation = current_deviation
+
+    FOR each action in VALID_ACTIONS (unmasked actions from Simulator):
+        // Simulate the structural change
+        simulated_service_rates = Copy(current service rates)
+        IF action is TRANSFER:
+            simulated_service_rates[giver] -= service_rate(action.mig)
+            simulated_service_rates[receiver] += service_rate(action.mig)
+        ELIF action is SPLIT:
+            simulated_service_rates[victim] -= service_rate(split_engine.mig)
+            simulated_service_rates[victim] += service_rate(new_profiles) // except transfer piece
+            IF transfer_piece:
+                simulated_service_rates[receiver] += service_rate(transfer_piece)
+        ELIF action is MERGE:
+            simulated_service_rates[victim] -= service_rate(merged_engines.migs)
+            IF transfer_piece:
+                simulated_service_rates[receiver] += service_rate(new_profile)
+            ELSE:
+                simulated_service_rates[victim] += service_rate(new_profile)
+
+        // Calculate new ratios and global deviation
+        action_deviation = 0
+        FOR each agent in sim:
+            new_ratio = arrival_rate[agent] / (0.8 * simulated_service_rates[agent])
+            action_deviation += ABS(new_ratio - 1.0)
+
+        // Select the action that brings the global balance closest to 1.0
+        IF action_deviation < best_deviation:
+            best_deviation = action_deviation
+            best_action = action
+
+    RETURN best_action

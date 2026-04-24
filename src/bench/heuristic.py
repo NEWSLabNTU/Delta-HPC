@@ -1,153 +1,170 @@
-from typing import List, Tuple
-import math
+from typing import Dict
+
 import src.simulation.models as m
 import src.simulation.utils as utils
 from src.bench.config import BENCH_CONFIG
-from src.bench.models import Workload
 from src.training.config import TRAINING_CONFIG
 
 
 class RuleBasedHeuristic:
     def __init__(self):
-        self.q_threshold_high = BENCH_CONFIG.q_threshold_high
-        self.q_threshold_low = BENCH_CONFIG.q_threshold_low
-        self.busy_threshold = BENCH_CONFIG.busy_threshold
-        self.idle_threshold = BENCH_CONFIG.idle_threshold
-
-        # Precompute normalization denominator for log-scaled queues
-        self.q_log_denom = math.log10(1 + TRAINING_CONFIG.norm_avg_queue_length)
+        pass
 
     def _denormalize_arrival_rate(self, val: float) -> float:
         return val * TRAINING_CONFIG.norm_arrival_rate
 
-    def _denormalize_waiting_queue(self, val: float) -> float:
-        return 10 ** (val * self.q_log_denom) - 1
-
-    def _denormalize_running_queue(self, val: float) -> float:
-        return val * TRAINING_CONFIG.norm_avg_running_requests
-
-    def _get_agent_avg_waiting(
-        self, state: m.EnvironmentStateData, aid: m.AgentId, agent: m.Agent
-    ) -> float:
-        qs = state["avg_queue_length"][aid]
-        active_indices = {
-            e.mig_profile.idx
-            for e in agent.engines
-            if e.status != m.EngineStatus.BOOTING and not e.is_permanent
-        }
-        active_indices.update(
-            {
-                5
-                for e in agent.engines
-                if e.status != m.EngineStatus.BOOTING and e.is_permanent
-            }
-        )
-
-        if not active_indices:
-            return 0.0
-
-        raw_qs = [self._denormalize_waiting_queue(qs[i]) for i in active_indices]
-        return sum(raw_qs) / len(raw_qs)
-
-    def _get_agent_avg_running(
-        self, state: m.EnvironmentStateData, aid: m.AgentId, agent: m.Agent
-    ) -> float:
-        rs = state["avg_running_requests"][aid]
-        active_indices = {
-            e.mig_profile.idx
-            for e in agent.engines
-            if e.status != m.EngineStatus.BOOTING and not e.is_permanent
-        }
-        active_indices.update(
-            {
-                5
-                for e in agent.engines
-                if e.status != m.EngineStatus.BOOTING and e.is_permanent
-            }
-        )
-
-        if not active_indices:
-            return 0.0
-
-        raw_rs = [self._denormalize_running_queue(rs[i]) for i in active_indices]
-        return sum(raw_rs) / len(raw_rs)
-
     def decide_action(self, sim: m.Simulator) -> m.ResourceManagerAction:
         state = sim.get_state()
-        arrival_rates = {
-            aid: self._denormalize_arrival_rate(r)
-            for aid, r in state["arrival_rate"].items()
-        }
-
-        # 1. Categorize workloads
-        workloads = {}
-        for aid in m.AgentId:
-            rate = arrival_rates[aid]
-            if rate >= self.busy_threshold:
-                workloads[aid] = Workload.BUSY
-            elif rate <= self.idle_threshold:
-                workloads[aid] = Workload.IDLE
-            else:
-                workloads[aid] = Workload.EVEN
-
         mask = sim.get_action_mask()
         all_actions = list(m.ResourceManagerAction)
-        all_engines = [e for a in sim.agents.values() for e in a.engines]
+        valid_actions = [
+            a
+            for i, a in enumerate(all_actions)
+            if mask[i] and a != m.ResourceManagerAction.NO_ACTION
+        ]
 
-        # 2. Scale-Up Logic (Busy Agents or Agents with High Queue)
-        # We act on agents that are either categorized as BUSY or already experiencing high queue pressure.
-        needs_scale_up: List[Tuple[m.AgentId, float]] = []
+        util_factor = BENCH_CONFIG.utilization_factor
+        high_thresh = BENCH_CONFIG.high_threshold
+        low_thresh = BENCH_CONFIG.low_threshold
+
+        arrival_rates: Dict[m.AgentId, float] = {}
+        service_rates: Dict[m.AgentId, float] = {}
+        scaling_ratios: Dict[m.AgentId, float] = {}
+
         for aid in m.AgentId:
+            arr_rate = self._denormalize_arrival_rate(state["arrival_rate"][aid])
+            arrival_rates[aid] = arr_rate
+
             agent = sim.agents[aid]
-            avg_waiting = self._get_agent_avg_waiting(state, aid, agent)
-            if workloads[aid] == Workload.BUSY or avg_waiting >= self.q_threshold_high:
-                needs_scale_up.append((aid, avg_waiting))
+            srv_rate = sum(
+                BENCH_CONFIG.get_service_rate(aid, e.mig_profile)
+                for e in agent.engines
+                if e.status != m.EngineStatus.BOOTING
+            )
+            service_rates[aid] = srv_rate
 
-        if needs_scale_up:
-            # Sort by waiting queue length (non-increasing)
-            needs_scale_up.sort(key=lambda x: x[1], reverse=True)
+            if srv_rate > 0:
+                scaling_ratios[aid] = arr_rate / (util_factor * srv_rate)
+            else:
+                scaling_ratios[aid] = float("inf")
 
-            for aid, avg_waiting in needs_scale_up:
-                agent = sim.agents[aid]
-                # Attempt Split
-                split_action = utils.MIG_RULES.select_best_split_action(
-                    agent, mask, all_actions
-                )
-                if split_action is not None:
-                    return split_action
+        # Check if any agent needs scaling
+        needs_action = any(
+            scaling_ratios[aid] > high_thresh or scaling_ratios[aid] < low_thresh
+            for aid in m.AgentId
+        )
 
-                # Attempt VRAM Transfer (Iterative Search)
-                potential_givers = sorted(
-                    [oaid for oaid in m.AgentId if oaid != aid],
-                    key=lambda k: arrival_rates[k],
-                )
-                for giver_aid in potential_givers:
-                    transfer_action = utils.MIG_RULES.select_best_transfer_action(
-                        sim.agents[giver_aid], aid, mask, all_actions, all_engines
+        if not needs_action or not valid_actions:
+            return m.ResourceManagerAction.NO_ACTION
+
+        def simulate_service_rates(
+            action: m.ResourceManagerAction,
+        ) -> Dict[m.AgentId, float]:
+            new_rates = service_rates.copy()
+            val = action.value
+
+            if isinstance(val, m.VramTransferAction):
+                giver_rate = BENCH_CONFIG.get_service_rate(val.giver, val.mig)
+                receiver_rate = BENCH_CONFIG.get_service_rate(val.receiver, val.mig)
+                new_rates[val.giver] -= giver_rate
+                new_rates[val.receiver] += receiver_rate
+
+            elif isinstance(val, m.MigAction):
+                victim = val.victim
+                receiver = val.receiver
+
+                if val.action == "split":
+                    best_split = utils.MIG_RULES.get_best_specific_split(
+                        sim.agents[victim], val.profiles
                     )
-                    if transfer_action is not None:
-                        return transfer_action
+                    if best_split:
+                        eng, new_profiles = best_split
+                        new_rates[victim] -= BENCH_CONFIG.get_service_rate(
+                            victim, eng.mig_profile
+                        )
+                        for p in new_profiles:
+                            if receiver is not None and p == val.transfer_profile:
+                                new_rates[receiver] += BENCH_CONFIG.get_service_rate(
+                                    receiver, p
+                                )
+                            else:
+                                new_rates[victim] += BENCH_CONFIG.get_service_rate(
+                                    victim, p
+                                )
 
-        # 3. Scale-Down Logic (Idle Agents or Agents with Low Queue)
-        # We act on agents that are either categorized as IDLE or have consistently low running queues.
-        needs_scale_down: List[Tuple[m.AgentId, float]] = []
+                elif val.action == "merge":
+                    best_merge = utils.MIG_RULES.get_best_specific_merge(
+                        sim.agents[victim], val.profiles
+                    )
+                    if best_merge:
+                        engs, new_profile = best_merge
+                        for eng in engs:
+                            new_rates[victim] -= BENCH_CONFIG.get_service_rate(
+                                victim, eng.mig_profile
+                            )
+
+                        if receiver is not None and new_profile == val.transfer_profile:
+                            new_rates[receiver] += BENCH_CONFIG.get_service_rate(
+                                receiver, new_profile
+                            )
+                        else:
+                            new_rates[victim] += BENCH_CONFIG.get_service_rate(
+                                victim, new_profile
+                            )
+
+            for aid in m.AgentId:
+                new_rates[aid] = max(0.0, new_rates[aid])
+
+            return new_rates
+
+        best_action = m.ResourceManagerAction.NO_ACTION
+
+        def get_deviation(ratios: Dict[m.AgentId, float]) -> float:
+            return sum(
+                abs(r - 1.0) if r != float("inf") else 1000.0 for r in ratios.values()
+            )
+
+        current_deviation = get_deviation(scaling_ratios)
+        best_deviation = current_deviation
+        best_ratios = scaling_ratios
+
+        for action in valid_actions:
+            new_service_rates = simulate_service_rates(action)
+
+            new_ratios = {}
+            for aid in m.AgentId:
+                if new_service_rates[aid] > 0:
+                    new_ratios[aid] = arrival_rates[aid] / (
+                        util_factor * new_service_rates[aid]
+                    )
+                else:
+                    new_ratios[aid] = float("inf")
+
+            action_deviation = get_deviation(new_ratios)
+
+            if action_deviation < best_deviation:
+                best_deviation = action_deviation
+                best_action = action
+                best_ratios = new_ratios
+
+        # if best_action != m.ResourceManagerAction.NO_ACTION:
+        mig_config_strs = []
         for aid in m.AgentId:
-            agent = sim.agents[aid]
-            avg_running = self._get_agent_avg_running(state, aid, agent)
-            if workloads[aid] == Workload.IDLE or avg_running <= self.q_threshold_low:
-                needs_scale_down.append((aid, avg_running))
+            profiles = [
+                e.mig_profile.string
+                for e in sim.agents[aid].engines
+                if e.status != m.EngineStatus.BOOTING
+            ]
+            mig_config_strs.append(f"{aid.name}: [{', '.join(profiles)}]")
+        current_config_str = " | ".join(mig_config_strs)
 
-        if needs_scale_down:
-            # Sort by arrival rates (non-decreasing) to prioritize idling resource release
-            needs_scale_down.sort(key=lambda x: arrival_rates[x[0]])
+        log_str = (
+            f"[Heuristic] Scaling Triggered!\n"
+            f"  Current Config : {current_config_str}\n"
+            f"  Current Ratios : Coding={scaling_ratios[m.AgentId.CODING]:.2f}, RAG={scaling_ratios[m.AgentId.RAG]:.2f}\n"
+            f"  Action Taken   : {best_action.name}\n"
+            f"  Expected Ratios: Coding={best_ratios[m.AgentId.CODING]:.2f}, RAG={best_ratios[m.AgentId.RAG]:.2f}"
+        )
+        # print(log_str)
 
-            for aid, avg_running in needs_scale_down:
-                agent = sim.agents[aid]
-                # Attempt Merge
-                merge_action = utils.MIG_RULES.select_best_merge_action(
-                    agent, mask, all_actions
-                )
-                if merge_action is not None:
-                    return merge_action
-
-        return m.ResourceManagerAction.NO_ACTION
+        return best_action
