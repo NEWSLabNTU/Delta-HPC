@@ -19,8 +19,6 @@ class BenchConfig:
                 "heuristic", {"watermark_high": 20.0, "watermark_low": 5.0}
             )
 
-
-
     @property
     def utilization_factor(self) -> float:
         return float(self._heuristic.get("utilization_factor", 0.8))

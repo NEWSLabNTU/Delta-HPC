@@ -1,9 +1,13 @@
 from typing import Any, Dict, List, Optional, Tuple, cast
+import os
+import datetime
 import argparse
 from pathlib import Path
 
 import numpy as np
 from tqdm import tqdm
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
@@ -47,6 +51,7 @@ class BenchRunner:
         self.env: BenchMIGResourceEnv
         self.venv: Optional[VecNormalize] = None
         self.obs: Any = None
+        self.ckpt = ckpt
 
         self._setup_execution(ckpt)
 
@@ -64,7 +69,10 @@ class BenchRunner:
         # 4. Flush Phase
         completed_reqs = self._flush_simulation(stats=stats)
 
-        # 5. Synthesis
+        # 5. Plot Timeline
+        self._plot_timeline(stats, self.ckpt)
+
+        # 6. Synthesis
         return self._synthesize_results(completed_reqs=completed_reqs, stats=stats)
 
     def _setup_execution(self, ckpt: Optional[Path]):
@@ -115,6 +123,10 @@ class BenchRunner:
             },
             "joint_phase_ticks": {pc: {pr: 0 for pr in patterns} for pc in patterns},
             "patterns": patterns,
+            "timeline_time": [],
+            "timeline_pattern_coding": [],
+            "timeline_pattern_rag": [],
+            "timeline_actions": [],
         }
 
     def _run_benchmark_loop(
@@ -172,18 +184,22 @@ class BenchRunner:
         self, enum_action: m.ResourceManagerAction, stats: Dict[str, Any]
     ):
         if enum_action != m.ResourceManagerAction.NO_ACTION:
+            stats["timeline_actions"].append((self.env.sim.current_time, enum_action))
             act_val = enum_action.value
-            if isinstance(act_val, m.MigAction):
-                if act_val.action == "split":
-                    stats["split_count"][act_val.victim] += 1
-                elif act_val.action == "merge":
-                    stats["merge_count"][act_val.victim] += 1
+            match act_val:
+                case m.MigAction:
+                    if act_val.action == "split":
+                        stats["split_count"][act_val.victim] += 1
+                    elif act_val.action == "merge":
+                        stats["merge_count"][act_val.victim] += 1
 
-                # If it's a combined action, also count the transfer
-                if act_val.receiver is not None:
-                    stats["transfer_count"][act_val.victim] += 1
-            elif isinstance(act_val, m.VramTransferAction):
-                stats["transfer_count"][act_val.giver] += 1
+                    # If it's a combined action, also count the transfer
+                    if act_val.receiver is not None:
+                        stats["transfer_count"][act_val.victim] += 1
+                case m.VramTransferAction:
+                    stats["transfer_count"][act_val.giver] += 1
+                case _:
+                    raise ValueError(f"Unknown action type: {enum_action}")
 
     def _tick_step_stats(self, stats: Dict[str, Any]):
         assert self.env is not None
@@ -191,6 +207,9 @@ class BenchRunner:
         pat_c = self._get_active_pattern(m.AgentId.CODING, curr_time)
         pat_r = self._get_active_pattern(m.AgentId.RAG, curr_time)
         stats["joint_phase_ticks"][pat_c][pat_r] += 1
+        stats["timeline_time"].append(curr_time)
+        stats["timeline_pattern_coding"].append(pat_c)
+        stats["timeline_pattern_rag"].append(pat_r)
 
         for aid, agent in self.env.sim.agents.items():
             ql_sum = sum(
@@ -380,6 +399,94 @@ class BenchRunner:
             }
 
         return res
+
+    def _plot_timeline(self, stats: Dict[str, Any], ckpt: Optional[Path]):
+        run_name = ckpt.stem if ckpt else self.mode.name
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = f"{timestamp}_{run_name}"
+        save_dir = Path("fig") / folder_name
+        os.makedirs(save_dir, exist_ok=True)
+
+        times = stats["timeline_time"]
+        if not times:
+            return
+
+        coding_patterns = stats["timeline_pattern_coding"]
+        rag_patterns = stats["timeline_pattern_rag"]
+
+        mapping = {"idle": 0, "even": 1, "busy": 2}
+        y_coding = [mapping[p] for p in coding_patterns]
+        y_rag = [mapping[p] for p in rag_patterns]
+
+        for target_action in ["split", "merge", "transfer"]:
+            plt.figure(figsize=(15, 5))
+            sns.set_style("whitegrid")
+
+            plt.step(
+                times,
+                y_coding,
+                label="CodingAgent",
+                where="post",
+                alpha=0.8,
+                linewidth=3,
+            )
+            plt.step(
+                times, y_rag, label="RAGAgent", where="post", alpha=0.8, linewidth=3
+            )
+
+            for t, enum_action in stats["timeline_actions"]:
+                val = enum_action.value
+                if isinstance(val, m.MigAction):
+                    if val.action == "split" and target_action == "split":
+                        plt.axvline(
+                            x=t,
+                            color="red",
+                            linestyle="--",
+                            alpha=0.9,
+                            linewidth=2,
+                            label="Split",
+                        )
+                    elif val.action == "merge" and target_action == "merge":
+                        plt.axvline(
+                            x=t,
+                            color="blueviolet",
+                            linestyle="--",
+                            alpha=0.9,
+                            linewidth=2,
+                            label="Merge",
+                        )
+                elif isinstance(val, m.VramTransferAction):
+                    if target_action == "transfer":
+                        plt.axvline(
+                            x=t,
+                            color="forestgreen",
+                            linestyle="--",
+                            alpha=0.9,
+                            linewidth=2,
+                            label="Transfer",
+                        )
+
+            plt.yticks(list(mapping.values()), list(mapping.keys()))
+            plt.xlabel("Simulation Time (sec)")
+            plt.ylabel("Workload Pattern")
+            plt.title(
+                f"Workload Pattern Timeline ({target_action.capitalize()}) - {run_name}",
+                fontweight="bold",
+            )
+
+            handles, labels = plt.gca().get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            plt.legend(
+                by_label.values(),
+                by_label.keys(),
+                loc="center left",
+                bbox_to_anchor=(1, 0.5),
+            )
+            plt.tight_layout()
+
+            fig_path = save_dir / f"{target_action}.png"
+            plt.savefig(fig_path, dpi=300)
+            plt.close()
 
     def _get_active_pattern(self, agent_id: m.AgentId, t: float) -> str:
         for ph in self.phase_history[agent_id]:

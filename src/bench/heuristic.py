@@ -126,7 +126,7 @@ class RuleBasedHeuristic:
 
         current_deviation = get_deviation(scaling_ratios)
         best_deviation = current_deviation
-        best_ratios = scaling_ratios
+        # best_ratios = scaling_ratios
 
         for action in valid_actions:
             new_service_rates = simulate_service_rates(action)
@@ -145,26 +145,26 @@ class RuleBasedHeuristic:
             if action_deviation < best_deviation:
                 best_deviation = action_deviation
                 best_action = action
-                best_ratios = new_ratios
+                # best_ratios = new_ratios
 
         # if best_action != m.ResourceManagerAction.NO_ACTION:
-        mig_config_strs = []
-        for aid in m.AgentId:
-            profiles = [
-                e.mig_profile.string
-                for e in sim.agents[aid].engines
-                if e.status != m.EngineStatus.BOOTING
-            ]
-            mig_config_strs.append(f"{aid.name}: [{', '.join(profiles)}]")
-        current_config_str = " | ".join(mig_config_strs)
+        # mig_config_strs = []
+        # for aid in m.AgentId:
+        #     profiles = [
+        #         e.mig_profile.string
+        #         for e in sim.agents[aid].engines
+        #         if e.status != m.EngineStatus.BOOTING
+        #     ]
+        #     mig_config_strs.append(f"{aid.name}: [{', '.join(profiles)}]")
+        # current_config_str = " | ".join(mig_config_strs)
 
-        log_str = (
-            f"[Heuristic] Scaling Triggered!\n"
-            f"  Current Config : {current_config_str}\n"
-            f"  Current Ratios : Coding={scaling_ratios[m.AgentId.CODING]:.2f}, RAG={scaling_ratios[m.AgentId.RAG]:.2f}\n"
-            f"  Action Taken   : {best_action.name}\n"
-            f"  Expected Ratios: Coding={best_ratios[m.AgentId.CODING]:.2f}, RAG={best_ratios[m.AgentId.RAG]:.2f}"
-        )
+        # log_str = (
+        #     f"[Heuristic] Scaling Triggered!\n"
+        #     f"  Current Config : {current_config_str}\n"
+        #     f"  Current Ratios : Coding={scaling_ratios[m.AgentId.CODING]:.2f}, RAG={scaling_ratios[m.AgentId.RAG]:.2f}\n"
+        #     f"  Action Taken   : {best_action.name}\n"
+        #     f"  Expected Ratios: Coding={best_ratios[m.AgentId.CODING]:.2f}, RAG={best_ratios[m.AgentId.RAG]:.2f}"
+        # )
         # print(log_str)
 
         return best_action

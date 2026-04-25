@@ -113,7 +113,9 @@ def measure_max_service_rate():
                     high = mid
 
             results_dict[agent_id.value][mig_profile.string] = float(f"{best_rate:.2f}")
-            print(f"{agent_id.value:<15} | {mig_profile.string:<15} | {best_rate:>15.2f}")
+            print(
+                f"{agent_id.value:<15} | {mig_profile.string:<15} | {best_rate:>15.2f}"
+            )
 
     # Write to configs/bench_config.yaml
     config_path = Path("configs/bench_config.yaml")
@@ -130,8 +132,9 @@ def measure_max_service_rate():
 
     with open(config_path, "w") as f:
         yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)
-    
+
     print("\nResults successfully saved to configs/bench_config.yaml")
+
 
 if __name__ == "__main__":
     measure_max_service_rate()

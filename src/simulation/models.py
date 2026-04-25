@@ -1201,8 +1201,6 @@ class EnvironmentState(ABC):
         self,
         current_time: float,
         agents: Dict[AgentId, Agent],
-        engines: Dict[str, LLMEngine],
-        current_step: int,
     ) -> EnvironmentStateData: ...
 
     @abstractmethod

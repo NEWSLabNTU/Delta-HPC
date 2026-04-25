@@ -288,6 +288,7 @@ class SimulatorImpl(m.Simulator):
                                 utils.SIM_CONFIG.get_restart_time(
                                     val.receiver
                                     if val.transfer_profile == p
+                                    and val.receiver is not None
                                     else val.victim,
                                     p,
                                 )
@@ -308,6 +309,7 @@ class SimulatorImpl(m.Simulator):
                         boot_cost = utils.SIM_CONFIG.get_restart_time(
                             val.receiver
                             if val.transfer_profile == new_profile
+                            and val.receiver is not None
                             else val.victim,
                             new_profile,
                         )
@@ -345,16 +347,22 @@ class SimulatorImpl(m.Simulator):
             action != m.ResourceManagerAction.NO_ACTION
             and getattr(action.value, "receiver", None) is not None
         ):
-            giver = getattr(
-                action.value, "victim", getattr(action.value, "giver", None)
-            )
+            if isinstance(action.value, m.MigAction):
+                assert action.value.transfer_profile is not None
+                giver = action.value.victim
+                mig_size = action.value.transfer_profile.size
+            elif isinstance(action.value, m.VramTransferAction):
+                giver = action.value.giver
+                mig_size = action.value.mig.size
+            else:
+                raise ValueError(
+                    f"Unknown action type for transfer: {type(action.value)}"
+                )
             receiver = action.value.receiver
-            mig_size = getattr(
-                action.value, "transfer_profile", getattr(action.value, "mig", None)
-            ).size
-            if giver and receiver and mig_size:
-                self._environment_state.set_last_action(giver, "give", mig_size)
-                self._environment_state.set_last_action(receiver, "receive", mig_size)
+            assert receiver is not None
+
+            self._environment_state.set_last_action(giver, "give", mig_size)
+            self._environment_state.set_last_action(receiver, "receive", mig_size)
 
         if action != m.ResourceManagerAction.NO_ACTION:
             if self._comming_budget_refresh is not None:
