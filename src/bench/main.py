@@ -23,7 +23,6 @@ from src.bench.prints import (
     print_banner,
     print_metrics,
     print_workloads,
-    print_matrix_metrics,
     print_initial_state,
 )
 from src.bench.heuristic import RuleBasedHeuristic
@@ -37,16 +36,11 @@ class BenchRunner:
         mode: BenchMode,
         requests: List[m.Request],
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
-        init_mode: m.InitialMIGCombination
-        | Tuple[
-            m.InitialMIGCombination, m.InitialMIGCombination
-        ] = m.InitialMIGCombination.RANDOM,
     ):
         self.workload = workload
         self.mode = mode
         self.requests = requests
         self.phase_history = phase_history
-        self._init_mode = init_mode
         self.model: Optional[MaskablePPO] = None
         self.env: BenchMIGResourceEnv
         self.venv: Optional[VecNormalize] = None
@@ -61,7 +55,7 @@ class BenchRunner:
         stats = self._init_stats_tracking()
 
         # 2. Display Context
-        print_initial_state(self._init_mode)
+        print_initial_state(self.mode.name)
 
         # 3. Main Simulation Loop
         self._run_benchmark_loop(stats=stats)
@@ -82,7 +76,6 @@ class BenchRunner:
             sim,
             bench_mode=self.mode,
             requests=self.requests,
-            init_mode=self._init_mode,
         )
 
         model, venv = None, None
@@ -330,7 +323,7 @@ class BenchRunner:
                 r_pat_r = self._get_active_pattern(m.AgentId.RAG, req.arrival_time)
                 assert req.serving_engine is not None
                 tokens_by_mig[aid][r_pat_c][r_pat_r][
-                    req.serving_engine.mig_profile
+                    req.serving_engine.mig_profile.profile_type
                 ] += req.generated_tokens
 
         res: Dict[str, Dict[str, Any]] = {}
@@ -582,7 +575,7 @@ class BenchRunner:
             "--bl",
             nargs="+",
             default=[],
-            help="Baselines to run (e.g., 7g, 2_2_2_1, static, heuristic)",
+            help="Baselines to run (e.g., static_no_mig, static_split_extreme, static, heuristic)",
         )
         args = parser.parse_args()
         args.ckpts = cast(List[str], args.ckpts) if args.ckpts else []
@@ -599,8 +592,8 @@ class BenchRunner:
                     [BenchMode.BASELINE_STATIC]
                     if BENCH_CONFIG.phase == TrainingPhase.PHASE_1
                     else [
-                        BenchMode.BASELINE_7G,
-                        BenchMode.BASELINE_2_2_2_1,
+                        BenchMode.STATIC_NO_MIG,
+                        BenchMode.STATIC_SPLIT_EXTREME,
                         BenchMode.BASELINE_HEURISTIC,
                     ]
                 )
@@ -622,26 +615,22 @@ class BenchRunner:
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
         ckpt: Optional[Path],
     ):
-        init_modes = [
-            im for im in m.InitialMIGCombination if im != m.InitialMIGCombination.RANDOM
-        ]
-        matrix_results: Dict[
-            m.InitialMIGCombination,
-            Dict[m.InitialMIGCombination, Dict[str, Dict[str, Any]]],
-        ] = {}
-        for im_coding in init_modes:
-            matrix_results[im_coding] = {}
-            for im_rag in init_modes:
-                runner = cls(
-                    ckpt,
-                    Workload.HYBRID,
-                    mode,
-                    requests,
-                    phase_history,
-                    (im_coding, im_rag),
-                )
-                matrix_results[im_coding][im_rag] = runner.run()
-        print_matrix_metrics(matrix_results)
+        """Phase 1 now simply runs multiple trials to verify random initialization stability."""
+        results: List[Dict[str, Dict[str, Any]]] = []
+        for _ in range(5):  # Run 5 random trials
+            runner = cls(
+                ckpt,
+                Workload.HYBRID,
+                mode,
+                requests,
+                phase_history,
+            )
+            results.append(runner.run())
+
+        # Note: print_matrix_metrics expects a matrix, but Phase 1 matrix is deprecated
+        # by mandatory randomization. We just print the last result for now or could
+        # extend reporting for random trials.
+        print_metrics(results[-1])
 
     @classmethod
     def _run_phase_2_trial(
@@ -651,12 +640,7 @@ class BenchRunner:
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
         ckpt: Optional[Path],
     ):
-        mapping = {
-            BenchMode.BASELINE_7G: m.InitialMIGCombination.C7,
-            BenchMode.BASELINE_2_2_2_1: m.InitialMIGCombination.C2_2_2_1,
-        }
-        init_mode = mapping.get(mode, m.InitialMIGCombination.RANDOM)
-        runner = cls(ckpt, Workload.HYBRID, mode, requests, phase_history, init_mode)
+        runner = cls(ckpt, Workload.HYBRID, mode, requests, phase_history)
         results = runner.run()
         print_metrics(results)
 

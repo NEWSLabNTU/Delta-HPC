@@ -9,89 +9,113 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
     Possible Splits/Merges
     7 <-> (4,3)
     7 <-> (3,2,2)
-    7 <-> (2,2,2,1)
+    7 <-> (2,2,2,1L) / (2,2,2,1S)
     4 <-> (2,2)
-    3 <-> (2,1)
+    3 <-> (2,1L) / (2,1S)
+    7 <-> (4,2,1L) / (4,2,1S)
     """
 
-    _split_rules: Dict[m.MIGProfile, List[m.MIGConfigType]] = {}
-    _merge_rules: Dict[m.MIGConfigType, m.MIGProfile] = {}
+    _split_rules: Dict[m.MIGProfile, List[Tuple[m.MIGProfile, ...]]] = {}
+    _merge_rules: Dict[Tuple[m.MIGProfile, ...], m.MIGProfile] = {}
 
-    def _normalize_value(self, v: m.MIGConfigType) -> m.MIGConfigType:
-        # sort to non-increasing
+    def _normalize_value(self, v: Tuple[m.MIGProfile, ...]) -> Tuple[m.MIGProfile, ...]:
+        # sort to non-increasing by size
         return tuple(sorted(v, key=lambda x: x.size, reverse=True))
 
     def __init__(self) -> None:
-        # Populate possible splits/merges
-        mig_4_3 = self._normalize_value(
-            (m.MIGProfile.MIG_4G_20GB, m.MIGProfile.MIG_3G_20GB)
-        )
+        # Populate possible splits/merges using logical types
+        mig_4_3 = self._normalize_value((m.MIGProfile.MIG_4G, m.MIGProfile.MIG_3G))
         mig_3_2_2 = self._normalize_value(
+            (m.MIGProfile.MIG_3G, m.MIGProfile.MIG_2G, m.MIGProfile.MIG_2G)
+        )
+        mig_2_2_2_1L = self._normalize_value(
             (
-                m.MIGProfile.MIG_3G_20GB,
-                m.MIGProfile.MIG_2G_10GB,
-                m.MIGProfile.MIG_2G_10GB,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_1G_LARGE,
             )
         )
-        mig_2_2_2_1 = self._normalize_value(
+        mig_2_2_2_1S = self._normalize_value(
             (
-                m.MIGProfile.MIG_2G_10GB,
-                m.MIGProfile.MIG_2G_10GB,
-                m.MIGProfile.MIG_2G_10GB,
-                m.MIGProfile.MIG_1G_10GB,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_2G,
+                m.MIGProfile.MIG_1G_SMALL,
             )
         )
-        mig_2_2 = self._normalize_value(
-            (m.MIGProfile.MIG_2G_10GB, m.MIGProfile.MIG_2G_10GB)
+        mig_2_2 = self._normalize_value((m.MIGProfile.MIG_2G, m.MIGProfile.MIG_2G))
+        mig_2_1L = self._normalize_value(
+            (m.MIGProfile.MIG_2G, m.MIGProfile.MIG_1G_LARGE)
         )
-        mig_2_1 = self._normalize_value(
-            (m.MIGProfile.MIG_2G_10GB, m.MIGProfile.MIG_1G_10GB)
+        mig_2_1S = self._normalize_value(
+            (m.MIGProfile.MIG_2G, m.MIGProfile.MIG_1G_SMALL)
         )
-        mig_4_2_1 = self._normalize_value(
-            (
-                m.MIGProfile.MIG_4G_20GB,
-                m.MIGProfile.MIG_2G_10GB,
-                m.MIGProfile.MIG_1G_10GB,
-            )
+        mig_4_2_1L = self._normalize_value(
+            (m.MIGProfile.MIG_4G, m.MIGProfile.MIG_2G, m.MIGProfile.MIG_1G_LARGE)
+        )
+        mig_4_2_1S = self._normalize_value(
+            (m.MIGProfile.MIG_4G, m.MIGProfile.MIG_2G, m.MIGProfile.MIG_1G_SMALL)
         )
 
-        self._split_rules[m.MIGProfile.MIG_7G_40GB] = [
+        self._split_rules[m.MIGProfile.MIG_7G] = [
             mig_4_3,
             mig_3_2_2,
-            mig_2_2_2_1,
-            mig_4_2_1,
+            mig_2_2_2_1L,
+            mig_2_2_2_1S,
+            mig_4_2_1L,
+            mig_4_2_1S,
         ]
-        self._split_rules[m.MIGProfile.MIG_4G_20GB] = [mig_2_2]
-        self._split_rules[m.MIGProfile.MIG_3G_20GB] = [mig_2_1]
-        self._merge_rules[mig_4_3] = m.MIGProfile.MIG_7G_40GB
-        self._merge_rules[mig_3_2_2] = m.MIGProfile.MIG_7G_40GB
-        self._merge_rules[mig_2_2_2_1] = m.MIGProfile.MIG_7G_40GB
-        self._merge_rules[mig_4_2_1] = m.MIGProfile.MIG_7G_40GB
-        self._merge_rules[mig_2_2] = m.MIGProfile.MIG_4G_20GB
-        self._merge_rules[mig_2_1] = m.MIGProfile.MIG_3G_20GB
+        self._split_rules[m.MIGProfile.MIG_4G] = [mig_2_2]
+        self._split_rules[m.MIGProfile.MIG_3G] = [mig_2_1L, mig_2_1S]
+
+        self._merge_rules[mig_4_3] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_3_2_2] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_2_2_2_1L] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_2_2_2_1S] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_4_2_1L] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_4_2_1S] = m.MIGProfile.MIG_7G
+        self._merge_rules[mig_2_2] = m.MIGProfile.MIG_4G
+        self._merge_rules[mig_2_1L] = m.MIGProfile.MIG_3G
+        self._merge_rules[mig_2_1S] = m.MIGProfile.MIG_3G
 
     def get_possible_merges(
         self, agent: m.Agent
-    ) -> List[Tuple[List[m.LLMEngine], m.MIGProfile]]:
+    ) -> List[Tuple[List[m.LLMEngine], m.MIGProfileBase]]:
         by_gpu: Dict[int, List[m.LLMEngine]] = defaultdict(list)
         for e in agent.engines:
             if e.status == m.EngineStatus.ACTIVE and not e.is_permanent:
                 by_gpu[e.gpu].append(e)
 
-        possible_merges: List[Tuple[List[m.LLMEngine], m.MIGProfile]] = []
+        possible_merges: List[Tuple[List[m.LLMEngine], m.MIGProfileBase]] = []
         import itertools
+        from src.simulation.config import GPU_MIG_PROFILE
 
-        for engines in by_gpu.values():
+        for gpu_id, engines in by_gpu.items():
             by_mig: Dict[m.MIGProfile, List[m.LLMEngine]] = defaultdict(list)
             for e in engines:
-                by_mig[e.mig_profile].append(e)
+                by_mig[e.mig_profile.profile_type].append(e)
 
-            for befores, after in self._merge_rules.items():
+            supported = {p.profile_type for p in GPU_MIG_PROFILE[gpu_id]}
+
+            for befores, after_logical in self._merge_rules.items():
+                if after_logical not in supported:
+                    continue
+                if not all(p in supported for p in befores):
+                    continue
+
                 needed = Counter(befores)
 
                 if all(
                     len(by_mig[profile]) >= count for profile, count in needed.items()
                 ):
+                    # Resolve logical after_logical to concrete MIGProfileBase for this GPU
+                    after_concrete = next(
+                        p
+                        for p in GPU_MIG_PROFILE[gpu_id]
+                        if p.profile_type == after_logical
+                    )
+
                     profile_combinations = []
                     for profile, count in needed.items():
                         profile_combinations.append(
@@ -100,37 +124,60 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
 
                     for combo_tuple in itertools.product(*profile_combinations):
                         selected_engs = [eng for combo in combo_tuple for eng in combo]
-                        possible_merges.append((selected_engs, after))
+                        possible_merges.append((selected_engs, after_concrete))
 
         return possible_merges
 
     def get_possible_splits(
         self, agent: m.Agent
-    ) -> List[Tuple[m.LLMEngine, List[m.MIGProfile]]]:
+    ) -> List[Tuple[m.LLMEngine, List[m.MIGProfileBase]]]:
         by_gpu: Dict[int, List[m.LLMEngine]] = defaultdict(list)
         for e in agent.engines:
             if e.status == m.EngineStatus.ACTIVE and not e.is_permanent:
                 by_gpu[e.gpu].append(e)
 
-        possible_splits: List[Tuple[m.LLMEngine, List[m.MIGProfile]]] = []
-        for engines in by_gpu.values():
+        possible_splits: List[Tuple[m.LLMEngine, List[m.MIGProfileBase]]] = []
+        from src.simulation.config import GPU_MIG_PROFILE
+
+        for gpu_id, engines in by_gpu.items():
             by_mig: Dict[m.MIGProfile, List[m.LLMEngine]] = defaultdict(list)
             for e in engines:
-                by_mig[e.mig_profile].append(e)
+                by_mig[e.mig_profile.profile_type].append(e)
 
-            for before, afters in self._split_rules.items():
+            supported = {p.profile_type for p in GPU_MIG_PROFILE[gpu_id]}
+
+            for before, afters_logical in self._split_rules.items():
+                if before not in supported:
+                    continue
                 if before in by_mig:
                     for mig_e in by_mig[before]:
-                        for result_profiles in afters:
-                            possible_splits.append((mig_e, list(result_profiles)))
+                        for result_profiles_logical in afters_logical:
+                            if not all(
+                                lp in supported for lp in result_profiles_logical
+                            ):
+                                continue
+
+                            # Resolve logical profiles to concrete ones for this GPU
+                            result_profiles_concrete = [
+                                next(
+                                    p
+                                    for p in GPU_MIG_PROFILE[gpu_id]
+                                    if p.profile_type == lp
+                                )
+                                for lp in result_profiles_logical
+                            ]
+                            possible_splits.append((mig_e, result_profiles_concrete))
         return possible_splits
 
     def get_best_specific_split(
         self, agent: m.Agent, target_profiles: Tuple[m.MIGProfile, ...]
-    ) -> Tuple[m.LLMEngine, List[m.MIGProfile]] | None:
+    ) -> Tuple[m.LLMEngine, List[m.MIGProfileBase]] | None:
         possibles = self.get_possible_splits(agent)
-        possibles = [c for c in possibles if tuple(c[1]) == target_profiles]
-        possibles.sort(key=lambda c: len(c[1]))
+        possibles = [
+            c
+            for c in possibles
+            if tuple(p.profile_type for p in c[1]) == target_profiles
+        ]
         if possibles:
             return min(
                 possibles,
@@ -140,14 +187,14 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
 
     def get_best_specific_merge(
         self, agent: m.Agent, target_profiles: Tuple[m.MIGProfile, ...]
-    ) -> Tuple[List[m.LLMEngine], m.MIGProfile] | None:
+    ) -> Tuple[List[m.LLMEngine], m.MIGProfileBase] | None:
         possibles = self.get_possible_merges(agent)
         possibles = [
             c
             for c in possibles
-            if Counter(e.mig_profile for e in c[0]) == Counter(target_profiles)
+            if Counter(e.mig_profile.profile_type for e in c[0])
+            == Counter(target_profiles)
         ]
-        possibles.sort(key=lambda c: len(c[0]))
         if possibles:
             return min(
                 possibles,
@@ -160,7 +207,7 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
     def has_exact_match(self, agent: m.Agent, mig: m.MIGProfile) -> bool:
         return any(
             e.status == m.EngineStatus.ACTIVE
-            and e.mig_profile == mig
+            and e.mig_profile.profile_type == mig
             and not e.is_permanent
             for e in agent.engines
         )
@@ -169,7 +216,7 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
         self,
         giver_aid: m.AgentId,
         mig: m.MIGProfile,
-        receiver_aid: m.AgentId,  # Pass the ID of the agent RECEIVING the MIG
+        receiver_aid: m.AgentId,
         all_engines: m.List[m.LLMEngine],
     ) -> m.LLMEngine | None:
         exact_matches = [
@@ -177,7 +224,7 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
             for e in all_engines
             if e.owner.agent_id == giver_aid
             and e.status == m.EngineStatus.ACTIVE
-            and e.mig_profile == mig
+            and e.mig_profile.profile_type == mig
             and not e.is_permanent
         ]
         if not exact_matches:
@@ -195,20 +242,16 @@ class MIGProfileRuleImpl(m.MIGProfileRule):
             target_sm_after = sm_counts[receiver_aid] + mig.size
 
             # 2. Calculate unique agents remaining on GPU AFTER transfer
-            # We simulate the counts to see how many agents actually 'exist' post-transfer
             hypothetical_counts = sm_counts.copy()
             hypothetical_counts[receiver_aid] = (
                 hypothetical_counts.get(receiver_aid, 0) + mig.size
             )
             hypothetical_counts[giver_aid] -= mig.size
 
-            # Only count agents that still have more than 0 SMs
             final_agent_count = sum(
                 1 for count in hypothetical_counts.values() if count > 0
             )
 
-            # We want to MAXIMIZE target_sm_after and MINIMIZE final_agent_count
-            # min() sorts ascending, so we negate the target_sm
             return (-target_sm_after, final_agent_count)
 
         return min(

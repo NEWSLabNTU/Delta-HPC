@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 
@@ -19,13 +19,10 @@ class BenchMIGResourceEnv(BaseMIGResourceEnv):
         simulator: m.Simulator,
         bench_mode: BenchMode,
         requests: List[m.Request],
-        init_mode: m.InitialMIGCombination
-        | Tuple[m.InitialMIGCombination, m.InitialMIGCombination],
     ):
         super().__init__(simulator)
         self.bench_mode = bench_mode
         self._requests = requests
-        self._init_mode = init_mode
         self._is_initialized = False
 
         # Overwrite episode length
@@ -44,8 +41,17 @@ class BenchMIGResourceEnv(BaseMIGResourceEnv):
         super().reset(seed=seed)
         self._is_initialized = True
 
-        # Setup Hardware
-        self.sim.reset(init_mode=self._init_mode)
+        # Determine initial hardware state mode based on bench mode
+        _MODE_MAP: Dict[BenchMode, Literal["random", "no_mig", "split_extreme"]] = {
+            BenchMode.STATIC_NO_MIG: "no_mig",
+            BenchMode.STATIC_SPLIT_EXTREME: "split_extreme",
+        }
+        initial_state_mode: Literal["random", "no_mig", "split_extreme"] = (
+            _MODE_MAP.get(self.bench_mode, "random")
+        )
+
+        # Setup Hardware (fixed or random depending on bench mode)
+        self.sim.reset(initial_state_mode=initial_state_mode)
 
         # Setup Workload (cloned to allow trial reuse)
         requests = [req.clone() for req in self._requests]

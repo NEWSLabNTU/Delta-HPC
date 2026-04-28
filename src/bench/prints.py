@@ -1,5 +1,5 @@
 import tabulate
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import src.simulation.models as m
 import src.simulation.utils as utils
@@ -163,17 +163,29 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
 
 def print_matrix_metrics(
     matrix_results: Dict[
-        m.InitialMIGCombination,
-        Dict[m.InitialMIGCombination, Dict[str, Dict[str, Any]]],
+        Tuple[m.MIGProfile, ...],
+        Dict[Tuple[m.MIGProfile, ...], Dict[str, Dict[str, Any]]],
     ],
 ):
+    def get_combo_name(combo: Tuple[m.MIGProfile, ...]) -> str:
+        # Generate a human-readable name like '7' or '4,3'
+        mapping = {
+            m.MIGProfile.MIG_7G: "7",
+            m.MIGProfile.MIG_4G: "4",
+            m.MIGProfile.MIG_3G: "3",
+            m.MIGProfile.MIG_2G: "2",
+            m.MIGProfile.MIG_1G_LARGE: "1L",
+            m.MIGProfile.MIG_1G_SMALL: "1S",
+        }
+        return ",".join([mapping[p] for p in combo])
+
     col_keys = list(list(matrix_results.values())[0].keys())
-    headers = ["GPU 0 \\ GPU 1"] + [c.name for c in col_keys]
+    headers = ["GPU 0 \\ GPU 1"] + [get_combo_name(c) for c in col_keys]
 
     for aid in [m.AgentId.CODING, m.AgentId.RAG]:
         table_data: List[List[str]] = []
         for row_key, col_dict in matrix_results.items():
-            row_data = [row_key.name]
+            row_data = [get_combo_name(row_key)]
             for col_key in col_keys:
                 results = col_dict[col_key]
                 metrics = results[aid.value]

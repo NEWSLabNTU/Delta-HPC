@@ -186,8 +186,25 @@ class TrainingConfig:
     def refresh_period(self) -> float:
         return self._data["reconfig"]["refresh"] * 60
 
-    def qf(self, mig: m.MIGProfile, agent_id: m.AgentId) -> float:
-        return self._data["reward"]["Q"][agent_id.value][mig.string]
+    def qf_logical(self, profile_type: m.MIGProfile, agent_id: m.AgentId) -> float:
+        # Map logical MIGProfile to the keys in training_config.yaml
+        mapping = {
+            m.MIGProfile.MIG_7G: "7",
+            m.MIGProfile.MIG_4G: "4",
+            m.MIGProfile.MIG_3G: "3",
+            m.MIGProfile.MIG_2G: "2",
+            m.MIGProfile.MIG_1G_LARGE: "1L",
+            m.MIGProfile.MIG_1G_SMALL: "1S",
+        }
+        key = mapping.get(profile_type)
+        if key not in self._data["reward"]["Q"][agent_id.value]:
+            # Fallback or error if missing
+            return self.default_waiting_qj
+        return self._data["reward"]["Q"][agent_id.value][key]
+
+    def qf(self, mig_obj: m.MIGProfileBase, agent_id: m.AgentId) -> float:
+        """Deprecated: use qf_logical instead."""
+        return self.qf_logical(mig_obj.profile_type, agent_id)
 
     def alpha(self, agent: m.AgentId) -> float:
         return self._data["reward"]["alpha"][agent.value]

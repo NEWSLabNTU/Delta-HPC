@@ -28,10 +28,10 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         # State Space: Flattened dictionary metrics
         history_len = TRAINING_CONFIG.arrival_rate_history_length
         # Agents: 2 agents
-        # Per Agent: 46 + history_len features
-        per_agent_features = 46 + history_len
-        # Global Metrics: 15 features
-        total_features = 2 * per_agent_features + 15
+        # Per Agent: 61 + history_len features (Removed n_mig)
+        per_agent_features = 61 + history_len
+        # Global Metrics: 15 + 30 (one-hot) + 14 (grid) = 59 features
+        total_features = 2 * per_agent_features + 59
 
         self.observation_space = spaces.Box(
             low=-np.inf,
@@ -52,11 +52,15 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         mask = self.sim.get_action_mask()
 
         if phase == TrainingPhase.PHASE_1:
+            # Phase 1: Only allow pure transfers or self-transitions
             for act_id, action in enumerate(m.ResourceManagerAction):
-                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
-                    action.value, m.MigAction
-                ):
-                    mask[act_id] = False
+                if action == m.ResourceManagerAction.NO_ACTION:
+                    continue
+                val = action.value
+                # If it involves a state change, disable it in Phase 1
+                if val.target_state_id is not None:
+                    if val.target_state_id != self.sim.gpu_current_state[val.gpu_id]:
+                        mask[act_id] = False
 
         return np.array(mask, dtype=np.bool_)
 
@@ -86,26 +90,22 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             # history_len size array
             obs_list.extend(state_data["arrival_rate_history"][aid])
 
-            # 6 KV Cache Utilization (1g, 2g, 3g, 4g, 7g, permanent)
+            # 7 KV Cache Utilization (1L, 1S, 2g, 3g, 4g, 7g, permanent)
             obs_list.extend(state_data["kv_cache_utilization"][aid])
 
-            # 6 Avg Composite Latency (1g, 2g, 3g, 4g, 7g, permanent) — as percentages
+            # 7 Avg Composite Latency (1L, 1S, 2g, 3g, 4g, 7g, permanent) — as percentages
             obs_list.extend(state_data["avg_composite_latency"][aid])
 
-            # 6 Avg Queue Length (1g, 2g, 3g, 4g, 7g, permanent)
+            # 7 Avg Queue Length (1L, 1S, 2g, 3g, 4g, 7g, permanent)
             obs_list.extend(state_data["avg_queue_length"][aid])
 
-            # 6 Avg Queue Length Trend (1g, 2g, 3g, 4g, 7g, permanent)
+            # 7 Avg Queue Length Trend (1L, 1S, 2g, 3g, 4g, 7g, permanent)
             obs_list.extend(state_data["avg_queue_length_trend"][aid])
 
-            # 6 Avg Running Requests (1g, 2g, 3g, 4g, 7g, permanent)
+            # 7 Avg Running Requests (1L, 1S, 2g, 3g, 4g, 7g, permanent)
             obs_list.extend(state_data["avg_running_requests"][aid])
 
-            # 1 MIG Instance count
-            n_mig = state_data["n_mig_instance"][aid]
-            obs_list.append(float(n_mig))
-
-            # 5 Agent-Owns-MIG: per-profile count (1g, 2g, 3g, 4g, 7g)
+            # 6 Agent-Owns-MIG: per-profile count (1L, 1S, 2g, 3g, 4g, 7g)
             agent_owns_mig = state_data["agent_owns_mig"][aid]
             obs_list.extend([float(x) for x in agent_owns_mig])
 
@@ -138,6 +138,16 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             for s in mig_geom.get(gpu_idx, [0.0, 0.0]):
                 obs_list.append(float(s))
 
+        # New: 30 features for mig_profile_id_onehot (15 per GPU)
+        onehot = state_data["mig_profile_id_onehot"]
+        for gpu_idx in (0, 1):
+            obs_list.extend(onehot.get(gpu_idx, [0.0] * 15))
+
+        # New: 14 features for ownership_grid (7 per GPU)
+        grid = state_data["ownership_grid"]
+        for gpu_idx in (0, 1):
+            obs_list.extend([float(x) for x in grid.get(gpu_idx, [0] * 7)])
+
         return np.array(obs_list, dtype=np.float32)
 
     def _calculate_reward(
@@ -160,7 +170,8 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             raise ValueError(f"Invalid action: {action}")
 
         # Core execution
-        self.sim.handle_resource_manager_trigger(enum_action)
+        sim_action = self.sim.map_to_action(enum_action)
+        self.sim.handle_resource_manager_trigger(sim_action)
         self.sim.run()
 
         # Observation and Reward

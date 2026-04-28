@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Union
 
 from src.bench.models import Workload
 from src.training.models import TrainingPhase
@@ -31,10 +31,32 @@ class BenchConfig:
     def low_threshold(self) -> float:
         return float(self._heuristic.get("low_threshold", 0.8))
 
-    def get_service_rate(self, agent_id: m.AgentId, mig_profile: m.MIGProfile) -> float:
+    def get_service_rate(
+        self,
+        agent_id: m.AgentId,
+        mig_profile: Union[m.MIGProfile, m.MIGProfileBase],
+        gpu_id: int = 0,
+    ) -> float:
         rates = self._heuristic.get("service_rates", {})
-        agent_rates = rates.get(agent_id.value, {})
-        return float(agent_rates.get(mig_profile.string, 0.0))
+
+        if isinstance(mig_profile, m.MIGProfile):
+            # Resolve logical profile to concrete hardware profile for the given gpu_id
+            from src.simulation.config import GPU_MIG_PROFILE
+
+            hw_prof = next(
+                p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == mig_profile
+            )
+        else:
+            hw_prof = mig_profile
+
+        gpu_model = hw_prof.gpu_model
+        mig_str = hw_prof.string
+
+        # Structure: service_rates[gpu_model][agent_id][mig_str]
+        model_rates = rates.get(gpu_model, {})
+        agent_rates = model_rates.get(agent_id.value, {})
+
+        return float(agent_rates.get(mig_str, 0.0))
 
     def get_rate_range(self, workload: Workload) -> Tuple[float, float]:
         cfg = self._workloads[workload.value]["rate"]

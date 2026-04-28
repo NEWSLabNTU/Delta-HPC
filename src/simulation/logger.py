@@ -1,7 +1,6 @@
 import json
 import datetime
 from pathlib import Path
-from dataclasses import asdict
 from typing import Dict, List, Optional, Any
 
 import src.simulation.models as m
@@ -31,9 +30,7 @@ class SimulationLoggerImpl(m.SimulationLogger):
                 continue
             if isinstance(v, dict):
                 cleaned_v: Dict[str, Any] = {
-                    str(key.value if hasattr(key, "value") else key): (  # type: ignore
-                        asdict(val) if isinstance(val, m.MIGEncoding) else val
-                    )  # type: ignore
+                    str(key.value if hasattr(key, "value") else key): val  # type: ignore
                     for key, val in v.items()  # type: ignore
                 }
                 state_dict[k] = cleaned_v

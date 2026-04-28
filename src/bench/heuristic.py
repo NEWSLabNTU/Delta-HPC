@@ -37,7 +37,7 @@ class RuleBasedHeuristic:
 
             agent = sim.agents[aid]
             srv_rate = sum(
-                BENCH_CONFIG.get_service_rate(aid, e.mig_profile)
+                BENCH_CONFIG.get_service_rate(aid, e.mig_profile, gpu_id=e.gpu)
                 for e in agent.engines
                 if e.status != m.EngineStatus.BOOTING
             )
@@ -64,10 +64,19 @@ class RuleBasedHeuristic:
             val = action.value
 
             if isinstance(val, m.VramTransferAction):
-                giver_rate = BENCH_CONFIG.get_service_rate(val.giver, val.mig)
-                receiver_rate = BENCH_CONFIG.get_service_rate(val.receiver, val.mig)
-                new_rates[val.giver] -= giver_rate
-                new_rates[val.receiver] += receiver_rate
+                engine_to_shift = utils.MIG_RULES.get_best_exact_match(
+                    val.giver, val.mig, val.receiver, list(sim.engines.values())
+                )
+                if engine_to_shift:
+                    gpu_id = engine_to_shift.gpu
+                    giver_rate = BENCH_CONFIG.get_service_rate(
+                        val.giver, val.mig, gpu_id=gpu_id
+                    )
+                    receiver_rate = BENCH_CONFIG.get_service_rate(
+                        val.receiver, val.mig, gpu_id=gpu_id
+                    )
+                    new_rates[val.giver] -= giver_rate
+                    new_rates[val.receiver] += receiver_rate
 
             elif isinstance(val, m.MigAction):
                 victim = val.victim
@@ -80,16 +89,19 @@ class RuleBasedHeuristic:
                     if best_split:
                         eng, new_profiles = best_split
                         new_rates[victim] -= BENCH_CONFIG.get_service_rate(
-                            victim, eng.mig_profile
+                            victim, eng.mig_profile, gpu_id=eng.gpu
                         )
                         for p in new_profiles:
-                            if receiver is not None and p == val.transfer_profile:
+                            if (
+                                receiver is not None
+                                and p.profile_type == val.transfer_profile
+                            ):
                                 new_rates[receiver] += BENCH_CONFIG.get_service_rate(
-                                    receiver, p
+                                    receiver, p, gpu_id=eng.gpu
                                 )
                             else:
                                 new_rates[victim] += BENCH_CONFIG.get_service_rate(
-                                    victim, p
+                                    victim, p, gpu_id=eng.gpu
                                 )
 
                 elif val.action == "merge":
@@ -100,16 +112,19 @@ class RuleBasedHeuristic:
                         engs, new_profile = best_merge
                         for eng in engs:
                             new_rates[victim] -= BENCH_CONFIG.get_service_rate(
-                                victim, eng.mig_profile
+                                victim, eng.mig_profile, gpu_id=eng.gpu
                             )
 
-                        if receiver is not None and new_profile == val.transfer_profile:
+                        if (
+                            receiver is not None
+                            and new_profile.profile_type == val.transfer_profile
+                        ):
                             new_rates[receiver] += BENCH_CONFIG.get_service_rate(
-                                receiver, new_profile
+                                receiver, new_profile, gpu_id=engs[0].gpu
                             )
                         else:
                             new_rates[victim] += BENCH_CONFIG.get_service_rate(
-                                victim, new_profile
+                                victim, new_profile, gpu_id=engs[0].gpu
                             )
 
             for aid in m.AgentId:

@@ -4,8 +4,8 @@ from typing import TypedDict
 
 class BenchMode(Enum):
     RL = "RL"
-    BASELINE_7G = "7g"
-    BASELINE_2_2_2_1 = "2_2_2_1"
+    STATIC_NO_MIG = "static_no_mig"
+    STATIC_SPLIT_EXTREME = "static_split_extreme"
     BASELINE_STATIC = "static"
     BASELINE_HEURISTIC = "heuristic"
 

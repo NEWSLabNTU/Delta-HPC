@@ -1,7 +1,8 @@
 from __future__ import annotations
+import dataclasses
 from collections import defaultdict
 from sortedcontainers import SortedList
-from typing import Any, List, Dict, Optional, Tuple, cast
+from typing import List, Dict, Literal, Optional, cast
 
 import src.simulation.models as m
 import src.simulation.utils as utils
@@ -9,6 +10,14 @@ from src.simulation.agent import AgentImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.logger import SimulationLoggerImpl
 from src.simulation.environment_state import EnvironmentStateImpl
+from src.simulation.config import (
+    GPU_MIG_PROFILE,
+    GPU_VALID_COMBINATIONS,
+)
+from src.simulation.mig_matrix import (
+    STATE_DEFINITIONS,
+    TRANSITION_MATRIX,
+)
 from src.training.config import TRAINING_CONFIG
 
 
@@ -22,13 +31,18 @@ class SimulatorImpl(m.Simulator):
         self._agents = agents
         self._engines = engines
         self._events: SortedList[m.SimulationEvent] = SortedList()
-        self._events: SortedList[m.SimulationEvent] = SortedList()
         self._current_time: float = 0.0
         self._logger = SimulationLoggerImpl(enabled=not no_log)
         self._comming_budget_refresh: Optional[m.SimulationEvent] = None
 
         self._environment_state = EnvironmentStateImpl()
         self._environment_state.reset_for_next_interval(0.0, self._agents)
+
+        self._gpu_engines: Dict[int, List[m.LLMEngine]] = {
+            gpu: [] for gpu in utils.SIM_CONFIG.cluster.keys()
+        }
+        if self._engines:
+            self._sync_ownership()
 
     @property
     def agents(self) -> Dict[m.AgentId, m.Agent]:
@@ -118,23 +132,12 @@ class SimulatorImpl(m.Simulator):
         for e in self._engines.values():
             e.activate(self._current_time)
 
-    def has_active_work(self) -> bool:
-        if any(
-            e.event_type
-            in [
-                m.EventType.REQUEST_ARRIVAL,
-                m.EventType.RAG_SEARCH_COMPLETE,
-                m.EventType.ENGINE_STEP_COMPLETE,
-            ]
-            for e in self._events
-        ):
-            return True
-        if any(
-            len(e.waiting_queue) > 0 or len(e.running_queue) > 0
-            for e in self._engines.values()
-        ):
-            return True
-        return False
+    @property
+    def gpu_current_state(self) -> Dict[int, int]:
+        return {
+            gpu_id: self._identify_gpu_state(gpu_id)
+            for gpu_id in range(utils.SIM_CONFIG.num_managed_gpus)
+        }
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -167,65 +170,62 @@ class SimulatorImpl(m.Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_resource_manager_trigger_mig_decision(
-        self, mig_decision: Tuple[str, Any]
-    ):
+    def _handle_resource_manager_trigger_mig_decision(self, action: m.Action):
+        assert action.target_state_id is not None
         self._environment_state.reconfig_flag = True
-        action_type, data = mig_decision
-        match action_type:
-            case "merge":
-                engs: List[m.LLMEngine] = data["engines"]
-                eids = [e.engine_id for e in engs]
-                merge_payload: m.ShutdownMergePayload = {
-                    "engine_id": engs[0].engine_id,
-                    "purpose": m.OperationPurpose.MERGE,
-                    "merge_engine_ids": tuple(eids),
-                    "drained_ids": [],
-                    "new_profile": data["new_profile"],
-                    "agent_id": data["agent_id"],
-                    "gpu": data["gpu"],
-                    "receiver_id": data.get("receiver_id"),
-                }
-                for e in engs:
-                    per_engine_payload: m.ShutdownMergePayload = {
-                        **merge_payload,
-                        "engine_id": e.engine_id,
-                    }
-                    evt = e.trigger_shutdown(per_engine_payload, self._current_time)
-                    if evt:
-                        self._events.add(evt)
-                self._logger.log_mig_merge_trigger(
-                    self._current_time, eids, data["gpu"]
-                )
-
-            case "split":
-                e: m.LLMEngine = data["engine"]
-                split_payload: m.ShutdownSplitPayload = {
+        if action.action == m.ActionType.MERGE:
+            engs = [self._gpu_engines[action.gpu_id][idx] for idx in action.mig_src]
+            assert all(e is not None for e in engs)
+            eids = [e.engine_id for e in engs]
+            merge_payload: m.ShutdownMergePayload = {
+                "engine_id": engs[0].engine_id,
+                "purpose": m.OperationPurpose.MERGE,
+                "merge_engine_ids": tuple(eids),
+                "drained_ids": [],
+                "target_mig_indices": action.mig_target,
+                "agent_id": engs[0].owner.agent_id,
+                "gpu": action.gpu_id,
+                "receiver_id": action.receiver.receiver_id if action.receiver else None,
+                "target_state_id": action.target_state_id,
+            }
+            for e in engs:
+                per_engine_payload: m.ShutdownMergePayload = {
+                    **merge_payload,
                     "engine_id": e.engine_id,
-                    "purpose": m.OperationPurpose.SPLIT,
-                    "new_profiles": data["new_profiles"],
-                    "agent_id": data["agent_id"],
-                    "gpu": data["gpu"],
-                    "receiver_id": data.get("receiver_id"),
-                    "received_profile": data.get("received_profile"),
                 }
-                evt = e.trigger_shutdown(split_payload, self._current_time)
+                evt = e.trigger_shutdown(per_engine_payload, self._current_time)
                 if evt:
                     self._events.add(evt)
-                self._logger.log_mig_split_trigger(
-                    self._current_time, e.engine_id, data["gpu"]
-                )
+            self._logger.log_mig_merge_trigger(self._current_time, eids, action.gpu_id)
 
-            case _:
-                raise ValueError(f"Unknown action {action_type}")
+        elif action.action == m.ActionType.SPLIT:
+            eng = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+            assert eng is not None
+            received_profile = (
+                STATE_DEFINITIONS[action.target_state_id][action.receiver.mig_idx]
+                if action.receiver
+                else None
+            )
+            split_payload: m.ShutdownSplitPayload = {
+                "engine_id": eng.engine_id,
+                "purpose": m.OperationPurpose.SPLIT,
+                "target_mig_indices": action.mig_target,
+                "agent_id": eng.owner.agent_id,
+                "gpu": action.gpu_id,
+                "receiver_id": action.receiver.receiver_id if action.receiver else None,
+                "received_profile": received_profile,
+                "target_state_id": action.target_state_id,
+            }
+            evt = eng.trigger_shutdown(split_payload, self._current_time)
+            if evt:
+                self._events.add(evt)
+            self._logger.log_mig_split_trigger(
+                self._current_time, eng.engine_id, action.gpu_id
+            )
 
-    def _handle_resource_manager_trigger_vram_transfer(
-        self, v_action: m.VramTransferAction
-    ) -> None:
-        all_engines = list(self._engines.values())
-        engine_to_shift = utils.MIG_RULES.get_best_exact_match(
-            v_action.giver, v_action.mig, v_action.receiver, all_engines
-        )
+    def _handle_resource_manager_trigger_vram_transfer(self, action: m.Action) -> None:
+        assert action.receiver is not None
+        engine_to_shift = self._gpu_engines[action.gpu_id][action.mig_src[0]]
         assert engine_to_shift is not None
 
         self._environment_state.reconfig_flag = True
@@ -233,100 +233,172 @@ class SimulatorImpl(m.Simulator):
         shutdown_payload: m.ShutdownReallocatePayload = {
             "engine_id": engine_to_shift.engine_id,
             "purpose": m.OperationPurpose.REALLOCATE,
-            "receiver_id": v_action.receiver,
+            "receiver_id": action.receiver.receiver_id,
         }
         self._logger.log_vram_transfer(
             self._current_time,
-            v_action.giver,
-            v_action.receiver,
-            v_action.mig.size,
+            engine_to_shift.owner.agent_id,
+            action.receiver.receiver_id,
+            engine_to_shift.mig_profile.size,
             [engine_to_shift.engine_id],
         )
         evt = engine_to_shift.trigger_shutdown(shutdown_payload, self._current_time)
         if evt:
             self._events.add(evt)
 
-        # Track give/receive
-        self._environment_state.set_last_action(
-            v_action.giver, "give", v_action.mig.size
-        )
-        self._environment_state.set_last_action(
-            v_action.receiver, "receive", v_action.mig.size
-        )
+    def _invalidate_gpu_indices(
+        self, gpu: int, pivot_idx: int, target_indices: List[int]
+    ):
+        """Invalidate indices affected by a state transition to avoid conflicts during sync.
 
-    def _predict_action_cost(self, action: m.ResourceManagerAction) -> float:
+        Args:
+            gpu: The GPU ID.
+            pivot_idx: The starting index of the split or merge operation.
+            target_indices: The indices targeted by the new configuration.
+        """
+        if pivot_idx == -1:
+            return
+
+        # Indices to invalidate:
+        # 1. Those after the pivot point (following physical MIG shift logic)
+        # 2. Those explicitly targeted by the new config (to avoid overlaps)
+        affected_indices = {i for i in range(pivot_idx + 1, 16)}
+        affected_indices.update(target_indices)
+
+        for eng in self._engines.values():
+            if eng.gpu == gpu and eng.mig_index in affected_indices:
+                eng.mig_index = -1
+
+    def _sync_ownership(self):
+        """Synchronize the slice ownership map and engine index list."""
+        self._gpu_engines = {gpu: [] for gpu in utils.SIM_CONFIG.cluster.keys()}
+
+        for gpu_id in utils.SIM_CONFIG.cluster.keys():
+            sid = self._identify_gpu_state(gpu_id)
+            if sid is None:
+                continue
+
+            target_profiles = STATE_DEFINITIONS[sid]
+            eng_list: List[Optional[m.LLMEngine]] = [None] * len(target_profiles)
+            gpu_engs = [e for e in self._engines.values() if e.gpu == gpu_id]
+
+            # 1. First pass: Keep engines that already have valid indices in the new state
+            for eng in gpu_engs:
+                idx = eng.mig_index
+                if (
+                    idx != -1
+                    and idx < len(target_profiles)
+                    and target_profiles[idx] == eng.mig_profile.profile_type
+                ):
+                    another_eng = eng_list[idx]
+                    if another_eng is None:
+                        eng_list[idx] = eng
+                    else:
+                        raise AssertionError(
+                            f"GPU {gpu_id} index conflict at {idx}: "
+                            f"Engine {eng.engine_id} and {another_eng.engine_id} "
+                            f"both claim index {idx}"
+                        )
+                else:
+                    # Index is either -1, out of bounds, or profile mismatch
+                    eng.mig_index = -1
+
+            # 2. Second pass: Assign indices to engines that need them
+            for eng in gpu_engs:
+                if eng.mig_index == -1:
+                    # Find a slot that matches this engine's profile
+                    for i, p in enumerate(target_profiles):
+                        if eng_list[i] is None and p == eng.mig_profile.profile_type:
+                            eng.mig_index = i
+                            eng_list[i] = eng
+                            break
+
+            assert all(e is not None for e in eng_list), (
+                f"GPU {gpu_id} state {sid} has missing engines: "
+                f"Expected {target_profiles}, found {[e.mig_profile.profile_type if e else None for e in eng_list]}"
+            )
+            self._gpu_engines[gpu_id] = eng_list  # type: ignore
+
+    def _predict_action_cost(self, action: m.Action) -> float:
         """Predict the reconfiguration cost (drain + boot time) for an action."""
-        val = action.value
         cost = 0.0
 
-        if isinstance(val, m.VramTransferAction):
-            all_engines = list(self._engines.values())
-            engine_to_shift = utils.MIG_RULES.get_best_exact_match(
-                val.giver, val.mig, val.receiver, all_engines
+        if action.action == m.ActionType.TRANSFER:
+            # Get specific engine by index
+            assert action.receiver is not None
+            engine_to_shift = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+            boot_cost = utils.SIM_CONFIG.get_restart_time(
+                action.receiver.receiver_id,
+                engine_to_shift.mig_profile,
+                gpu_id=engine_to_shift.gpu,
             )
-            if engine_to_shift is not None:
-                boot_cost = utils.SIM_CONFIG.get_restart_time(
-                    val.receiver, engine_to_shift.mig_profile
-                )
-                drain_cost = engine_to_shift.predict_drain_time()
-                cost = drain_cost + boot_cost
-            else:
-                cost = 0.0
-
-        elif isinstance(val, m.MigAction):
-            victim = self._agents[val.victim]
-            match val.action:
-                case "split":
-                    best_split = utils.MIG_RULES.get_best_specific_split(
-                        victim, val.profiles
-                    )
-                    if best_split:
-                        eng, new_profiles = best_split
-                        drain_cost = eng.predict_drain_time()
-                        boot_cost = max(
-                            (
-                                utils.SIM_CONFIG.get_restart_time(
-                                    val.receiver
-                                    if val.transfer_profile == p
-                                    and val.receiver is not None
-                                    else val.victim,
-                                    p,
-                                )
-                                for p in new_profiles
+            drain_cost = engine_to_shift.predict_drain_time()
+            cost = drain_cost + boot_cost
+        elif action.action in [m.ActionType.SPLIT, m.ActionType.MERGE]:
+            # Find the engine(s) that will be split or merged
+            assert action.target_state_id is not None
+            if action.action == m.ActionType.SPLIT:
+                eng = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+                drain_cost = eng.predict_drain_time()
+                boot_cost = max(
+                    (
+                        utils.SIM_CONFIG.get_restart_time(
+                            action.receiver.receiver_id
+                            if action.receiver and p == action.receiver.mig_idx
+                            else eng.owner.agent_id,
+                            self._get_hardware_profile(
+                                eng.gpu, STATE_DEFINITIONS[action.target_state_id][p]
                             ),
-                            default=0.0,
+                            gpu_id=eng.gpu,
                         )
-                        cost = drain_cost + boot_cost
-                case "merge":
-                    best_merge = utils.MIG_RULES.get_best_specific_merge(
-                        victim, val.profiles
+                        for p in action.mig_target
+                    ),
+                    default=0.0,
+                )
+                cost = drain_cost + boot_cost
+            else:  # MERGE
+                engs = [self._gpu_engines[action.gpu_id][idx] for idx in action.mig_src]
+                if engs:
+                    drain_cost = max(
+                        (e.predict_drain_time() for e in engs), default=0.0
                     )
-                    if best_merge:
-                        engs, new_profile = best_merge
-                        drain_cost = max(
-                            (e.predict_drain_time() for e in engs), default=0.0
-                        )
-                        boot_cost = utils.SIM_CONFIG.get_restart_time(
-                            val.receiver
-                            if val.transfer_profile == new_profile
-                            and val.receiver is not None
-                            else val.victim,
-                            new_profile,
-                        )
-                        cost = drain_cost + boot_cost
-                case _:
-                    raise ValueError(f"Unknown MIG action: {val.action}")
-        else:
-            # NO ACTION
-            cost = 0.0
-
+                    new_profile_idx = action.mig_target[0]
+                    boot_cost = utils.SIM_CONFIG.get_restart_time(
+                        action.receiver.receiver_id
+                        if action.receiver
+                        and new_profile_idx == action.receiver.mig_idx
+                        else engs[0].owner.agent_id,
+                        self._get_hardware_profile(
+                            engs[0].gpu,
+                            STATE_DEFINITIONS[action.target_state_id][new_profile_idx],
+                        ),
+                        gpu_id=engs[0].gpu,
+                    )
+                    cost = drain_cost + boot_cost
         return cost
 
-    def handle_resource_manager_trigger(self, action: m.ResourceManagerAction):
+    def _find_best_engine_index(self, gpu_id: int, profile: m.MIGProfile) -> int:
+        candidates = [
+            (i, e)
+            for i, e in enumerate(self._gpu_engines[gpu_id])
+            if e is not None and e.mig_profile.profile_type == profile
+        ]
+        if not candidates:
+            return -1
+
+        idx, _ = min(
+            candidates,
+            key=lambda x: len(x[1].waiting_queue) + len(x[1].running_queue),
+        )
+        return idx
+
+    def handle_resource_manager_trigger(self, action: Optional[m.Action]):
         self._environment_state.record_queue_length_advance(
             self._current_time, self._agents
         )
-        state_data = self._environment_state.get_state(self._current_time, self._agents)
+        state_data = self._environment_state.get_state(
+            self._current_time, self._agents, self.gpu_current_state
+        )
         self._logger.log_environment_state(self._current_time, state_data)
         self._environment_state.reset_for_next_interval(
             self._current_time, self._agents
@@ -334,46 +406,46 @@ class SimulatorImpl(m.Simulator):
 
         self._environment_state.advance_all_last_action()
 
-        if action != m.ResourceManagerAction.NO_ACTION and isinstance(
-            action.value, m.MigAction
-        ):
-            aid = action.value.victim
-            if action.value.action == "split":
-                self._environment_state.set_last_action(aid, "split")
-            elif action.value.action == "merge":
-                self._environment_state.set_last_action(aid, "merge")
+        if action is None:
+            self._step_draining_or_active_engines()
+            return
 
-        if (
-            action != m.ResourceManagerAction.NO_ACTION
-            and getattr(action.value, "receiver", None) is not None
-        ):
-            if isinstance(action.value, m.MigAction):
-                assert action.value.transfer_profile is not None
-                giver = action.value.victim
-                mig_size = action.value.transfer_profile.size
-            elif isinstance(action.value, m.VramTransferAction):
-                giver = action.value.giver
-                mig_size = action.value.mig.size
-            else:
-                raise ValueError(
-                    f"Unknown action type for transfer: {type(action.value)}"
-                )
-            receiver = action.value.receiver
-            assert receiver is not None
+        if action.action == m.ActionType.SPLIT:
+            eng = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+            assert eng is not None
+            self._environment_state.set_last_action(eng.owner.agent_id, "split")
+        elif action.action == m.ActionType.MERGE:
+            eng = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+            assert eng is not None
+            self._environment_state.set_last_action(eng.owner.agent_id, "merge")
 
-            self._environment_state.set_last_action(giver, "give", mig_size)
-            self._environment_state.set_last_action(receiver, "receive", mig_size)
+        if action.receiver is not None:
+            # Find giver
+            eng = self._gpu_engines[action.gpu_id][action.mig_src[0]]
+            assert eng is not None
+            giver_id = eng.owner.agent_id
 
-        if action != m.ResourceManagerAction.NO_ACTION:
-            if self._comming_budget_refresh is not None:
-                self._events.remove(self._comming_budget_refresh)
-            refresh_evt = m.SimulationEvent(
-                time=self._current_time + TRAINING_CONFIG.refresh_period,
-                event_type=m.EventType.REFRESH_ACTION_BUDGET,
-                payload={},
+            sid = (
+                action.target_state_id
+                if action.target_state_id is not None
+                else self.gpu_current_state[action.gpu_id]
             )
-            self._comming_budget_refresh = refresh_evt
-            self._events.add(refresh_evt)
+            mig_size = STATE_DEFINITIONS[sid][action.receiver.mig_idx].size
+
+            self._environment_state.set_last_action(giver_id, "give", mig_size)
+            self._environment_state.set_last_action(
+                action.receiver.receiver_id, "receive", mig_size
+            )
+
+        if self._comming_budget_refresh is not None:
+            self._events.remove(self._comming_budget_refresh)
+        refresh_evt = m.SimulationEvent(
+            time=self._current_time + TRAINING_CONFIG.refresh_period,
+            event_type=m.EventType.REFRESH_ACTION_BUDGET,
+            payload={},
+        )
+        self._comming_budget_refresh = refresh_evt
+        self._events.add(refresh_evt)
 
         # 1. Calculate and deduct cost
         cost = self._predict_action_cost(action)
@@ -381,66 +453,10 @@ class SimulatorImpl(m.Simulator):
         self._environment_state.last_action_downtime = cost
 
         # 2. Perform action
-        match action:
-            case m.ResourceManagerAction.NO_ACTION:
-                pass
-
-            case action if isinstance(action.value, m.VramTransferAction):
-                self._handle_resource_manager_trigger_vram_transfer(action.value)
-
-            case action if (
-                isinstance(action.value, m.MigAction) and action.value.action == "split"
-            ):
-                m_action = action.value
-                agent_id = m_action.victim
-                agent = self._agents[agent_id]
-                best_split = utils.MIG_RULES.get_best_specific_split(
-                    agent, m_action.profiles
-                )
-                assert best_split is not None  # correctness of the action mask
-
-                eng, new_profiles = best_split
-                mig_decision: Tuple[str, Any] = (
-                    "split",
-                    {
-                        "engine": eng,
-                        "new_profiles": new_profiles,
-                        "agent_id": agent_id,
-                        "gpu": eng.gpu,
-                        "receiver_id": m_action.receiver,
-                        "received_profile": m_action.transfer_profile,
-                    },
-                )
-                self._handle_resource_manager_trigger_mig_decision(mig_decision)
-
-            case action if (
-                isinstance(action.value, m.MigAction) and action.value.action == "merge"
-            ):
-                m_action = action.value
-                agent_id = m_action.victim
-                agent = self._agents[agent_id]
-                best_merge = utils.MIG_RULES.get_best_specific_merge(
-                    agent, m_action.profiles
-                )
-                assert best_merge is not None  # correctness of the action mask
-
-                engs, new_profile = best_merge
-                mig_decision = (
-                    "merge",
-                    {
-                        "engines": engs,
-                        "new_profile": new_profile,
-                        "agent_id": agent_id,
-                        "gpu": engs[0].gpu,
-                        "receiver_id": m_action.receiver,
-                        "received_profile": m_action.transfer_profile,
-                    },
-                )
-                self._handle_resource_manager_trigger_mig_decision(mig_decision)
-
-            case _:
-                raise ValueError(f"Unknown RL action {action}")
-
+        if action.action == m.ActionType.TRANSFER:
+            self._handle_resource_manager_trigger_vram_transfer(action)
+        elif action.action in (m.ActionType.SPLIT, m.ActionType.MERGE):
+            self._handle_resource_manager_trigger_mig_decision(action)
         self._step_draining_or_active_engines()
 
     def _handle_shutdown_complete_reallocate(
@@ -450,7 +466,9 @@ class SimulatorImpl(m.Simulator):
         receiver_id = payload["receiver_id"]
         engine = self._engines[engine_id]
 
-        new_model = utils.SIM_CONFIG.get_model(receiver_id, engine.mig_profile)
+        new_model = utils.SIM_CONFIG.get_model(
+            receiver_id, engine.mig_profile, gpu_id=engine.gpu
+        )
 
         receiver = self._agents[receiver_id]
 
@@ -459,15 +477,16 @@ class SimulatorImpl(m.Simulator):
             model_name=new_model,
             max_batched_tokens=utils.SIM_CONFIG.max_batched_tokens[new_model],
             prefill_params=utils.SIM_CONFIG.get_prefill_params(
-                receiver_id, engine.mig_profile
+                receiver_id, engine.mig_profile, gpu_id=engine.gpu
             ),
             tpot_params=utils.SIM_CONFIG.get_tpot_params(
-                receiver_id, engine.mig_profile
+                receiver_id, engine.mig_profile, gpu_id=engine.gpu
             ),
             restart_time=utils.SIM_CONFIG.get_restart_time(
-                receiver_id, engine.mig_profile
+                receiver_id, engine.mig_profile, gpu_id=engine.gpu
             ),
         )
+        self._sync_ownership()
 
         boot_payload: m.BootPayload = {
             "engine_id": engine_id,
@@ -484,20 +503,43 @@ class SimulatorImpl(m.Simulator):
         payload["drained_ids"].append(engine_id)
 
         if len(payload["drained_ids"]) == len(payload["merge_engine_ids"]):
+            gpu = payload["gpu"]
+
+            # Get the starting index of the merge operation
+            merge_indices = [
+                self._engines[eid].mig_index
+                for eid in payload["merge_engine_ids"]
+                if eid in self._engines
+            ]
+            action_idx = min(merge_indices) if merge_indices else -1
+
+            # Reset only affected indices to avoid conflicts during sync
+            self._invalidate_gpu_indices(gpu, action_idx, payload["target_mig_indices"])
+
             giver_agent = self._agents[payload["agent_id"]]
             for eid in payload["merge_engine_ids"]:
                 e = self._engines.pop(eid, None)
                 if e is not None and e in giver_agent.engines:
                     giver_agent.engines.remove(e)
 
-            new_profile = payload["new_profile"]
-            # If a receiver was specified (merge-for-transfer), boot directly on receiver
             receiver_id = payload.get("receiver_id")
             target_agent = self._agents[receiver_id] if receiver_id else giver_agent
 
+            target_state_id = payload["target_state_id"]
+
+            target_mig_idx = payload["target_mig_indices"][0]
+            new_profile = self._get_hardware_profile(
+                payload["gpu"], STATE_DEFINITIONS[target_state_id][target_mig_idx]
+            )
             new_eid = utils.generate_engine_id(payload["gpu"], new_profile.string)
+
             new_eng = LLMEngineImpl.create(
-                payload["gpu"], new_eid, target_agent, new_profile, self._current_time
+                payload["gpu"],
+                new_eid,
+                target_agent,
+                new_profile,
+                self._current_time,
+                target_mig_idx,
             )
 
             boot_plain: m.BootPayload = {
@@ -508,37 +550,59 @@ class SimulatorImpl(m.Simulator):
             self._events.add(new_eng.trigger_boot(boot_plain))
             self._engines[new_eid] = new_eng
             target_agent.add_engine(new_eng)
+            self._sync_ownership()
             self._logger.log_mig_merge_complete(self._current_time, new_eid)
 
     def _handle_shutdown_complete_split(self, payload: m.ShutdownSplitPayload):
         engine_id = payload["engine_id"]
         agent = self._agents[payload["agent_id"]]
+
+        # Get index before popping
+        e_to_split = self._engines.get(engine_id)
+        action_idx = e_to_split.mig_index if e_to_split else -1
+
         e = self._engines.pop(engine_id, None)
         if e is not None and e in agent.engines:
             agent.engines.remove(e)
-
         receiver_id = payload["receiver_id"]
         received_profile = payload["received_profile"]
-        new_profiles = payload["new_profiles"]
         gpu = payload["gpu"]
+
+        # Reset only affected indices to avoid conflicts during sync
+        self._invalidate_gpu_indices(gpu, action_idx, payload["target_mig_indices"])
 
         is_vram_transfer = receiver_id is not None
         if is_vram_transfer:
             assert received_profile is not None
+
+        target_state_id = payload["target_state_id"]
+
+        target_mig_indices = payload["target_mig_indices"]
+        new_profiles = [
+            self._get_hardware_profile(gpu, STATE_DEFINITIONS[target_state_id][idx])
+            for idx in target_mig_indices
+        ]
+
         new_owners: List[m.Agent] = []
         transfer_received = False
         for p in new_profiles:
             new_owner = agent
-            if is_vram_transfer and p == received_profile and not transfer_received:
+            if (
+                is_vram_transfer
+                and p.profile_type == received_profile
+                and not transfer_received
+            ):
                 new_owner = self._agents[receiver_id]
                 transfer_received = True
             new_owners.append(new_owner)
 
         new_eids = [utils.generate_engine_id(gpu, p.string) for p in new_profiles]
 
-        for new_eid, new_owner, p in zip(new_eids, new_owners, new_profiles):
+        for new_eid, new_owner, p, target_mig_idx in zip(
+            new_eids, new_owners, new_profiles, target_mig_indices
+        ):
             new_eng = LLMEngineImpl.create(
-                gpu, new_eid, new_owner, p, self._current_time
+                gpu, new_eid, new_owner, p, self._current_time, target_mig_idx
             )
             new_owner.add_engine(new_eng)
             self._engines[new_eid] = new_eng
@@ -548,8 +612,9 @@ class SimulatorImpl(m.Simulator):
                 "purpose": m.OperationPurpose.SPLIT,
                 "sibling_engine_ids": new_eids,
             }
-
             self._events.add(new_eng.trigger_boot(boot_split))
+
+        self._sync_ownership()
         self._logger.log_mig_split_complete(self._current_time, engine_id)
 
     def _handle_shutdown_complete(
@@ -744,56 +809,95 @@ class SimulatorImpl(m.Simulator):
         return False  # Finished simulation
 
     def get_state(self) -> m.EnvironmentStateData:
-        return self._environment_state.get_state(self._current_time, self._agents)
+        return self._environment_state.get_state(
+            self._current_time, self._agents, self.gpu_current_state
+        )
 
     def reset(
         self,
-        init_mode: m.InitialMIGCombination
-        | Tuple[
-            m.InitialMIGCombination, m.InitialMIGCombination
-        ] = m.InitialMIGCombination.RANDOM,
+        initial_state_mode: Literal["random", "no_mig", "split_extreme"] = "random",
     ) -> None:
-        """Resets the simulator to its initial hardware and agent state."""
+        """Resets the simulator to its initial hardware and agent state.
+
+        Args:
+            initial_state_mode: How to initialise MIG slices for each GPU.
+                - "random"        : Pick a random valid combination (default).
+                - "no_mig"        : Use a single 7G instance per GPU (STATIC_NO_MIG).
+                - "split_extreme" : Use the most-split valid combination per GPU
+                                    (STATIC_SPLIT_EXTREME).
+        """
         self._current_time = 0.0
         self._events.clear()
         self._agents.clear()
         self._engines.clear()
         utils.USED_EIDS.clear()
 
-        # Step 1: Generate the initial hardware state based on mode
-        utils.SIM_CONFIG.generate_initial_state(init_mode)
+        # Step 1: Generate the initial hardware state
+        match initial_state_mode:
+            case "no_mig":
+                utils.SIM_CONFIG.generate_no_mig_initial_state()
+            case "split_extreme":
+                utils.SIM_CONFIG.generate_split_extreme_initial_state()
+            case "random":
+                utils.SIM_CONFIG.generate_initial_state()
 
         for aid in m.AgentId:
             self._agents[aid] = AgentImpl(aid)
 
         # Step 2: Initialize engines for all GPUs
         for eng_conf in utils.SIM_CONFIG.initial_state:
-            mig = m.MIGProfile.from_string(eng_conf["mig"])
             gpu = int(eng_conf["gpu"])
+            # Use GPU-specific profile class to parse the string
+            mig = GPU_MIG_PROFILE[gpu].from_string(eng_conf["mig"])
             agent_name = eng_conf["agent"]
             agent = self._agents[m.AgentId(agent_name)]
             eid = utils.generate_engine_id(gpu, mig.string)
 
             is_permanent = eng_conf.get("is-permanent", False)
+
+            # We need to assign indices. During reset, we don't know the state ID yet.
+            # But we can identify the state after all engines are created.
+            # For now, create with -1 index and fix later.
             eng = LLMEngineImpl.create(
                 gpu=gpu,
                 engine_id=eid,
                 owner=agent,
                 mig_profile=mig,
                 current_time=0.0,
+                mig_index=-1,  # Fixed later
                 is_permanent=is_permanent,
             )
             agent.add_engine(eng)
             self._engines[eid] = eng
 
+        # Step 3: Identify state and fix mig_index
+        self._sync_ownership()
+
         self._environment_state.reset_for_next_interval(0.0, self._agents)
         self._environment_state.refresh_budget()
         self._comming_budget_refresh = None
-
         self._environment_state.reconfig_flag = False
         for aid in self._agents.keys():
             self._environment_state.set_pending_request_count(aid, 0)
         self._environment_state.reset_last_actions()
+
+    def has_active_work(self) -> bool:
+        if any(
+            e.event_type
+            in [
+                m.EventType.REQUEST_ARRIVAL,
+                m.EventType.RAG_SEARCH_COMPLETE,
+                m.EventType.ENGINE_STEP_COMPLETE,
+            ]
+            for e in self._events
+        ):
+            return True
+        if any(
+            len(e.waiting_queue) > 0 or len(e.running_queue) > 0
+            for e in self._engines.values()
+        ):
+            return True
+        return False
 
     def get_action_mask(self) -> List[bool]:
         mask: List[bool] = [False] * len(m.ResourceManagerAction)
@@ -803,77 +907,190 @@ class SimulatorImpl(m.Simulator):
             ] = True
             return mask
 
-        # Cooldown (Per-Agent)
         cooldown_steps = TRAINING_CONFIG.action_cooldown
+        # Transfer cooldown
         transfer_blocked = any(
             self._environment_state.get_steps_since(aid, "give") < cooldown_steps
             for aid in self._agents.keys()
         )
 
+        current_states = self.gpu_current_state
         for act_id, action in enumerate(m.ResourceManagerAction):
             if action == m.ResourceManagerAction.NO_ACTION:
                 mask[act_id] = True
                 continue
 
             val = action.value
-            if isinstance(val, m.VramTransferAction):
+            act_gpu_id, target_sid, trans_mig = (
+                val.gpu_id,
+                val.target_state_id,
+                val.transfer_mig,
+            )
+            current_sid = current_states[act_gpu_id]
+
+            # 0. Hardware Support Check
+            if target_sid is not None:
+                if (
+                    STATE_DEFINITIONS[target_sid]
+                    not in GPU_VALID_COMBINATIONS[act_gpu_id]
+                ):
+                    mask[act_id] = False
+                    continue
+            if trans_mig is not None:
+                supported_profiles = {
+                    p.profile_type for p in GPU_MIG_PROFILE[act_gpu_id]
+                }
+                if trans_mig not in supported_profiles:
+                    mask[act_id] = False
+                    continue
+
+            # 1. State Transition Check
+            if target_sid is not None:
+                # Check if transition exists in matrix
+                trans_action = TRANSITION_MATRIX.get((current_sid, target_sid))
+                if not trans_action:
+                    mask[act_id] = False
+                    continue
+
+                # RECONFIGURATION CONSTRAINT: All source engines must have the same owner
+                src_indices = trans_action.mig_src
+                owners = {
+                    self._gpu_engines[act_gpu_id][idx].owner.agent_id
+                    for idx in src_indices
+                }
+                if len(owners) > 1:
+                    mask[act_id] = False
+                    continue
+
+            # 2. Transfer Check
+            if trans_mig is not None:
                 if transfer_blocked:
                     mask[act_id] = False
                     continue
-                giver = self._agents[val.giver]
-                has_exact_match = utils.MIG_RULES.has_exact_match(giver, val.mig)
-                mask[act_id] = has_exact_match
-            else:  # MIGAction
-                victim = self._agents[val.victim]
-                match val.action:
-                    case "split":
-                        if (
-                            self._environment_state.get_steps_since(val.victim, "merge")
-                            < cooldown_steps
-                        ):
-                            mask[act_id] = False
-                        else:
-                            mask[act_id] = (
-                                utils.MIG_RULES.get_best_specific_split(
-                                    victim, val.profiles
-                                )
-                                is not None
-                            )
-                    case "merge":
-                        if (
-                            self._environment_state.get_steps_since(val.victim, "split")
-                            < cooldown_steps
-                        ):
-                            mask[act_id] = False
-                        else:
-                            mask[act_id] = (
-                                utils.MIG_RULES.get_best_specific_merge(
-                                    victim, val.profiles
-                                )
-                                is not None
-                            )
-                    case _:
-                        raise ValueError(f"Unknown MIG action: {val.action}")
+                # If target_sid is None, it's a pure transfer. Check if gpu has the MIG.
+                if target_sid is None:
+                    has_mig = any(
+                        eng is not None
+                        and eng.mig_profile.profile_type == trans_mig
+                        and not eng.is_permanent
+                        for eng in self._gpu_engines[act_gpu_id]
+                    )
+                    mask[act_id] = has_mig
+                else:
+                    # It's a state + transition. The transfer MIG must be in the target state.
+                    assert trans_mig in STATE_DEFINITIONS[target_sid], (
+                        f"Transfer MIG {trans_mig} not in target state {target_sid}"
+                    )
+                    mask[act_id] = True
+            else:
+                # Pure state transition
+                mask[act_id] = True
 
-                # If this MIG action includes a transfer, apply transfer constraints
-                if mask[act_id] and getattr(val, "transfer_profile", None) is not None:
-                    if transfer_blocked:
+            # 3. Budget Check
+            if mask[act_id]:
+                # We need a proper Action object to predict cost
+                pred_action = self.map_to_action(action)
+                if pred_action:
+                    cost = self._predict_action_cost(pred_action)
+                    if cost > self._environment_state.current_budget:
                         mask[act_id] = False
 
-            # Additional budget check
-            if mask[act_id]:  # Only check if the action is otherwise possible
-                cost = self._predict_action_cost(action)
-                if cost > self._environment_state.current_budget:
-                    mask[act_id] = False
-
-        assert len(mask) == len(m.ResourceManagerAction)
         return mask
+
+    def map_to_action(self, res_action: m.ResourceManagerAction) -> Optional[m.Action]:
+        if res_action == m.ResourceManagerAction.NO_ACTION:
+            return None
+
+        val = res_action.value
+        gpu_id, target_sid, trans_mig = (
+            val.gpu_id,
+            val.target_state_id,
+            val.transfer_mig,
+        )
+        current_sid = self.gpu_current_state[gpu_id]
+
+        if target_sid is None:
+            # Pure Transfer
+            assert trans_mig is not None, (
+                "Transfer MIG must be specified for pure transfer action"
+            )
+            mig_idx = self._find_best_engine_index(gpu_id, trans_mig)
+            if mig_idx == -1:
+                return None
+
+            return m.Action(
+                action=m.ActionType.TRANSFER,
+                gpu_id=gpu_id,
+                mig_src=[mig_idx],
+                mig_target=[mig_idx],
+                target_state_id=current_sid,
+                receiver=m.Receiver(
+                    receiver_id=m.AgentId.RAG
+                    if self._gpu_engines[gpu_id][mig_idx].owner.agent_id
+                    == m.AgentId.CODING
+                    else m.AgentId.CODING,
+                    mig_idx=mig_idx,
+                ),
+            )
+
+        # State Transition (maybe with transfer)
+        transition_action = TRANSITION_MATRIX.get((current_sid, target_sid))
+        if not transition_action:
+            return None
+
+        receiver = None
+        if trans_mig:
+            # Find which index in the target state profile list matches trans_mig
+            found_idx = -1
+            for idx in range(len(STATE_DEFINITIONS[target_sid])):
+                if STATE_DEFINITIONS[target_sid][idx] == trans_mig:
+                    found_idx = idx
+                    break
+            assert found_idx != -1, (
+                f"Transfer MIG {trans_mig} not found in target state {target_sid}"
+            )
+
+            # Giver is the owner of the source engines (we checked they are same in masking)
+            src_idx = transition_action.mig_src[0]
+            eng = self._gpu_engines[gpu_id][src_idx]
+            assert eng is not None
+            current_owner = eng.owner.agent_id
+
+            receiver = m.Receiver(
+                receiver_id=m.AgentId.RAG
+                if current_owner == m.AgentId.CODING
+                else m.AgentId.CODING,
+                mig_idx=found_idx,
+            )
+
+        return dataclasses.replace(transition_action, gpu_id=gpu_id, receiver=receiver)
+
+    def _identify_gpu_state(self, gpu_id: int) -> int:
+        engs = [e for e in self._engines.values() if e.gpu == gpu_id]
+        profiles = sorted(
+            [e.mig_profile.profile_type for e in engs],
+            key=lambda x: x.value,
+            reverse=True,
+        )
+        for sid, defs in STATE_DEFINITIONS.items():
+            if sorted(list(defs), key=lambda x: x.value, reverse=True) == profiles:
+                return sid
+        raise AssertionError(
+            f"Could not identify GPU state for engines on GPU {gpu_id}: {profiles}"
+        )
+
+    def _get_hardware_profile(
+        self, gpu_id: int, logical_profile: m.MIGProfile
+    ) -> m.MIGProfileBase:
+        for hp in GPU_MIG_PROFILE[gpu_id]:
+            if hp.profile_type == logical_profile:
+                return hp
+        raise ValueError(f"No hardware profile for {logical_profile} on GPU {gpu_id}")
 
     def _peak_next_stopping_evt(self, agent_id: m.AgentId) -> float | None:
         for evt in self._events:
             if evt.event_type == m.EventType.RESOURCE_MANAGER_TRIGGER:
                 return evt.time
-
             if evt.event_type == m.EventType.REQUEST_ARRIVAL:
                 payload = cast(m.RequestArrivalPayload, evt.payload)
                 if (
@@ -881,7 +1098,6 @@ class SimulatorImpl(m.Simulator):
                     and agent_id != m.AgentId.RAG
                 ):
                     return evt.time
-
             if evt.event_type == m.EventType.RAG_SEARCH_COMPLETE:
                 payload = cast(m.RequestArrivalPayload, evt.payload)
                 if (

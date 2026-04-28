@@ -1,7 +1,7 @@
 import yaml
 from pathlib import Path
 import random
-from typing import Dict, List
+from typing import Dict, List, Tuple, Type
 
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.agent import AgentImpl
@@ -9,16 +9,18 @@ from src.simulation.engine import LLMEngineImpl
 import src.simulation.models as m
 from src.simulation.request import RequestImpl
 import src.simulation.utils as utils
+import src.simulation.config as config
 
 
 def check_rate(
     agent_id: m.AgentId,
-    mig_profile: m.MIGProfile,
+    hw_mig: m.MIGProfileBase,
     sampled_req_ids: List[str],
     rate: float,
+    gpu_id: int,
 ) -> bool:
     requests = []
-    model_name = utils.SIM_CONFIG.get_model(agent_id, mig_profile)
+    model_name = utils.SIM_CONFIG.get_model(agent_id, hw_mig, gpu_id=gpu_id)
     req_map = utils.TOKENS_MAP[agent_id][model_name]
 
     for idx, rid in enumerate(sampled_req_ids):
@@ -34,13 +36,14 @@ def check_rate(
         requests.append(req)
 
     agent = AgentImpl(agent_id)
-    eid = utils.generate_engine_id(0, mig_profile.string)
+    eid = utils.generate_engine_id(gpu_id, hw_mig.string)
     engine = LLMEngineImpl.create(
-        gpu=0,
+        gpu=gpu_id,
         engine_id=eid,
         owner=agent,
-        mig_profile=mig_profile,
+        mig_profile=hw_mig,
         current_time=0.0,
+        mig_index=0,
         is_permanent=True,
     )
     agent.add_engine(engine)
@@ -57,11 +60,7 @@ def check_rate(
         pass
 
     # We define "queuing happens" if the wait time in the queue grows continuously.
-    # We check the average queuing delay of the last 10% of requests.
     last_10_percent = requests[-int(len(requests) * 0.1) :]
-
-    # Delay is the time between arriving at the system and starting prefill.
-    # For RAG, this includes search overhead (which is small, <0.3s).
     valid_reqs = [r for r in last_10_percent if r.start_time is not None]
     if not valid_reqs:
         return False
@@ -69,55 +68,76 @@ def check_rate(
     avg_delay = sum(max(0, r.start_time - r.arrival_time) for r in valid_reqs) / len(
         valid_reqs
     )
-
-    # A 2.0s threshold allows for normal micro-batching jitter,
-    # but strictly rejects unstable rates where the queue grows indefinitely.
     return avg_delay < 2.0
 
 
 def measure_max_service_rate():
-    num_requests = 1000  # Enough to observe queue growth if rate is unsustainable
+    num_requests = 1000
 
-    # 1. Use the same set of requests among all MIGs to maintain fairness
+    # 1. Prepare requests
     agent_sampled_reqs: Dict[m.AgentId, List[str]] = {}
     for agent_id in m.AgentId:
         first_model = next(iter(utils.TOKENS_MAP[agent_id]))
         all_rids = list(utils.TOKENS_MAP[agent_id][first_model].keys())
         agent_sampled_reqs[agent_id] = random.choices(all_rids, k=num_requests)
 
-    print(f"{'Agent':<15} | {'MIG Profile':<15} | {'Max Rate (req/s)':<25}")
-    print("-" * 55)
+    # 2. Identify unique GPU models in the cluster
+    unique_gpu_types: Dict[str, Tuple[int, Type[m.MIGProfileBase]]] = {}
+    for gpu_id, hw_prof_cls in config.GPU_MIG_PROFILE.items():
+        # Use first member to get the gpu_model name
+        gpu_model_name = next(iter(hw_prof_cls)).gpu_model
+        if gpu_model_name not in unique_gpu_types:
+            unique_gpu_types[gpu_model_name] = (gpu_id, hw_prof_cls)
 
-    results_dict = {
-        m.AgentId.CODING.value: {},
-        m.AgentId.RAG.value: {},
-    }
+    print(
+        f"{'GPU Model':<15} | {'Agent':<15} | {'MIG Profile':<15} | {'Max Rate (req/s)':<15}"
+    )
+    print("-" * 65)
 
-    for agent_id in [m.AgentId.CODING, m.AgentId.RAG]:
-        # 2. Use list(m.MIGProfile) instead of hardcoding
-        for mig_profile in list(m.MIGProfile):
-            sampled_req_ids = agent_sampled_reqs[agent_id]
+    results_dict = {}
 
-            # Binary search for the maximum rate that doesn't cause queuing
-            low = 0.1
-            high = 20.0
-            best_rate = 0.0
+    for gpu_model, (gpu_id, hw_prof_proto) in unique_gpu_types.items():
+        results_dict[gpu_model] = {aid.value: {} for aid in m.AgentId}
 
-            while high - low > 0.05:
-                mid = (low + high) / 2
-                is_stable = check_rate(agent_id, mig_profile, sampled_req_ids, mid)
-                if is_stable:
-                    best_rate = mid
-                    low = mid
-                else:
-                    high = mid
+        # Iterate over all hardware profiles for this GPU model
+        for hw_mig in hw_prof_proto:
+            for agent_id in m.AgentId:
+                # Check if this agent is configured for this GPU
+                if agent_id.value not in config.GPU_AGENTS_CONFIG[gpu_id]:
+                    continue
 
-            results_dict[agent_id.value][mig_profile.string] = float(f"{best_rate:.2f}")
-            print(
-                f"{agent_id.value:<15} | {mig_profile.string:<15} | {best_rate:>15.2f}"
-            )
+                # Check if this MIG profile is configured for this agent on this GPU
+                if (
+                    hw_mig.string
+                    not in config.GPU_AGENTS_CONFIG[gpu_id][agent_id.value]["mig"]
+                ):
+                    continue
 
-    # Write to configs/bench_config.yaml
+                sampled_req_ids = agent_sampled_reqs[agent_id]
+
+                low = 0.1
+                high = 20.0
+                best_rate = 0.0
+
+                while high - low > 0.1:
+                    mid = (low + high) / 2
+                    is_stable = check_rate(
+                        agent_id, hw_mig, sampled_req_ids, mid, gpu_id
+                    )
+                    if is_stable:
+                        best_rate = mid
+                        low = mid
+                    else:
+                        high = mid
+
+                results_dict[gpu_model][agent_id.value][hw_mig.string] = float(
+                    f"{best_rate:.2f}"
+                )
+                print(
+                    f"{gpu_model:<15} | {agent_id.value:<15} | {hw_mig.string:<15} | {best_rate:>15.2f}"
+                )
+
+    # 3. Write to configs/bench_config.yaml
     config_path = Path("configs/bench_config.yaml")
     with open(config_path, "r") as f:
         config_data = yaml.safe_load(f)
@@ -125,9 +145,6 @@ def measure_max_service_rate():
     if "heuristic" not in config_data:
         config_data["heuristic"] = {}
 
-    config_data["heuristic"]["utilization_factor"] = 0.8
-    config_data["heuristic"]["high_threshold"] = 1.2
-    config_data["heuristic"]["low_threshold"] = 0.8
     config_data["heuristic"]["service_rates"] = results_dict
 
     with open(config_path, "w") as f:

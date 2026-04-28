@@ -3,14 +3,12 @@ import argparse
 from typing import Dict, List
 
 import src.simulation.models as m
-import src.simulation.utils as utils
 from src.simulation.request_loader import RequestLoader
 from src.simulation.simulator import SimulatorImpl
-from src.simulation.engine import LLMEngineImpl
-from src.simulation.agent import AgentImpl
 
 from src.training.models import TrainingPhase
 from src.training.rewards import compute_reward
+from src.simulation.mig_matrix import STATE_DEFINITIONS
 
 
 def main():
@@ -34,29 +32,6 @@ def main():
 
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
-    for aid in m.AgentId:
-        agents[aid] = AgentImpl(aid)
-
-    for eng_conf in utils.SIM_CONFIG.initial_state:
-        mig = m.MIGProfile.from_string(eng_conf["mig"])
-        gpu = int(eng_conf["gpu"])
-        agent_name = eng_conf["agent"]
-        agent = agents[m.AgentId(agent_name)]
-        eid = utils.generate_engine_id(gpu, mig.string)
-
-        is_permanent = eng_conf.get("is-permanent", False)
-        eng = LLMEngineImpl.create(
-            gpu=gpu,
-            engine_id=eid,
-            owner=agent,
-            mig_profile=mig,
-            current_time=0.0,
-            is_permanent=is_permanent,
-        )
-
-        agent.add_engine(eng)
-        engines[eid] = eng
-
     sim = SimulatorImpl(
         agents=agents,
         engines=engines,
@@ -76,12 +51,14 @@ def main():
 
         # Apply phase-based masking
         if phase == TrainingPhase.PHASE_1:
-            # Mask MIG Split/Merge
-            for act_id, action in enumerate(m.ResourceManagerAction):
-                if action != m.ResourceManagerAction.NO_ACTION and isinstance(
-                    action.value, m.MigAction
-                ):
-                    mask[act_id] = False
+            # Phase 1: Only allow pure transfers or self-transitions (no state changes)
+            for act_id, res_act in enumerate(m.ResourceManagerAction):
+                if res_act == m.ResourceManagerAction.NO_ACTION:
+                    continue
+                val = res_act.value
+                if val.target_state_id is not None:
+                    if val.target_state_id != sim.gpu_current_state[val.gpu_id]:
+                        mask[act_id] = False
         elif phase == TrainingPhase.PHASE_2:
             pass
 
@@ -89,6 +66,10 @@ def main():
         action = random.choice(valid_actions)
         # action = m.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
+        print("  GPU Geometry:")
+        for gpu_id, state_id in sim.gpu_current_state.items():
+            profiles = [p.name for p in STATE_DEFINITIONS[state_id]]
+            print(f"    GPU {gpu_id}: {profiles}")
         for aid in m.AgentId:
             print(
                 f" Agent {aid.value}: {[e.engine_id for e in sim.agents[aid].engines]}"
@@ -96,11 +77,13 @@ def main():
         for i, msk in enumerate(mask):
             print(f"  {list(m.ResourceManagerAction)[i].name}: {msk}")
 
-        sim.handle_resource_manager_trigger(action)
+        sim_action = sim.map_to_action(action)
+        sim.handle_resource_manager_trigger(sim_action)
         sim.run()
 
         # 2. Print State
         state_data = sim.get_state()
+
         avg_q = state_data["avg_queue_length"]
         total_avg_q = sum(sum(v) for v in avg_q.values())
         print(f"  Avg Queue Length: {total_avg_q:.2f}")

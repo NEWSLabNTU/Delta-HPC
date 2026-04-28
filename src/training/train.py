@@ -22,6 +22,7 @@ from src.simulation.agent import AgentImpl
 from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
 import src.simulation.utils as utils
+from src.simulation.config import GPU_MIG_PROFILE
 from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
 from src.training.callbacks import (
@@ -122,8 +123,8 @@ def train(ckpt: Optional[Path] = None) -> None:
         agents[aid] = AgentImpl(aid)
 
     for eng_conf in utils.SIM_CONFIG.initial_state:
-        mig = m.MIGProfile.from_string(eng_conf["mig"])
         gpu = int(eng_conf["gpu"])
+        mig = GPU_MIG_PROFILE[gpu].from_string(eng_conf["mig"])
         agent_name = eng_conf["agent"]
         agent = agents[m.AgentId(agent_name)]
         eid = utils.generate_engine_id(gpu, mig.string)
@@ -135,6 +136,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             owner=agent,
             mig_profile=mig,
             current_time=0.0,
+            mig_index=-1,  # To be set in sim.reset()
             is_permanent=is_permanent,
         )
 

@@ -4,7 +4,16 @@ from collections import deque
 from enum import Enum, IntEnum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple, Union, TypedDict, Literal
+from typing import (
+    Dict,
+    List,
+    Optional,
+    Union,
+    Tuple,
+    NamedTuple,
+    TypedDict,
+    Literal,
+)
 
 from sortedcontainers import SortedList
 
@@ -37,28 +46,47 @@ __all__ = [
     "ResourceManagerAction",
     "VramTransferAction",
     "MigAction",
-    "InitialMIGCombination",
 ]
 
-type ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
-
-
-@dataclass(frozen=True)
-class MIGProfileValue:
-    size: int
-    vram: int
+ParamDict = Dict[Literal["alpha", "beta", "sigma"], float]
 
 
 class MIGProfile(Enum):
-    MIG_1G_10GB = MIGProfileValue(1, 10)
-    MIG_2G_10GB = MIGProfileValue(2, 10)
-    MIG_3G_20GB = MIGProfileValue(3, 20)
-    MIG_4G_20GB = MIGProfileValue(4, 20)
-    MIG_7G_40GB = MIGProfileValue(7, 40)
+    """Normalized MIG Profile Slots for RL Observation and Action Space."""
+
+    MIG_7G = 0
+    MIG_4G = 1
+    MIG_3G = 2
+    MIG_2G = 3
+    MIG_1G_LARGE = 4
+    MIG_1G_SMALL = 5
 
     @property
-    def string(self) -> str:
-        return f"{self.value.size}g.{self.value.vram}gb"
+    def size(self) -> int:
+        if self == MIGProfile.MIG_1G_LARGE or self == MIGProfile.MIG_1G_SMALL:
+            return 1
+        return [7, 4, 3, 2, 1, 1][self.value]
+
+    def __eq__(self, other):
+        if isinstance(other, MIGProfileBase):
+            raise TypeError(
+                f"Cannot compare logical MIGProfile with hardware-specific {type(other).__name__}. "
+                "Use .profile_type comparison instead."
+            )
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return super().__hash__()
+
+
+class ProfileInfo(NamedTuple):
+    size: int
+    vram: int
+    profile_type: MIGProfile
+
+
+class MIGProfileBase(Enum):
+    """Base class for hardware-specific MIG profiles."""
 
     @property
     def size(self) -> int:
@@ -69,57 +97,51 @@ class MIGProfile(Enum):
         return self.value.vram
 
     @property
+    def profile_type(self) -> MIGProfile:
+        """The logical normalized profile type."""
+        return self.value.profile_type
+
+    @property
+    def gpu_model(self) -> str:
+        """The GPU model name (e.g., A100_40GB)."""
+        raise NotImplementedError()
+
+    def __eq__(self, other):
+        if isinstance(other, MIGProfile):
+            raise TypeError(
+                f"Cannot compare hardware-specific {type(self).__name__} with logical MIGProfile. "
+                "Use .profile_type comparison instead."
+            )
+        return super().__eq__(other)
+
+    def __hash__(self):
+        return super().__hash__()
+
+    @property
+    def string(self) -> str:
+        # We use size.vram to ensure unique keys in dictionaries
+        return f"{self.size}g.{self.vram}gb"
+
+    @property
     def idx(self) -> int:
-        return list(MIGProfile).index(self)
+        return self.profile_type.value
 
     @classmethod
-    def from_string(cls, profile_str: str) -> MIGProfile:
-        for p in cls:
-            if p.string == profile_str:
-                return p
-        raise ValueError(f"Invalid MIG profile string: {profile_str}")
+    def from_string(cls, profile_str: str) -> "MIGProfileBase":
+        """Create a profile instance from its string representation."""
+        for member in cls:
+            if member.string == profile_str:
+                return member
+        raise ValueError(f"Unknown {cls.__name__} profile: {profile_str}")
+
+    def __str__(self):
+        return self.string
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}.{self.name}: {self.string}>"
 
 
-type MIGConfigType = Tuple[MIGProfile, ...]
-
-
-@dataclass(slots=True)
-class MIGEncoding:
-    p1: int = 0
-    p2: int = 0
-    p3: int = 0
-    p4: int = 0
-    p7: int = 0
-
-    def __getitem__(self, index: int):
-        match index:
-            case 0:
-                return self.p1
-            case 1:
-                return self.p2
-            case 2:
-                return self.p3
-            case 3:
-                return self.p4
-            case 4:
-                return self.p7
-            case _:
-                raise IndexError("MIGEncoding index out of range")
-
-    def __setitem__(self, index: int, value: int):
-        match index:
-            case 0:
-                self.p1 = value
-            case 1:
-                self.p2 = value
-            case 2:
-                self.p3 = value
-            case 3:
-                self.p4 = value
-            case 4:
-                self.p7 = value
-            case _:
-                raise IndexError("MIGEncoding index out of range")
+MIGConfigType = Tuple[MIGProfileBase, ...]
 
 
 class RequestState(Enum):
@@ -155,33 +177,6 @@ class OperationPurpose(Enum):
     MERGE = "merge"
     SPLIT = "split"
     PLAIN = "plain"
-
-
-class InitialMIGCombination(Enum):
-    C7 = (MIGProfile.MIG_7G_40GB,)
-    C4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
-    C4_2_1 = (
-        MIGProfile.MIG_4G_20GB,
-        MIGProfile.MIG_2G_10GB,
-        MIGProfile.MIG_1G_10GB,
-    )
-    C3_2_2 = (
-        MIGProfile.MIG_3G_20GB,
-        MIGProfile.MIG_2G_10GB,
-        MIGProfile.MIG_2G_10GB,
-    )
-    C2_2_2_1 = (
-        MIGProfile.MIG_2G_10GB,
-        MIGProfile.MIG_2G_10GB,
-        MIGProfile.MIG_2G_10GB,
-        MIGProfile.MIG_1G_10GB,
-    )
-    RANDOM = ()
-
-    def __repr__(self) -> str:
-        if self == InitialMIGCombination.RANDOM:
-            return "RANDOM"
-        return " | ".join([p.string for p in self.value])
 
 
 # --- Interfaces ---
@@ -424,11 +419,12 @@ class ShutdownMergePayload(TypedDict):
     merge_engine_ids: Tuple[str, ...]
     # IDs that have already drained (grows as each engine shuts down)
     drained_ids: List[str]
-    new_profile: MIGProfile
+    target_mig_indices: List[int]
     agent_id: AgentId
     gpu: int
     # If set, the merged engine boots directly on the receiver (VRAM transfer via merge)
     receiver_id: Optional[AgentId]
+    target_state_id: int
 
 
 class ShutdownSplitPayload(TypedDict):
@@ -436,11 +432,12 @@ class ShutdownSplitPayload(TypedDict):
 
     engine_id: str
     purpose: OperationPurpose
-    new_profiles: List[MIGProfile]
+    target_mig_indices: List[int]
     agent_id: AgentId
     gpu: int
     # If set, it's VRAM transfer via split
     receiver_id: Optional[AgentId]
+    target_state_id: int
     received_profile: Optional[MIGProfile]
 
 
@@ -461,7 +458,7 @@ class BootPayload(TypedDict):
     sibling_engine_ids: List[str] | None
 
 
-type PayloadType = Union[
+PayloadType = Union[
     EmptyPayload,
     EngineStepPayload,
     RequestArrivalPayload,
@@ -531,7 +528,15 @@ class LLMEngine(ABC):
 
     @property
     @abstractmethod
-    def mig_profile(self) -> MIGProfile: ...
+    def mig_profile(self) -> MIGProfileBase: ...
+
+    @property
+    @abstractmethod
+    def mig_index(self) -> int: ...
+
+    @mig_index.setter
+    @abstractmethod
+    def mig_index(self, value: int): ...
 
     @property
     @abstractmethod
@@ -574,8 +579,9 @@ class LLMEngine(ABC):
         gpu: int,
         engine_id: str,
         owner: Agent,
-        mig_profile: MIGProfile,
+        mig_profile: MIGProfileBase,
         current_time: float,
+        mig_index: int,
         is_permanent: bool = False,
     ) -> LLMEngine: ...
 
@@ -637,9 +643,14 @@ class Simulator(ABC):
     def has_active_work(self) -> bool: ...
 
     @abstractmethod
-    def handle_resource_manager_trigger(
-        self, action: ResourceManagerAction
-    ) -> None: ...
+    def map_to_action(self, res_action: ResourceManagerAction) -> Optional[Action]: ...
+
+    @abstractmethod
+    def handle_resource_manager_trigger(self, action: Optional[Action]) -> None: ...
+
+    @property
+    @abstractmethod
+    def gpu_current_state(self) -> Dict[int, int]: ...
 
     @abstractmethod
     def run(self) -> bool: ...
@@ -647,10 +658,7 @@ class Simulator(ABC):
     @abstractmethod
     def reset(
         self,
-        init_mode: InitialMIGCombination
-        | Tuple[
-            InitialMIGCombination, InitialMIGCombination
-        ] = InitialMIGCombination.RANDOM,
+        initial_state_mode: Literal["random", "no_mig", "split_extreme"] = "random",
     ) -> None: ...
 
     @abstractmethod
@@ -660,32 +668,39 @@ class Simulator(ABC):
     def get_state(self) -> EnvironmentStateData: ...
 
 
+class ActionType(Enum):
+    SPLIT = "split"
+    MERGE = "merge"
+    TRANSFER = "transfer"
+
+
+class Receiver(NamedTuple):
+    receiver_id: AgentId
+    mig_idx: int
+
+
+class ResourceManagerActionValue(NamedTuple):
+    gpu_id: int
+    target_state_id: Optional[int]
+    transfer_mig: Optional[MIGProfile]
+
+
+@dataclass
+class Action:
+    action: ActionType
+    gpu_id: int
+    mig_src: List[int]
+    mig_target: List[int]
+    target_state_id: Optional[int] = None
+    receiver: Optional[Receiver] = None
+
+
 @dataclass
 class VramTransferAction:
     giver: AgentId
     receiver: AgentId
     mig: MIGProfile
-
-
-MIG_4_3 = (MIGProfile.MIG_4G_20GB, MIGProfile.MIG_3G_20GB)
-MIG_4_2_1 = (
-    MIGProfile.MIG_4G_20GB,
-    MIGProfile.MIG_2G_10GB,
-    MIGProfile.MIG_1G_10GB,
-)
-MIG_3_2_2 = (
-    MIGProfile.MIG_3G_20GB,
-    MIGProfile.MIG_2G_10GB,
-    MIGProfile.MIG_2G_10GB,
-)
-MIG_2_2_2_1 = (
-    MIGProfile.MIG_2G_10GB,
-    MIGProfile.MIG_2G_10GB,
-    MIGProfile.MIG_2G_10GB,
-    MIGProfile.MIG_1G_10GB,
-)
-MIG_2_2 = (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_2G_10GB)
-MIG_2_1 = (MIGProfile.MIG_2G_10GB, MIGProfile.MIG_1G_10GB)
+    gpu: int = -1
 
 
 @dataclass
@@ -700,403 +715,211 @@ class MigAction:
 class ResourceManagerAction(Enum):
     NO_ACTION = None
 
-    # 1-10: VRAM precise
-    TRANSFER_7G_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_7G_40GB
+    # GPU 0 State Transitions
+    GPU_0_PROFILE_1_7G = ResourceManagerActionValue(0, 1, None)
+    GPU_0_PROFILE_2_4G_3G = ResourceManagerActionValue(0, 2, None)
+    GPU_0_PROFILE_3_4G_2G_1L = ResourceManagerActionValue(0, 3, None)
+    GPU_0_PROFILE_4_4G_1S_1S_1L = ResourceManagerActionValue(0, 4, None)
+    GPU_0_PROFILE_8_2G_2G_3G = ResourceManagerActionValue(0, 8, None)
+    GPU_0_PROFILE_9_2G_1S_1S_3G = ResourceManagerActionValue(0, 9, None)
+    GPU_0_PROFILE_10_1S_1S_2G_3G = ResourceManagerActionValue(0, 10, None)
+    GPU_0_PROFILE_11_1S_1S_1S_1S_3G = ResourceManagerActionValue(0, 11, None)
+    GPU_0_PROFILE_12_2G_2G_2G_1L = ResourceManagerActionValue(0, 12, None)
+    GPU_0_PROFILE_13_2G_1S_1S_2G_1L = ResourceManagerActionValue(0, 13, None)
+    GPU_0_PROFILE_14_1S_1S_2G_2G_1L = ResourceManagerActionValue(0, 14, None)
+    GPU_0_PROFILE_15_2G_1S_1S_1S_1S_1L = ResourceManagerActionValue(0, 15, None)
+    GPU_0_PROFILE_16_1S_1S_2G_1S_1S_1L = ResourceManagerActionValue(0, 16, None)
+    GPU_0_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(0, 17, None)
+    GPU_0_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(0, 19, None)
+
+    # GPU 1 State Transitions
+    GPU_1_PROFILE_1_7G = ResourceManagerActionValue(1, 1, None)
+    GPU_1_PROFILE_2_4G_3G = ResourceManagerActionValue(1, 2, None)
+    GPU_1_PROFILE_3_4G_2G_1L = ResourceManagerActionValue(1, 3, None)
+    GPU_1_PROFILE_4_4G_1S_1S_1L = ResourceManagerActionValue(1, 4, None)
+    GPU_1_PROFILE_8_2G_2G_3G = ResourceManagerActionValue(1, 8, None)
+    GPU_1_PROFILE_9_2G_1S_1S_3G = ResourceManagerActionValue(1, 9, None)
+    GPU_1_PROFILE_10_1S_1S_2G_3G = ResourceManagerActionValue(1, 10, None)
+    GPU_1_PROFILE_11_1S_1S_1S_1S_3G = ResourceManagerActionValue(1, 11, None)
+    GPU_1_PROFILE_12_2G_2G_2G_1L = ResourceManagerActionValue(1, 12, None)
+    GPU_1_PROFILE_13_2G_1S_1S_2G_1L = ResourceManagerActionValue(1, 13, None)
+    GPU_1_PROFILE_14_1S_1S_2G_2G_1L = ResourceManagerActionValue(1, 14, None)
+    GPU_1_PROFILE_15_2G_1S_1S_1S_1S_1L = ResourceManagerActionValue(1, 15, None)
+    GPU_1_PROFILE_16_1S_1S_2G_1S_1S_1L = ResourceManagerActionValue(1, 16, None)
+    GPU_1_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(1, 17, None)
+    GPU_1_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(1, 19, None)
+
+    # GPU 0 State + Transfer
+    GPU_0_PROFILE_1_TRANSFER_7G = ResourceManagerActionValue(0, 1, MIGProfile.MIG_7G)
+    GPU_0_PROFILE_2_TRANSFER_4G = ResourceManagerActionValue(0, 2, MIGProfile.MIG_4G)
+    GPU_0_PROFILE_2_TRANSFER_3G = ResourceManagerActionValue(0, 2, MIGProfile.MIG_3G)
+    GPU_0_PROFILE_3_TRANSFER_4G = ResourceManagerActionValue(0, 3, MIGProfile.MIG_4G)
+    GPU_0_PROFILE_3_TRANSFER_2G = ResourceManagerActionValue(0, 3, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(
+        0, 3, MIGProfile.MIG_1G_LARGE
     )
-    TRANSFER_4G_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_4G_20GB
+    GPU_0_PROFILE_4_TRANSFER_4G = ResourceManagerActionValue(0, 4, MIGProfile.MIG_4G)
+    GPU_0_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(
+        0, 4, MIGProfile.MIG_1G_LARGE
     )
-    TRANSFER_3G_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_3G_20GB
+    GPU_0_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(
+        0, 4, MIGProfile.MIG_1G_SMALL
     )
-    TRANSFER_2G_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_2G_10GB
+    GPU_0_PROFILE_8_TRANSFER_3G = ResourceManagerActionValue(0, 8, MIGProfile.MIG_3G)
+    GPU_0_PROFILE_8_TRANSFER_2G = ResourceManagerActionValue(0, 8, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_9_TRANSFER_3G = ResourceManagerActionValue(0, 9, MIGProfile.MIG_3G)
+    GPU_0_PROFILE_9_TRANSFER_2G = ResourceManagerActionValue(0, 9, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(
+        0, 9, MIGProfile.MIG_1G_SMALL
     )
-    TRANSFER_1G_CODING_RAG = VramTransferAction(
-        giver=AgentId.CODING, receiver=AgentId.RAG, mig=MIGProfile.MIG_1G_10GB
+    GPU_0_PROFILE_10_TRANSFER_3G = ResourceManagerActionValue(0, 10, MIGProfile.MIG_3G)
+    GPU_0_PROFILE_10_TRANSFER_2G = ResourceManagerActionValue(0, 10, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(
+        0, 10, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_11_TRANSFER_3G = ResourceManagerActionValue(0, 11, MIGProfile.MIG_3G)
+    GPU_0_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(
+        0, 11, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_12_TRANSFER_2G = ResourceManagerActionValue(0, 12, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(
+        0, 12, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_13_TRANSFER_2G = ResourceManagerActionValue(0, 13, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(
+        0, 13, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(
+        0, 13, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_14_TRANSFER_2G = ResourceManagerActionValue(0, 14, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(
+        0, 14, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(
+        0, 14, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_15_TRANSFER_2G = ResourceManagerActionValue(0, 15, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(
+        0, 15, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(
+        0, 15, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_16_TRANSFER_2G = ResourceManagerActionValue(0, 16, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(
+        0, 16, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(
+        0, 16, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_17_TRANSFER_2G = ResourceManagerActionValue(0, 17, MIGProfile.MIG_2G)
+    GPU_0_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(
+        0, 17, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(
+        0, 17, MIGProfile.MIG_1G_SMALL
+    )
+    GPU_0_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(
+        0, 19, MIGProfile.MIG_1G_LARGE
+    )
+    GPU_0_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(
+        0, 19, MIGProfile.MIG_1G_SMALL
     )
 
-    TRANSFER_7G_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_7G_40GB
+    # GPU 1 State + Transfer
+    GPU_1_PROFILE_1_TRANSFER_7G = ResourceManagerActionValue(1, 1, MIGProfile.MIG_7G)
+    GPU_1_PROFILE_2_TRANSFER_4G = ResourceManagerActionValue(1, 2, MIGProfile.MIG_4G)
+    GPU_1_PROFILE_2_TRANSFER_3G = ResourceManagerActionValue(1, 2, MIGProfile.MIG_3G)
+    GPU_1_PROFILE_3_TRANSFER_4G = ResourceManagerActionValue(1, 3, MIGProfile.MIG_4G)
+    GPU_1_PROFILE_3_TRANSFER_2G = ResourceManagerActionValue(1, 3, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(
+        1, 3, MIGProfile.MIG_1G_LARGE
     )
-    TRANSFER_4G_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_4G_20GB
+    GPU_1_PROFILE_4_TRANSFER_4G = ResourceManagerActionValue(1, 4, MIGProfile.MIG_4G)
+    GPU_1_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(
+        1, 4, MIGProfile.MIG_1G_LARGE
     )
-    TRANSFER_3G_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_3G_20GB
+    GPU_1_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(
+        1, 4, MIGProfile.MIG_1G_SMALL
     )
-    TRANSFER_2G_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_2G_10GB
+    GPU_1_PROFILE_8_TRANSFER_3G = ResourceManagerActionValue(1, 8, MIGProfile.MIG_3G)
+    GPU_1_PROFILE_8_TRANSFER_2G = ResourceManagerActionValue(1, 8, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_9_TRANSFER_3G = ResourceManagerActionValue(1, 9, MIGProfile.MIG_3G)
+    GPU_1_PROFILE_9_TRANSFER_2G = ResourceManagerActionValue(1, 9, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(
+        1, 9, MIGProfile.MIG_1G_SMALL
     )
-    TRANSFER_1G_RAG_CODING = VramTransferAction(
-        giver=AgentId.RAG, receiver=AgentId.CODING, mig=MIGProfile.MIG_1G_10GB
+    GPU_1_PROFILE_10_TRANSFER_3G = ResourceManagerActionValue(1, 10, MIGProfile.MIG_3G)
+    GPU_1_PROFILE_10_TRANSFER_2G = ResourceManagerActionValue(1, 10, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(
+        1, 10, MIGProfile.MIG_1G_SMALL
     )
-
-    # 5-24: MIG per agent
-    # Splits Coding
-    SPLIT_7_TO_4_3_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_3,
+    GPU_1_PROFILE_11_TRANSFER_3G = ResourceManagerActionValue(1, 11, MIGProfile.MIG_3G)
+    GPU_1_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(
+        1, 11, MIGProfile.MIG_1G_SMALL
     )
-    SPLIT_7_TO_3_2_2_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_3_2_2,
+    GPU_1_PROFILE_12_TRANSFER_2G = ResourceManagerActionValue(1, 12, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(
+        1, 12, MIGProfile.MIG_1G_LARGE
     )
-    SPLIT_7_TO_2_2_2_1_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_2_2_1,
+    GPU_1_PROFILE_13_TRANSFER_2G = ResourceManagerActionValue(1, 13, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(
+        1, 13, MIGProfile.MIG_1G_LARGE
     )
-    SPLIT_7_TO_4_2_1_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
+    GPU_1_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(
+        1, 13, MIGProfile.MIG_1G_SMALL
     )
-    SPLIT_4_TO_2_2_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_2,
+    GPU_1_PROFILE_14_TRANSFER_2G = ResourceManagerActionValue(1, 14, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(
+        1, 14, MIGProfile.MIG_1G_LARGE
     )
-    SPLIT_3_TO_2_1_CODING = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_1,
+    GPU_1_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(
+        1, 14, MIGProfile.MIG_1G_SMALL
     )
-
-    # Splits RAG
-    SPLIT_7_TO_4_3_RAG = MigAction("split", AgentId.RAG, profiles=MIG_4_3)
-    SPLIT_7_TO_3_2_2_RAG = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_3_2_2,
+    GPU_1_PROFILE_15_TRANSFER_2G = ResourceManagerActionValue(1, 15, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(
+        1, 15, MIGProfile.MIG_1G_LARGE
     )
-    SPLIT_7_TO_2_2_2_1_RAG = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_2_2_1,
+    GPU_1_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(
+        1, 15, MIGProfile.MIG_1G_SMALL
     )
-    SPLIT_7_TO_4_2_1_RAG = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
+    GPU_1_PROFILE_16_TRANSFER_2G = ResourceManagerActionValue(1, 16, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(
+        1, 16, MIGProfile.MIG_1G_LARGE
     )
-    SPLIT_4_TO_2_2_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_2)
-    SPLIT_3_TO_2_1_RAG = MigAction("split", AgentId.RAG, profiles=MIG_2_1)
-
-    # Merges Coding
-    MERGE_4_3_TO_7_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_4_3,
+    GPU_1_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(
+        1, 16, MIGProfile.MIG_1G_SMALL
     )
-    MERGE_3_2_2_TO_7_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_3_2_2,
+    GPU_1_PROFILE_17_TRANSFER_2G = ResourceManagerActionValue(1, 17, MIGProfile.MIG_2G)
+    GPU_1_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(
+        1, 17, MIGProfile.MIG_1G_LARGE
     )
-    MERGE_2_2_2_1_TO_7_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_2_2_1,
+    GPU_1_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(
+        1, 17, MIGProfile.MIG_1G_SMALL
     )
-    MERGE_4_2_1_TO_7_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
+    GPU_1_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(
+        1, 19, MIGProfile.MIG_1G_LARGE
     )
-    MERGE_2_2_TO_4_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_2,
-    )
-    MERGE_2_1_TO_3_CODING = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_1,
+    GPU_1_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(
+        1, 19, MIGProfile.MIG_1G_SMALL
     )
 
-    # Merges RAG
-    MERGE_4_3_TO_7_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_4_3)
-    MERGE_3_2_2_TO_7_RAG = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_3_2_2,
-    )
-    MERGE_2_2_2_1_TO_7_RAG = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_2_2_2_1,
-    )
-    MERGE_4_2_1_TO_7_RAG = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
-    )
-    MERGE_2_2_TO_4_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_2)
-    MERGE_2_1_TO_3_RAG = MigAction("merge", AgentId.RAG, profiles=MIG_2_1)
+    # GPU 0 Pure Transfer
+    TRANSFER_GPU_0_7G = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G)
+    TRANSFER_GPU_0_4G = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G)
+    TRANSFER_GPU_0_3G = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G)
+    TRANSFER_GPU_0_2G = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G)
+    TRANSFER_GPU_0_1L = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE)
+    TRANSFER_GPU_0_1S = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL)
 
-    # Combined Splits and Transfers
-    # CODING giving to RAG
-    SPLIT_7_TO_4_3_TRANS_CODING_4_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_4_3_TRANS_CODING_3_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_3_2_2_TRANS_CODING_3_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_3_2_2_TRANS_CODING_2_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_2_2_2_1_TRANS_CODING_2_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_2_2_2_1_TRANS_CODING_1_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_CODING_4_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_CODING_2_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_CODING_1_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_4_TO_2_2_TRANS_CODING_2_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_2,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_3_TO_2_1_TRANS_CODING_2_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.RAG,
-    )
-    SPLIT_3_TO_2_1_TRANS_CODING_1_RAG = MigAction(
-        "split",
-        AgentId.CODING,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.RAG,
-    )
-    # RAG giving to CODING
-    SPLIT_7_TO_4_3_TRANS_RAG_4_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_4_3_TRANS_RAG_3_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_3_2_2_TRANS_RAG_3_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_3_2_2_TRANS_RAG_2_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_2_2_2_1_TRANS_RAG_2_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_2_2_2_1_TRANS_RAG_1_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_RAG_4_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_RAG_2_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_7_TO_4_2_1_TRANS_RAG_1_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_4_TO_2_2_TRANS_RAG_2_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_2,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_3_TO_2_1_TRANS_RAG_2_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_2G_10GB,
-        receiver=AgentId.CODING,
-    )
-    SPLIT_3_TO_2_1_TRANS_RAG_1_CODING = MigAction(
-        "split",
-        AgentId.RAG,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_1G_10GB,
-        receiver=AgentId.CODING,
-    )
-
-    # Combined Merges and Transfers
-    # CODING giving to RAG
-    MERGE_4_3_TO_7_TRANS_CODING_7_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.RAG,
-    )
-    MERGE_3_2_2_TO_7_TRANS_CODING_7_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.RAG,
-    )
-    MERGE_2_2_2_1_TO_7_TRANS_CODING_7_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.RAG,
-    )
-    MERGE_4_2_1_TO_7_TRANS_CODING_7_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.RAG,
-    )
-    MERGE_2_2_TO_4_TRANS_CODING_4_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_2,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.RAG,
-    )
-    MERGE_2_1_TO_3_TRANS_CODING_3_RAG = MigAction(
-        "merge",
-        AgentId.CODING,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.RAG,
-    )
-    # RAG giving to CODING
-    MERGE_4_3_TO_7_TRANS_RAG_7_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_4_3,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.CODING,
-    )
-    MERGE_3_2_2_TO_7_TRANS_RAG_7_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_3_2_2,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.CODING,
-    )
-    MERGE_2_2_2_1_TO_7_TRANS_RAG_7_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_2_2_2_1,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.CODING,
-    )
-    MERGE_4_2_1_TO_7_TRANS_RAG_7_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_4_2_1,
-        transfer_profile=MIGProfile.MIG_7G_40GB,
-        receiver=AgentId.CODING,
-    )
-    MERGE_2_2_TO_4_TRANS_RAG_4_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_2_2,
-        transfer_profile=MIGProfile.MIG_4G_20GB,
-        receiver=AgentId.CODING,
-    )
-    MERGE_2_1_TO_3_TRANS_RAG_3_CODING = MigAction(
-        "merge",
-        AgentId.RAG,
-        profiles=MIG_2_1,
-        transfer_profile=MIGProfile.MIG_3G_20GB,
-        receiver=AgentId.CODING,
-    )
+    # GPU 1 Pure Transfer
+    TRANSFER_GPU_1_7G = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G)
+    TRANSFER_GPU_1_4G = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G)
+    TRANSFER_GPU_1_3G = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G)
+    TRANSFER_GPU_1_2G = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G)
+    TRANSFER_GPU_1_1L = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE)
+    TRANSFER_GPU_1_1S = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL)
 
 
 # --- Management Interfaces ---
@@ -1110,7 +933,8 @@ class EnvironmentStateData(TypedDict):
     avg_queue_length_trend: Dict[AgentId, Tuple[float, ...]]
     kv_cache_utilization: Dict[AgentId, Tuple[float, ...]]
     avg_composite_latency: Dict[AgentId, Tuple[float, ...]]
-    n_mig_instance: Dict[AgentId, float]
+    mig_profile_id_onehot: Dict[int, List[float]]
+    ownership_grid: Dict[int, List[int]]
     agent_owns_mig: Dict[AgentId, Tuple[float, ...]]
     mig_geometry: Dict[int, List[float]]
     current_budget: float
@@ -1132,12 +956,21 @@ class EnvironmentStateData(TypedDict):
     agent_avg_running_req_ratio: float
     agent_avg_kv_cache_ratio: float
     agent_avg_composite_latency_ratio: float
-    agent_n_mig_ratio: float
     agent_vram_ratio: float
     agent_sm_ratio: float
 
 
-type ActionHistoryKey = Literal["split", "merge", "give", "receive"]
+ActionHistoryKey = Literal["split", "merge", "give", "receive"]
+
+AgentRatioKeys = Literal[
+    "agent_arrival_rate_ratio",
+    "agent_avg_queue_len_ratio",
+    "agent_avg_running_req_ratio",
+    "agent_avg_kv_cache_ratio",
+    "agent_vram_ratio",
+    "agent_sm_ratio",
+    "agent_avg_composite_latency_ratio",
+]
 
 
 class EnvironmentState(ABC):
@@ -1201,6 +1034,7 @@ class EnvironmentState(ABC):
         self,
         current_time: float,
         agents: Dict[AgentId, Agent],
+        gpu_current_state: Dict[int, int],
     ) -> EnvironmentStateData: ...
 
     @abstractmethod
@@ -1213,22 +1047,22 @@ class MIGProfileRule(ABC):
     @abstractmethod
     def get_possible_merges(
         self, agent: Agent
-    ) -> List[Tuple[List[LLMEngine], MIGProfile]]: ...
+    ) -> List[Tuple[List[LLMEngine], MIGProfileBase]]: ...
 
     @abstractmethod
     def get_possible_splits(
         self, agent: Agent
-    ) -> List[Tuple[LLMEngine, List[MIGProfile]]]: ...
+    ) -> List[Tuple[LLMEngine, List[MIGProfileBase]]]: ...
 
     @abstractmethod
     def get_best_specific_split(
         self, agent: Agent, target_profiles: Tuple[MIGProfile, ...]
-    ) -> Tuple[LLMEngine, List[MIGProfile]] | None: ...
+    ) -> Tuple[LLMEngine, List[MIGProfileBase]] | None: ...
 
     @abstractmethod
     def get_best_specific_merge(
         self, agent: Agent, target_profiles: Tuple[MIGProfile, ...]
-    ) -> Tuple[List[LLMEngine], MIGProfile] | None: ...
+    ) -> Tuple[List[LLMEngine], MIGProfileBase] | None: ...
 
     @abstractmethod
     def has_exact_match(self, agent: Agent, mig: MIGProfile) -> bool: ...

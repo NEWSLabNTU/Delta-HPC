@@ -4,28 +4,23 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Tuple, Optional
 
 import src.simulation.models as m
+from src.simulation.mig_matrix import STATE_ID_MAP, SLICE_MAPPING
 from src.training.config import TRAINING_CONFIG
-
-type ActionHistoryKey = Literal["split", "merge", "give", "receive"]
-
-type AgentRatioKeys = Literal[
-    "agent_arrival_rate_ratio",
-    "agent_avg_queue_len_ratio",
-    "agent_avg_running_req_ratio",
-    "agent_avg_kv_cache_ratio",
-    "agent_n_mig_ratio",
-    "agent_vram_ratio",
-    "agent_sm_ratio",
-    "agent_avg_composite_latency_ratio",
-]
+from src.simulation.config import NUM_MIG_SLICES
 
 
 @dataclass
 class AgentStats:
-    queue_length_integrals: List[float] = field(default_factory=lambda: [0.0] * 6)
-    running_requests_integrals: List[float] = field(default_factory=lambda: [0.0] * 6)
-    last_queue_lengths: List[int] = field(default_factory=lambda: [0] * 6)
-    last_running_request_counts: List[int] = field(default_factory=lambda: [0] * 6)
+    queue_length_integrals: List[float] = field(
+        default_factory=lambda: [0.0] * NUM_MIG_SLICES
+    )
+    running_requests_integrals: List[float] = field(
+        default_factory=lambda: [0.0] * NUM_MIG_SLICES
+    )
+    last_queue_lengths: List[int] = field(default_factory=lambda: [0] * NUM_MIG_SLICES)
+    last_running_request_counts: List[int] = field(
+        default_factory=lambda: [0] * NUM_MIG_SLICES
+    )
     last_arrival_rate: Optional[float] = None
     last_avg_queue_lengths: Optional[Tuple[float, ...]] = None
     arrival_rate_history: Tuple[float, ...] = field(
@@ -35,12 +30,12 @@ class AgentStats:
     )
     interval_requests: List[m.Request] = field(default_factory=list[m.Request])
     mig_composite_latencies: Dict[int, deque[float]] = field(
-        default_factory=lambda: {mig.idx: deque(maxlen=100) for mig in m.MIGProfile}
+        default_factory=lambda: {mig.value: deque(maxlen=100) for mig in m.MIGProfile}
     )
     # action_history keys: "split", "merge", "give", "receive"
     # Each value is a dict with "steps": int and (optionally) "amount": float
     action_history: Dict[
-        ActionHistoryKey,
+        m.ActionHistoryKey,
         Dict[Literal["steps", "amount"], int],
     ] = field(
         default_factory=lambda: {
@@ -110,7 +105,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.action_history["give"]["amount"] = 0
 
     def set_last_action(
-        self, agent_id: m.AgentId, event_type: ActionHistoryKey, amount: int = 0
+        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey, amount: int = 0
     ) -> None:
         entry = self._agent_stats[agent_id].action_history[event_type]
         entry["steps"] = 0
@@ -131,7 +126,9 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def get_pending_request_count(self, agent_id: m.AgentId) -> int:
         return self._agent_stats[agent_id].pending_request_count
 
-    def get_steps_since(self, agent_id: m.AgentId, event_type: ActionHistoryKey) -> int:
+    def get_steps_since(
+        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey
+    ) -> int:
         return self._agent_stats[agent_id].action_history[event_type]["steps"]
 
     def reset_for_next_interval(
@@ -146,15 +143,15 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 stats.last_arrival_rate = None
                 stats.last_avg_queue_lengths = None
                 for mig in m.MIGProfile:
-                    stats.mig_composite_latencies[mig.idx].clear()
+                    stats.mig_composite_latencies[mig.value].clear()
             else:
                 stats.last_arrival_rate = rates[agent_id]
                 stats.last_avg_queue_lengths = avg_qs[agent_id]
                 stats.arrival_rate_history = (
                     rates[agent_id],
                 ) + stats.arrival_rate_history[:-1]
-            stats.queue_length_integrals = [0.0] * 6
-            stats.running_requests_integrals = [0.0] * 6
+            stats.queue_length_integrals = [0.0] * 7
+            stats.running_requests_integrals = [0.0] * 7
             stats.interval_requests.clear()
 
         for agent_id, agent in agents.items():
@@ -165,13 +162,13 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 )
 
             stats = self._agent_stats[agent_id]
-            stats.last_queue_lengths = [0] * 6
-            stats.last_running_request_counts = [0] * 6
+            stats.last_queue_lengths = [0] * 7
+            stats.last_running_request_counts = [0] * 7
 
             for e in agent.engines:
                 if e.status == m.EngineStatus.BOOTING:
                     continue
-                idx = 5 if e.is_permanent else e.mig_profile.idx
+                idx = 6 if e.is_permanent else e.mig_profile.idx
                 stats.last_queue_lengths[idx] += len(e.waiting_queue)
                 stats.last_running_request_counts[idx] += len(e.running_queue)
 
@@ -184,7 +181,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         if dt > 0:
             for agent_id in agents.keys():
                 stats = self._agent_stats[agent_id]
-                for i in range(6):
+                for i in range(7):
                     stats.queue_length_integrals[i] += stats.last_queue_lengths[i] * dt
                     stats.running_requests_integrals[i] += (
                         stats.last_running_request_counts[i] * dt
@@ -193,12 +190,12 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self._last_queue_update_time = current_time
         for agent_id, agent in agents.items():
             stats = self._agent_stats[agent_id]
-            stats.last_queue_lengths = [0] * 6
-            stats.last_running_request_counts = [0] * 6
+            stats.last_queue_lengths = [0] * 7
+            stats.last_running_request_counts = [0] * 7
             for e in agent.engines:
                 if e.status == m.EngineStatus.BOOTING:
                     continue
-                idx = 5 if e.is_permanent else e.mig_profile.idx
+                idx = 6 if e.is_permanent else e.mig_profile.idx
                 stats.last_queue_lengths[idx] += len(e.waiting_queue)
                 stats.last_running_request_counts[idx] += len(e.running_queue)
 
@@ -209,6 +206,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         self,
         current_time: float,
         agents: Dict[m.AgentId, m.Agent],
+        gpu_current_state: Dict[int, int],
     ) -> m.EnvironmentStateData:
         # 1. Collect all metrics via (normalized) getters
         arrival_rate = self._get_normalized_arrival_rate(agents, current_time)
@@ -223,9 +221,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
         run_reqs = self._get_avg_running_requests(agents)
         kv = self._get_kv_cache_utilization(agents)
         latent_proportions, raw_latent_totals = self._get_avg_composite_latency(agents)
-        n_mig = self._get_n_mig_instance(agents)
         vram = self._get_total_vram_ratio(agents)
         sm = self._get_total_sm_ratio(agents)
+
+        mig_profile_id_onehot = self._get_mig_profile_id_onehot(gpu_current_state)
+        ownership_grid = self._get_ownership_grid(gpu_current_state, agents)
 
         ratios = self._calculate_global_agent_ratios(
             arrival_rate,
@@ -233,7 +233,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
             run_reqs,
             kv,
             raw_latent_totals,
-            n_mig,
             vram,
             sm,
         )
@@ -248,7 +247,8 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "avg_running_requests": run_reqs,
             "kv_cache_utilization": kv,
             "avg_composite_latency": latent_proportions,
-            "n_mig_instance": n_mig,
+            "mig_profile_id_onehot": mig_profile_id_onehot,
+            "ownership_grid": ownership_grid,
             "agent_owns_mig": self._get_agent_owns_mig(agents),
             "mig_geometry": self._get_mig_geometry(agents),
             "current_budget": self._get_current_budget(),
@@ -270,7 +270,6 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "agent_avg_composite_latency_ratio": ratios[
                 "agent_avg_composite_latency_ratio"
             ],
-            "agent_n_mig_ratio": ratios["agent_n_mig_ratio"],
             "agent_vram_ratio": ratios["agent_vram_ratio"],
             "agent_sm_ratio": ratios["agent_sm_ratio"],
         }
@@ -283,25 +282,23 @@ class EnvironmentStateImpl(m.EnvironmentState):
         run_reqs: Dict[m.AgentId, Tuple[float, ...]],
         kv: Dict[m.AgentId, Tuple[float, ...]],
         raw_latent_totals: Dict[m.AgentId, float],
-        n_mig: Dict[m.AgentId, float],
         vram: Dict[m.AgentId, float],
         sm: Dict[m.AgentId, float],
-    ) -> Dict[AgentRatioKeys, float]:
+    ) -> Dict[m.AgentRatioKeys, float]:
         def get_total(data_dict: Dict[m.AgentId, Any], aid: m.AgentId):
             val = data_dict[aid]
             return sum(val) if isinstance(val, (tuple, list)) else float(val)  # type: ignore
 
-        metrics: Dict[AgentRatioKeys, Dict[m.AgentId, Any]] = {
+        metrics: Dict[m.AgentRatioKeys, Dict[m.AgentId, Any]] = {
             "agent_arrival_rate_ratio": rates,
             "agent_avg_queue_len_ratio": avg_qs,
             "agent_avg_running_req_ratio": run_reqs,
             "agent_avg_kv_cache_ratio": kv,
-            "agent_n_mig_ratio": n_mig,
             "agent_vram_ratio": vram,
             "agent_sm_ratio": sm,
         }
 
-        ratios: Dict[AgentRatioKeys, float] = {}
+        ratios: Dict[m.AgentRatioKeys, float] = {}
         epsilon = 1e-6
         for key, data in metrics.items():
             c_val = get_total(data, m.AgentId.CODING)
@@ -379,7 +376,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats = self._agent_stats[agent_id]
             current_avgs: List[float] = []
             current_trends: List[float] = []
-            for i in range(6):
+            for i in range(7):
                 integral = stats.queue_length_integrals[i]
                 current_avg = (
                     integral / TRAINING_CONFIG.action_interval
@@ -390,7 +387,10 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
                 if stats.last_avg_queue_lengths is None:
                     current_trends.append(0.0)
-                elif stats.last_avg_queue_lengths[i] > 0.0:
+                elif (
+                    i < len(stats.last_avg_queue_lengths)
+                    and stats.last_avg_queue_lengths[i] > 0.0
+                ):
                     trd = (
                         current_avg - stats.last_avg_queue_lengths[i]
                     ) / stats.last_avg_queue_lengths[i]
@@ -428,7 +428,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         for agent_id in agents.keys():
             stats = self._agent_stats[agent_id]
             avgs: List[float] = []
-            for i in range(6):
+            for i in range(7):
                 integral = stats.running_requests_integrals[i]
                 raw = (
                     integral / TRAINING_CONFIG.action_interval
@@ -442,11 +442,11 @@ class EnvironmentStateImpl(m.EnvironmentState):
     def _get_kv_cache_utilization(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, Tuple[float, ...]]:
-        num_profiles = len(m.MIGProfile)
+        num_logical = len(m.MIGProfile)
         result: Dict[m.AgentId, Tuple[float, ...]] = {}
         for agent_id, agent in agents.items():
-            util_sums = [0.0] * num_profiles
-            counts = [0] * num_profiles
+            util_sums = [0.0] * num_logical
+            counts = [0] * num_logical
             perm_util_sum = 0.0
             perm_count = 0
             for e in agent.engines:
@@ -482,7 +482,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
 
             # Clear and repopulate from the last 100 valid completed requests
             for mig in m.MIGProfile:
-                stats.mig_composite_latencies[mig.idx].clear()
+                stats.mig_composite_latencies[mig.value].clear()
 
             perm_latencies: deque[float] = deque(maxlen=100)
 
@@ -493,27 +493,30 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 if req.serving_engine is None:
                     continue
                 visited += 1
-                mig = req.serving_engine.mig_profile
+                mig_obj = req.serving_engine.mig_profile
+                # q_j depends on GPU and logical type
+                q_j = TRAINING_CONFIG.qf_logical(mig_obj.profile_type, agent_id)
+
                 ttft = (req.first_token_time or req.arrival_time) - req.arrival_time
                 tpot = (
                     req.decode_time / req.generated_tokens
                     if req.generated_tokens > 0
                     else 0.0
                 )
-                q_j = TRAINING_CONFIG.qf(mig, agent_id)
                 composite = (w_t * ttft + w_p * tpot) / q_j
                 if req.serving_engine.is_permanent:
                     perm_latencies.append(composite)
                 else:
-                    stats.mig_composite_latencies[mig.idx].append(composite)
+                    stats.mig_composite_latencies[mig_obj.idx].append(composite)
 
             # Raw averages for each MIG profile slot + permanent slot
-            raw_avgs = [0.0] * (len(m.MIGProfile) + 1)
+            num_logical = len(m.MIGProfile)
+            raw_avgs = [0.0] * (num_logical + 1)
             for mig in m.MIGProfile:
-                q = stats.mig_composite_latencies[mig.idx]
+                q = stats.mig_composite_latencies[mig.value]
                 if len(q) > 0:
-                    raw_avgs[mig.idx] = sum(q) / len(q)
-            raw_avgs[len(m.MIGProfile)] = (
+                    raw_avgs[mig.value] = sum(q) / len(q)
+            raw_avgs[num_logical] = (
                 sum(perm_latencies) / len(perm_latencies) if perm_latencies else 0.0
             )
 
@@ -528,27 +531,17 @@ class EnvironmentStateImpl(m.EnvironmentState):
             result[agent_id] = pct_avgs  # type: ignore
         return result, raw_totals
 
-    def _get_n_mig_instance(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
-        stats: Dict[m.AgentId, float] = {}
-        for agent_id, agent in agents.items():
-            instances = sum(
-                1 for e in agent.engines if e.status != m.EngineStatus.BOOTING
-            )
-            stats[agent_id] = instances / TRAINING_CONFIG.norm_mig_geometry
-        return stats
-
     def _get_agent_owns_mig(
         self, agents: Dict[m.AgentId, m.Agent]
     ) -> Dict[m.AgentId, Tuple[float, ...]]:
         """Per-agent count of each MIG profile (normalized), used in the observation."""
         result: Dict[m.AgentId, Tuple[float, ...]] = {}
         divisor = TRAINING_CONFIG.norm_mig_geometry
+        num_logical = len(m.MIGProfile)
         for agent_id, agent in agents.items():
-            counts = [0] * len(m.MIGProfile)
+            counts = [0] * num_logical
             for e in agent.engines:
-                if e.status != m.EngineStatus.BOOTING:
+                if e.status != m.EngineStatus.BOOTING and not e.is_permanent:
                     counts[e.mig_profile.idx] += 1
             result[agent_id] = tuple(c / divisor for c in counts)  # type: ignore
         return result
@@ -671,3 +664,33 @@ class EnvironmentStateImpl(m.EnvironmentState):
             else:
                 res[aid] = entry["amount"] / norm_amount
         return res
+
+    def _get_mig_profile_id_onehot(
+        self, gpu_current_state: Dict[int, int]
+    ) -> Dict[int, List[float]]:
+        onehot_dict = {}
+        for gpu_id, state_id in gpu_current_state.items():
+            vec = [0.0] * 15
+            if state_id in STATE_ID_MAP:
+                vec[STATE_ID_MAP[state_id]] = 1.0
+            onehot_dict[gpu_id] = vec
+        return onehot_dict
+
+    def _get_ownership_grid(
+        self, gpu_current_state: Dict[int, int], agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[int, List[int]]:
+        grid_dict = {}
+        all_engines = [e for agent in agents.values() for e in agent.engines]
+        # We need to find the owner of each of the 7 slices for each GPU.
+        for gpu_id, state_id in gpu_current_state.items():
+            grid = [0] * NUM_MIG_SLICES
+            # Iterate through all engines on this GPU
+            for eng in all_engines:
+                if eng.gpu == gpu_id:
+                    owner_val = 1 if eng.owner.agent_id == m.AgentId.CODING else 2
+                    if state_id in SLICE_MAPPING and eng.mig_index != -1:
+                        slices = SLICE_MAPPING[state_id][eng.mig_index]
+                        for s_idx in slices:
+                            grid[s_idx] = owner_val
+            grid_dict[gpu_id] = grid
+        return grid_dict

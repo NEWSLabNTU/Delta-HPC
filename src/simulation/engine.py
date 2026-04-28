@@ -14,11 +14,12 @@ class LLMEngineImpl(m.LLMEngine):
         gpu: int,
         engine_id: str,
         owner: m.Agent,
-        mig_profile: m.MIGProfile,
+        mig_profile: m.MIGProfileBase,
         current_time: float,
+        mig_index: int,
         is_permanent: bool = False,
     ) -> LLMEngineImpl:
-        mname = utils.SIM_CONFIG.get_model(owner.agent_id, mig_profile)
+        mname = utils.SIM_CONFIG.get_model(owner.agent_id, mig_profile, gpu_id=gpu)
 
         return cls(
             gpu=gpu,
@@ -28,11 +29,16 @@ class LLMEngineImpl(m.LLMEngine):
             mig_profile=mig_profile,
             max_batched_tokens=utils.SIM_CONFIG.max_batched_tokens[mname],
             prefill_params=utils.SIM_CONFIG.get_prefill_params(
-                owner.agent_id, mig_profile
+                owner.agent_id, mig_profile, gpu_id=gpu
             ),
-            tpot_params=utils.SIM_CONFIG.get_tpot_params(owner.agent_id, mig_profile),
-            restart_time=utils.SIM_CONFIG.get_restart_time(owner.agent_id, mig_profile),
+            tpot_params=utils.SIM_CONFIG.get_tpot_params(
+                owner.agent_id, mig_profile, gpu_id=gpu
+            ),
+            restart_time=utils.SIM_CONFIG.get_restart_time(
+                owner.agent_id, mig_profile, gpu_id=gpu
+            ),
             current_time=current_time,
+            mig_index=mig_index,
             is_permanent=is_permanent,
         )
 
@@ -42,11 +48,12 @@ class LLMEngineImpl(m.LLMEngine):
         engine_id: str,
         owner: m.Agent,
         model_name: str,
-        mig_profile: m.MIGProfile,
+        mig_profile: m.MIGProfileBase,
         max_batched_tokens: int,
         prefill_params: m.ParamDict,
         tpot_params: m.ParamDict,
         restart_time: float,
+        mig_index: int,
         current_time: float = 0.0,
         is_permanent: bool = False,
     ):
@@ -56,6 +63,7 @@ class LLMEngineImpl(m.LLMEngine):
         self._model_name = model_name
         self._mig_profile = mig_profile
         self._is_permanent = is_permanent
+        self._mig_index = mig_index
 
         # Regression params
         self._prefill_alpha = prefill_params["alpha"]
@@ -67,7 +75,7 @@ class LLMEngineImpl(m.LLMEngine):
         self._restart_time = restart_time
         self._max_batched_tokens = max_batched_tokens
         self._max_kv_cache_tokens = utils.SIM_CONFIG.get_max_kv_cache_tokens(
-            owner.agent_id, mig_profile
+            owner.agent_id, mig_profile, gpu_id=self._gpu
         )
 
         # Queues
@@ -100,8 +108,16 @@ class LLMEngineImpl(m.LLMEngine):
         return self._model_name
 
     @property
-    def mig_profile(self) -> m.MIGProfile:
+    def mig_profile(self) -> m.MIGProfileBase:
         return self._mig_profile
+
+    @property
+    def mig_index(self) -> int:
+        return self._mig_index
+
+    @mig_index.setter
+    def mig_index(self, value: int):
+        self._mig_index = value
 
     @property
     def current_time(self) -> float:
@@ -167,7 +183,7 @@ class LLMEngineImpl(m.LLMEngine):
         self._model_name = model_name
         self._max_batched_tokens = max_batched_tokens
         self._max_kv_cache_tokens = utils.SIM_CONFIG.get_max_kv_cache_tokens(
-            new_owner.agent_id, self.mig_profile
+            new_owner.agent_id, self.mig_profile, gpu_id=self._gpu
         )
         self._prefill_alpha = prefill_params["alpha"]
         self._prefill_beta = prefill_params["beta"]

@@ -4,39 +4,55 @@ benchmark-length: 1024
 workloads:
   idle:
     rate:
-      - 0.3
-      - 0.4
+    - 0.3
+    - 0.4
     duration:
-      - 2300.0
-      - 2500.0
+    - 2300.0
+    - 2500.0
   even:
     rate:
-      - 0.9
-      - 1.1
+    - 0.9
+    - 1.1
     duration:
-      - 2300.0
-      - 2500.0
+    - 2300.0
+    - 2500.0
   busy:
     rate:
-      - 3.9
-      - 4.1
+    - 3.9
+    - 4.1
     duration:
-      - 2300.0
-      - 2500.0
+    - 2300.0
+    - 2500.0
 heuristic:
   utilization_factor: 0.8
   high_threshold: 1.1
   low_threshold: 0.5
   service_rates:
-    CodingAgent:
-      1g.10gb: 1.46
-      2g.10gb: 1.85
-      3g.20gb: 1.65
-      4g.20gb: 1.85
-      7g.40gb: 1.07
-    RAGAgent:
-      1g.10gb: 3.56
-      2g.10gb: 5.42
-      3g.20gb: 3.29
-      4g.20gb: 3.95
-      7g.40gb: 3.52
+    A100_40GB:
+      CodingAgent:
+        7g.40gb: 1.19
+        4g.20gb: 1.65
+        3g.20gb: 1.5
+        2g.10gb: 1.65
+        1g.10gb: 1.27
+      RAGAgent:
+        7g.40gb: 3.68
+        4g.20gb: 3.99
+        3g.20gb: 3.36
+        2g.10gb: 5.54
+        1g.10gb: 3.68
+    B200:
+      CodingAgent:
+        7g.160gb: 2.98
+        4g.80gb: 4.3
+        3g.80gb: 3.44
+        2g.45gb: 2.67
+        1g.45gb: 1.81
+        1g.23gb: 1.27
+      RAGAgent:
+        7g.160gb: 5.77
+        4g.80gb: 6.86
+        3g.80gb: 5.39
+        2g.45gb: 7.02
+        1g.45gb: 4.3
+        1g.23gb: 3.6
