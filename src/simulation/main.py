@@ -1,6 +1,6 @@
 import random
 import argparse
-from typing import Dict, List
+from typing import Dict, List, cast
 
 import src.simulation.models as m
 from src.simulation.request_loader import RequestLoader
@@ -8,7 +8,6 @@ from src.simulation.simulator import SimulatorImpl
 
 from src.training.models import TrainingPhase
 from src.training.rewards import compute_reward
-from src.simulation.mig_matrix import STATE_DEFINITIONS
 
 
 def main():
@@ -39,7 +38,7 @@ def main():
     )
 
     # For a quicker test we limit requests
-    max_steps = 200
+    max_steps = 1024
     sim.reset()
     sim.init_simulator(requests, max_steps)
     sim.run()  # advance to the first action interval
@@ -67,13 +66,25 @@ def main():
         # action = m.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         print("  GPU Geometry:")
-        for gpu_id, state_id in sim.gpu_current_state.items():
-            profiles = [p.name for p in STATE_DEFINITIONS[state_id]]
-            print(f"    GPU {gpu_id}: {profiles}")
+        for gpu_id, gpu_engines in sim.gpu_engines.items():
+            print(f"    GPU {gpu_id}: {[e.engine_id for e in gpu_engines]}")
         for aid in m.AgentId:
             print(
                 f" Agent {aid.value}: {[e.engine_id for e in sim.agents[aid].engines]}"
             )
+        state_data = sim.get_state()
+        avg_q = state_data["avg_queue_length"]
+        total_avg_q = sum(sum(v) for v in avg_q.values())
+        print(f"  Avg Queue Length: {total_avg_q:.2f}")
+        print(f"  Current Budget:   {sim._environment_state.current_budget:.2f}s")
+        for aid in m.AgentId:
+            cooldowns = {
+                k: sim._environment_state.get_steps_since(
+                    aid, cast(m.ActionHistoryKey, k)
+                )
+                for k in ["split", "merge", "give", "receive"]
+            }
+            print(f"    {aid.value} Cooldowns: {cooldowns}")
         for i, msk in enumerate(mask):
             print(f"  {list(m.ResourceManagerAction)[i].name}: {msk}")
 
@@ -81,15 +92,8 @@ def main():
         sim.handle_resource_manager_trigger(sim_action)
         sim.run()
 
-        # 2. Print State
-        state_data = sim.get_state()
-
-        avg_q = state_data["avg_queue_length"]
-        total_avg_q = sum(sum(v) for v in avg_q.values())
-        print(f"  Avg Queue Length: {total_avg_q:.2f}")
-
         reward = compute_reward(
-            state_data["requests"], action, sim.current_time, agents=sim.agents
+            state_data["requests"], action, sim.current_time, sim.gpu_engines
         )
         print(f"  Reward: {reward:.4f}")
 

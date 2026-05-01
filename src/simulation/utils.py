@@ -51,7 +51,21 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
     # Use a simple cache for now
     if cache_file.exists():
         with open(cache_file, "rb") as f:
-            return pickle.load(f)
+            tokens_map = pickle.load(f)
+
+            # Validate that all currently required models are in the cache
+            required_models = set()
+            for gpu_id in GPU_AGENTS_CONFIG:
+                for agent_cfg in GPU_AGENTS_CONFIG[gpu_id].values():
+                    for mig_cfg in agent_cfg["mig"].values():
+                        required_models.add(mig_cfg["model"])
+
+            all_cached_models = set()
+            for agent_map in tokens_map.values():
+                all_cached_models.update(agent_map.keys())
+
+            if required_models.issubset(all_cached_models):
+                return tokens_map
 
     tokens_map: TokensMapType = {}
 

@@ -1,0 +1,4 @@
+model: "Qwen/Qwen3-Coder-Next" # 80B
+max_model_len: 32767
+max_num_batched_tokens: 2048
+gpu_memory_utilization: 0.9

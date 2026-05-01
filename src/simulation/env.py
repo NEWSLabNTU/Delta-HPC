@@ -157,7 +157,7 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         current_time: float,
     ) -> float:
         enum_action = list(m.ResourceManagerAction)[action]
-        return compute_reward(reqs, enum_action, current_time, agents=self.sim.agents)
+        return compute_reward(reqs, enum_action, current_time, self.sim.gpu_engines)
 
     def _is_action_valid(self, action: int) -> bool:
         return self._current_action_mask[action]

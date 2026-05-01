@@ -625,6 +625,10 @@ class Simulator(ABC):
 
     @property
     @abstractmethod
+    def gpu_engines(self) -> Dict[int, List[LLMEngine]]: ...
+
+    @property
+    @abstractmethod
     def interval_requests(self) -> Dict[AgentId, List[Request]]: ...
 
     @abstractmethod

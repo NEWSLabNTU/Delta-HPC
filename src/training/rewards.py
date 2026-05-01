@@ -1,47 +1,43 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List
+from src.simulation import utils
 
 import src.simulation.models as m
 from src.training.config import TRAINING_CONFIG
 
 
-def _compute_gpu_affinity_bonus(agents: Dict[m.AgentId, m.Agent]) -> float:
-    """
-    Computes GPU affinity bonus: Is_Pure(k) * bonus for each non-permanent GPU.
+def _compute_gpu_affinity_bonus(gpu_engines: Dict[int, List[m.LLMEngine]]) -> float:
+    agent_sm_gpu_num: Dict[m.AgentId, Dict[int, int]] = {
+        agent_id: {gpu: 0 for gpu in range(utils.SIM_CONFIG.num_managed_gpus)}
+        for agent_id in m.AgentId
+    }
 
-    Is_Pure(k) = 1 if GPU k is exclusively owned by one agent (all its active
-    MIG engines belong to a single agent), 0 otherwise. GPU 2 is excluded.
-    """
-    bonus_per_pure_gpu = TRAINING_CONFIG.gpu_affinity_bonus
+    for gpu_id, engines in gpu_engines.items():
+        for engine in engines:
+            if not engine.is_permanent:
+                agent_sm_gpu_num[engine.owner.agent_id][gpu_id] += (
+                    engine.mig_profile.size
+                )
 
-    # Collect the set of agent owners per GPU (excluding GPU 2)
-    gpu_owners: Dict[int, Set[m.AgentId]] = {}
-    for agent_id, agent in agents.items():
-        for e in agent.engines:
-            if e.is_permanent:
-                continue  # skip permanent GPU
-            gpu = e.gpu
-            if gpu not in gpu_owners:
-                gpu_owners[gpu] = set()
-            gpu_owners[gpu].add(agent_id)
-
-    affinity_bonus = 0.0
-    for owners in gpu_owners.values():
-        if len(owners) == 1:  # GPU is pure — owned by exactly one agent
-            affinity_bonus += bonus_per_pure_gpu
-
-    return affinity_bonus
+    bonus = 0.0
+    for gpu_stat in agent_sm_gpu_num.values():
+        total_sm = sum(gpu_stat.values())
+        if total_sm == 0:
+            continue
+        for n_sm in gpu_stat.values():
+            bonus += (n_sm / total_sm) ** 2
+    return bonus
 
 
 def compute_reward(
     requests: Dict[m.AgentId, List[m.Request]],
     action: m.ResourceManagerAction,
     current_time: float,
-    agents: Optional[Dict[m.AgentId, m.Agent]] = None,
+    gpu_engines: Dict[int, List[m.LLMEngine]],
     epsilon: float = 1e-9,
 ) -> float:
     w_t = TRAINING_CONFIG.w("ttft")
     w_p = TRAINING_CONFIG.w("tpot")
-    use_quality_bonus = TRAINING_CONFIG.quality_bonus
+    use_quality_bonus = TRAINING_CONFIG.use_quality_bonus
 
     # Omega(a_t): Penalty for taking an action
     omega = (
@@ -73,16 +69,16 @@ def compute_reward(
                 q_j = (
                     TRAINING_CONFIG.default_waiting_qj
                     if req.prefilled_tokens == 0
-                    else TRAINING_CONFIG.qf_logical(
-                        req.serving_engine.mig_profile.profile_type, agent_id
+                    else TRAINING_CONFIG.qf_concrete(
+                        req.serving_engine.mig_profile, agent_id
                     )
                 )
             else:
                 assert req.generated_tokens > 0
                 ttft = req.first_token_time - req.arrival_time
                 tpot = req.decode_time / req.generated_tokens
-                q_j = TRAINING_CONFIG.qf_logical(
-                    req.serving_engine.mig_profile.profile_type, agent_id
+                q_j = TRAINING_CONFIG.qf_concrete(
+                    req.serving_engine.mig_profile, agent_id
                 )
 
             if use_quality_bonus:
@@ -107,8 +103,8 @@ def compute_reward(
 
     # GPU affinity bonus
     affinity_bonus = 0.0
-    if agents is not None and TRAINING_CONFIG.gpu_affinity_bonus != 0:
-        affinity_bonus = _compute_gpu_affinity_bonus(agents)
+    if TRAINING_CONFIG.use_affinity_bonus:
+        affinity_bonus = _compute_gpu_affinity_bonus(gpu_engines)
 
     total_reward = (
         -total_penalty - omega + quality_bonus + affinity_bonus

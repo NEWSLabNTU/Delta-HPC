@@ -463,7 +463,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 s / c if c > 0 else 0.0 for s, c in zip(util_sums, counts)
             )
             perm_avg = perm_util_sum / perm_count if perm_count > 0 else 0.0
-            result[agent_id] = normal_avgs + (perm_avg,)  # type: ignore
+            result[agent_id] = normal_avgs + (perm_avg,)
         return result
 
     def _get_avg_composite_latency(
@@ -493,21 +493,19 @@ class EnvironmentStateImpl(m.EnvironmentState):
                 if req.serving_engine is None:
                     continue
                 visited += 1
-                mig_obj = req.serving_engine.mig_profile
-                # q_j depends on GPU and logical type
-                q_j = TRAINING_CONFIG.qf_logical(mig_obj.profile_type, agent_id)
-
                 ttft = (req.first_token_time or req.arrival_time) - req.arrival_time
                 tpot = (
                     req.decode_time / req.generated_tokens
                     if req.generated_tokens > 0
                     else 0.0
                 )
-                composite = (w_t * ttft + w_p * tpot) / q_j
+                composite = w_t * ttft + w_p * tpot
                 if req.serving_engine.is_permanent:
                     perm_latencies.append(composite)
                 else:
-                    stats.mig_composite_latencies[mig_obj.idx].append(composite)
+                    stats.mig_composite_latencies[
+                        req.serving_engine.mig_profile.idx
+                    ].append(composite)
 
             # Raw averages for each MIG profile slot + permanent slot
             num_logical = len(m.MIGProfile)
@@ -528,7 +526,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             else:
                 pct_avgs = tuple(0.0 for _ in raw_avgs)
 
-            result[agent_id] = pct_avgs  # type: ignore
+            result[agent_id] = pct_avgs
         return result, raw_totals
 
     def _get_agent_owns_mig(
@@ -543,7 +541,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             for e in agent.engines:
                 if e.status != m.EngineStatus.BOOTING and not e.is_permanent:
                     counts[e.mig_profile.idx] += 1
-            result[agent_id] = tuple(c / divisor for c in counts)  # type: ignore
+            result[agent_id] = tuple(c / divisor for c in counts)
         return result
 
     def _get_mig_geometry(

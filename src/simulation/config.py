@@ -272,9 +272,6 @@ class SimulationConfig:
             "model"
         ]
 
-    def get_dataset(self, agent: m.AgentId, gpu_id: int = 0) -> str:
-        return GPU_AGENTS_CONFIG[gpu_id][agent.value]["dataset"]
-
     def get_restart_time(
         self, agent: m.AgentId, mig_profile: m.MIGProfileBase, gpu_id: int = 0
     ) -> float:

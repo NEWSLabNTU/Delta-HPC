@@ -186,25 +186,20 @@ class TrainingConfig:
     def refresh_period(self) -> float:
         return self._data["reconfig"]["refresh"] * 60
 
-    def qf_logical(self, profile_type: m.MIGProfile, agent_id: m.AgentId) -> float:
-        # Map logical MIGProfile to the keys in training_config.yaml
-        mapping = {
-            m.MIGProfile.MIG_7G: "7",
-            m.MIGProfile.MIG_4G: "4",
-            m.MIGProfile.MIG_3G: "3",
-            m.MIGProfile.MIG_2G: "2",
-            m.MIGProfile.MIG_1G_LARGE: "1L",
-            m.MIGProfile.MIG_1G_SMALL: "1S",
-        }
-        key = mapping.get(profile_type)
-        if key not in self._data["reward"]["Q"][agent_id.value]:
-            # Fallback or error if missing
-            return self.default_waiting_qj
-        return self._data["reward"]["Q"][agent_id.value][key]
+    def qf_concrete(self, mig_obj: m.MIGProfileBase, agent_id: m.AgentId) -> float:
+        """Retrieve the Quality Factor (Q) for a concrete MIG profile."""
+        key = mig_obj.string
+        try:
+            return self._data["reward"]["Q"][agent_id.value][key]
+        except KeyError:
+            raise ValueError(
+                f"Missing Q-value for profile {key} (GPU: {mig_obj.gpu_model}) and agent {agent_id.value}. "
+                f"Please define it in configs/training_config.yaml"
+            )
 
     def qf(self, mig_obj: m.MIGProfileBase, agent_id: m.AgentId) -> float:
-        """Deprecated: use qf_logical instead."""
-        return self.qf_logical(mig_obj.profile_type, agent_id)
+        """Alias for qf_concrete."""
+        return self.qf_concrete(mig_obj, agent_id)
 
     def alpha(self, agent: m.AgentId) -> float:
         return self._data["reward"]["alpha"][agent.value]
@@ -226,12 +221,12 @@ class TrainingConfig:
         return self._data["reward"]["clipping"]
 
     @property
-    def quality_bonus(self) -> bool:
-        return self._data["reward"].get("quality_bonus", False)
+    def use_quality_bonus(self) -> bool:
+        return self._data["reward"].get("use_quality_bonus", False)
 
     @property
-    def gpu_affinity_bonus(self) -> float:
-        return float(self._data["reward"].get("gpu_affinity_bonus", 5.0))
+    def use_affinity_bonus(self) -> bool:
+        return self._data["reward"].get("use_affinity_bonus", False)
 
     @property
     def total_timesteps(self) -> int:

@@ -68,6 +68,10 @@ class SimulatorImpl(m.Simulator):
     def interval_requests(self) -> Dict[m.AgentId, List[m.Request]]:
         return self._environment_state.interval_requests
 
+    @property
+    def gpu_engines(self) -> Dict[int, List[m.LLMEngine]]:
+        return self._gpu_engines
+
     def need_requests_replenish(self) -> List[m.AgentId]:
         return [
             aid
