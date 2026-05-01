@@ -19,10 +19,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import src.simulation.models as m
 from src.simulation.request_loader import RequestLoader
 from src.simulation.agent import AgentImpl
-from src.simulation.engine import LLMEngineImpl
 from src.simulation.simulator import SimulatorImpl
-import src.simulation.utils as utils
-from src.simulation.config import GPU_MIG_PROFILE
 from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
 from src.training.callbacks import (
@@ -121,27 +118,6 @@ def train(ckpt: Optional[Path] = None) -> None:
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
         agents[aid] = AgentImpl(aid)
-
-    for eng_conf in utils.SIM_CONFIG.initial_state:
-        gpu = int(eng_conf["gpu"])
-        mig = GPU_MIG_PROFILE[gpu].from_string(eng_conf["mig"])
-        agent_name = eng_conf["agent"]
-        agent = agents[m.AgentId(agent_name)]
-        eid = utils.generate_engine_id(gpu, mig.string)
-
-        is_permanent = eng_conf.get("is-permanent", False)
-        eng = LLMEngineImpl.create(
-            gpu=gpu,
-            engine_id=eid,
-            owner=agent,
-            mig_profile=mig,
-            current_time=0.0,
-            mig_index=-1,  # To be set in sim.reset()
-            is_permanent=is_permanent,
-        )
-
-        agent.add_engine(eng)
-        engines[eid] = eng
 
     sim = SimulatorImpl(
         agents=agents,

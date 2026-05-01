@@ -1,3 +1,4 @@
+import os
 import yaml
 import copy
 import argparse
@@ -121,8 +122,10 @@ def main():
         snapshot_path = Path(f"snapshots/{timestamp}/training_config.yaml")
         save_yaml(config_copy, snapshot_path)
 
+        cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
         cmd_str = (
             f"cd /home/yclo/Delta-HPC && source .venv/bin/activate && "
+            f"export CUDA_VISIBLE_DEVICES='{cuda_devices}' && "
             f"export TRAINING_CONFIG_PATH='{snapshot_path}' && "
             f"export TRAINING_RUN_ID='{timestamp}' && "
             f"python -m src.training.train; bash"

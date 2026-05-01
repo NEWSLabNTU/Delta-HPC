@@ -25,13 +25,13 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.sim = simulator
         self.action_space = spaces.Discrete(len(m.ResourceManagerAction))
 
-        # State Space: Flattened dictionary metrics
-        history_len = TRAINING_CONFIG.arrival_rate_history_length
-        # Agents: 2 agents
-        # Per Agent: 61 + history_len features (Removed n_mig)
-        per_agent_features = 61 + history_len
-        # Global Metrics: 15 + 30 (one-hot) + 14 (grid) = 59 features
-        total_features = 2 * per_agent_features + 59
+        # Ensure simulator is in a valid state before measuring observations
+        self.sim.reset()
+
+        # State Space: Dynamically determined based on a sample observation
+        sample_state = self.sim.get_state()
+        sample_obs = self._get_obs(sample_state)
+        total_features = len(sample_obs)
 
         self.observation_space = spaces.Box(
             low=-np.inf,

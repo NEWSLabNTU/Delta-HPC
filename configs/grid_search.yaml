@@ -1,6 +1,5 @@
 training:
   reward:
-    gamma:
-      - 10.0
-      - 15.0
-      - 20.0
+    use_affinity_bonus:
+      - true
+      - false

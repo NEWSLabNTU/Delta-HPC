@@ -1,6 +1,6 @@
 training:
   phase: 2
-  tmux_session: "hpc-71-actions-sameQ"
+  tmux_session: "hpc-full-actions-b200"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -57,21 +57,21 @@ training:
   action_mask:
     action_cooldown: 10
   patterns:
-    busy:
-      duration: [ 2200.0, 2600.0 ]
-      rate:
-        CodingAgent: [ 3.0, 4.0 ]
-        RAGAgent: [ 4.5, 5.5 ]
     idle:
-      duration: [ 2200.0, 2600.0 ]
+      duration: [ 3600.0, 4800.0 ]
       rate:
         CodingAgent: [ 0.2, 0.5 ]
         RAGAgent: [ 0.1, 0.5 ]
     even:
-      duration: [ 2200.0, 2600.0 ]
+      duration: [ 1800.0, 2200.0 ]
       rate:
         CodingAgent: [ 1.0, 2.5 ]
         RAGAgent: [ 1.0, 2.0 ]
+    busy:
+      duration: [ 1800.0, 2200.0 ]
+      rate:
+        CodingAgent: [ 3.0, 4.0 ]
+        RAGAgent: [ 4.5, 5.5 ]
     burst:
       duration: [ 300.0, 700.0 ] # Short duration (3-6 steps)
       rate:

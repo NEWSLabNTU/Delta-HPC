@@ -4,7 +4,7 @@ export PATH := ".venv/bin:" + env("PATH")
 
 # Replace with your GPU id
 
-gpu := "MIG-9ac89393-4759-5270-8347-c8e1b56d4df7"
+gpu := "1"
 
 test-env:
     which python
