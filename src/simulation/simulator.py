@@ -981,10 +981,17 @@ class SimulatorImpl(m.Simulator):
                     )
                     mask[act_id] = has_mig
                 else:
-                    # It's a state + transition. The transfer MIG must be in the target state.
-                    assert trans_mig in STATE_DEFINITIONS[target_sid], (
-                        f"Transfer MIG {trans_mig} not in target state {target_sid}"
-                    )
+                    # It's a state + transition. The transfer MIG must be one of the results of the split/merge.
+                    target_profiles = STATE_DEFINITIONS[target_sid]
+                    resulting_profiles = [
+                        target_profiles[idx]
+                        for idx in TRANSITION_MATRIX[
+                            (current_sid, target_sid)
+                        ].mig_target
+                    ]
+                    if trans_mig not in resulting_profiles:
+                        mask[act_id] = False
+                        continue
                     mask[act_id] = True
             else:
                 # Pure state transition
@@ -1045,13 +1052,14 @@ class SimulatorImpl(m.Simulator):
         receiver = None
         if trans_mig:
             # Find which index in the target state profile list matches trans_mig
+            # Must be one of the resulting MIGs
             found_idx = -1
-            for idx in range(len(STATE_DEFINITIONS[target_sid])):
+            for idx in transition_action.mig_target:
                 if STATE_DEFINITIONS[target_sid][idx] == trans_mig:
                     found_idx = idx
                     break
             assert found_idx != -1, (
-                f"Transfer MIG {trans_mig} not found in target state {target_sid}"
+                f"Transfer MIG {trans_mig} not found in target results of state {target_sid}"
             )
 
             # Giver is the owner of the source engines (we checked they are same in masking)
