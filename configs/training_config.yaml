@@ -1,6 +1,6 @@
 training:
   phase: 2
-  tmux_session: "hpc-full-actions-b200"
+  tmux_session: "hpc-full-actions-b200-w"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -119,3 +119,4 @@ training:
     clipping: -30
     use_quality_bonus: true
     use_affinity_bonus: true
+    affinity_bonus_weight: 0.5

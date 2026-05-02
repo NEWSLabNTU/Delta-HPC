@@ -229,6 +229,10 @@ class TrainingConfig:
         return self._data["reward"].get("use_affinity_bonus", False)
 
     @property
+    def affinity_bonus_weight(self) -> float:
+        return float(self._data["reward"].get("affinity_bonus_weight", 1.0))
+
+    @property
     def total_timesteps(self) -> int:
         return self._data["total_timesteps"]
 

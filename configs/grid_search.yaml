@@ -1,5 +1,5 @@
 training:
   reward:
-    use_affinity_bonus:
-      - true
-      - false
+    affinity_bonus_weight:
+      - 0.1
+      - 0.5

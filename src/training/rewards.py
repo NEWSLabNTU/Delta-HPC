@@ -104,7 +104,10 @@ def compute_reward(
     # GPU affinity bonus
     affinity_bonus = 0.0
     if TRAINING_CONFIG.use_affinity_bonus:
-        affinity_bonus = _compute_gpu_affinity_bonus(gpu_engines)
+        affinity_bonus = (
+            _compute_gpu_affinity_bonus(gpu_engines)
+            * TRAINING_CONFIG.affinity_bonus_weight
+        )
 
     total_reward = (
         -total_penalty - omega + quality_bonus + affinity_bonus
