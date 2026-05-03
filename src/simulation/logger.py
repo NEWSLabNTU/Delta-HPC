@@ -1,4 +1,5 @@
 import json
+import os
 import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -7,13 +8,20 @@ import src.simulation.models as m
 
 
 class SimulationLoggerImpl(m.SimulationLogger):
-    def __init__(self, log_dir: str = "./logs", enabled: bool = True):
-        self.log_dir = Path(log_dir)
+    def __init__(self, log_dir: Optional[str] = None, enabled: bool = True):
         self.enabled = enabled
         self.buffer: List[str] = []
         self.buffer_size = 1000
+        
         if not self.enabled:
             return
+
+        if log_dir is None:
+            run_id = os.environ.get("TRAINING_RUN_ID")
+            assert run_id is not None, "TRAINING_RUN_ID must be set in environment"
+            log_dir = f"results/{run_id}/logs/sim"
+
+        self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         # Use datetime to create a unique file name
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

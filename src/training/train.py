@@ -17,9 +17,10 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 import src.simulation.models as m
-from src.simulation.request_loader import RequestLoader
 from src.simulation.agent import AgentImpl
+from src.simulation.env import BaseMIGResourceEnv
 from src.simulation.simulator import SimulatorImpl
+from src.simulation.request_loader import RequestLoader
 from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
 from src.training.callbacks import (
@@ -28,12 +29,47 @@ from src.training.callbacks import (
     LogCleanupCallback,
 )
 
-from src.simulation.env import BaseMIGResourceEnv
+
+import yaml
+import shutil
 
 
-TRAINING_RUN_ID = os.environ.get(
-    "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
-)
+def setup_training_environment() -> str:
+    run_id = os.environ.get(
+        "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
+    )
+    os.environ["TRAINING_RUN_ID"] = run_id
+
+    # Setup results directory
+    results_dir = Path(f"results/{run_id}")
+    snapshots_dir = results_dir / "snapshots"
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    # Handle snapshotting config
+    config_path_env = os.environ.get(
+        "TRAINING_CONFIG_PATH", "configs/training_config.yaml"
+    )
+    config_path = Path(config_path_env)
+    snapshot_path = snapshots_dir / "training_config.yaml"
+
+    if config_path.resolve() != snapshot_path.resolve():
+        if not snapshot_path.exists():
+            shutil.copy2(config_path, snapshot_path)
+        os.environ["TRAINING_CONFIG_PATH"] = str(snapshot_path)
+
+    # Update simulation_config.yaml cluster
+    with open(snapshot_path, "r") as f:
+        training_data = yaml.safe_load(f)
+
+    with open("configs/simulation_config.yaml", "r") as f:
+        sim_data = yaml.safe_load(f)
+
+    sim_data["simulation"]["cluster"] = training_data["training"]["cluster"]
+
+    with open("configs/simulation_config.yaml", "w") as f:
+        yaml.dump(sim_data, f, default_flow_style=False)
+
+    return run_id
 
 
 class TrainingMIGResourceEnv(BaseMIGResourceEnv):
@@ -46,8 +82,9 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
         super().__init__(simulator)
         self.episode_count: int = 0
         self.max_steps: int = TRAINING_CONFIG.episode_length
+        run_id = os.environ["TRAINING_RUN_ID"]
         self._logger = TrainingLogger(
-            log_dir=f"logs/train/{TRAINING_RUN_ID}", enabled=enable_log
+            log_dir=f"results/{run_id}/logs/train", enabled=enable_log
         )
         self.request_loader = RequestLoader()
 
@@ -111,9 +148,10 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
         return self._get_obs(state_data), {}
 
 
-def train(ckpt: Optional[Path] = None) -> None:
+def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
     phase = TRAINING_CONFIG.phase
-    run_name = f"{TRAINING_RUN_ID}_phase_{phase.value}"
+    run_id = run_id or os.environ["TRAINING_RUN_ID"]
+    run_name = f"{run_id}_phase_{phase.value}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
@@ -172,7 +210,7 @@ def train(ckpt: Optional[Path] = None) -> None:
         print(f"Loading model from checkpoint: {ckpt}")
         custom_objects: Dict[str, Any] = {
             "learning_rate": lr_schedule,
-            "tensorboard_log": f"./tboard/actives/{run_name}",
+            "tensorboard_log": f"results/{run_id}/tboards/{run_name}",
         }
         model = MaskablePPO.load(  # type: ignore
             ckpt,
@@ -181,7 +219,7 @@ def train(ckpt: Optional[Path] = None) -> None:
             custom_objects=custom_objects,
         )
         # Ensure tensorboard logger is properly setup for the new run
-        model.tensorboard_log = f"./tboard/actives/{run_name}"
+        model.tensorboard_log = f"results/{run_id}/tboards/{run_name}"
     else:
         model = MaskablePPO(
             "MlpPolicy",
@@ -200,18 +238,20 @@ def train(ckpt: Optional[Path] = None) -> None:
             if not TRAINING_CONFIG.rl_enable_ent_coef_schd
             else TRAINING_CONFIG.rl_max_ent_coef,
             device="cuda",
-            tensorboard_log=f"./tboard/actives/{run_name}",
+            tensorboard_log=f"results/{run_id}/tboards/{run_name}",
         )
 
     # 3. Setup Callbacks
     checkpoint_callback = CheckpointCallback(
-        save_freq=5120, save_path=f"./ckpts/{run_name}"
+        save_freq=5120, save_path=f"results/{run_id}/ckpts/{run_name}"
     )
     log_cleanup_callback = LogCleanupCallback(raw_env.logger)
     cb_list: List[BaseCallback] = [checkpoint_callback, log_cleanup_callback]
     if TRAINING_CONFIG.sb3_norm:
         cb_list.append(
-            SaveVecNormalizeCallback(save_freq=5120, save_path=f"./ckpts/{run_name}")
+            SaveVecNormalizeCallback(
+                save_freq=5120, save_path=f"results/{run_id}/ckpts/{run_name}"
+            )
         )
     if TRAINING_CONFIG.rl_enable_ent_coef_schd:
         cb_list.append(
@@ -231,12 +271,12 @@ def train(ckpt: Optional[Path] = None) -> None:
     )
 
     # 5. Save the final model
-    model.save(f"./ckpts/{run_name}/ppo_mig_resource_manager")
+    model.save(f"results/{run_id}/ckpts/{run_name}/ppo_mig_resource_manager")
     if TRAINING_CONFIG.sb3_norm:
         vec_env = model.get_vec_normalize_env()
         if vec_env is not None:
             vec_env.save(
-                f"./ckpts/{run_name}/ppo_mig_resource_manager_vecnormalize.pkl"
+                f"results/{run_id}/ckpts/{run_name}/ppo_mig_resource_manager_vecnormalize.pkl"
             )
     print("Training Complete. Model Saved.")
 
@@ -251,4 +291,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    train(ckpt=args.ckpt)
+    run_id = setup_training_environment()
+    train(ckpt=args.ckpt, run_id=run_id)

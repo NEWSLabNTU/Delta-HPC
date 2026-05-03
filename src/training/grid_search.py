@@ -119,7 +119,7 @@ def main():
                 break
             time.sleep(0.001)
 
-        snapshot_path = Path(f"snapshots/{timestamp}/training_config.yaml")
+        snapshot_path = Path(f"results/{timestamp}/snapshots/training_config.yaml")
         save_yaml(config_copy, snapshot_path)
 
         cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")

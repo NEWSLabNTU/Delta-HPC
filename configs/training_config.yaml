@@ -1,4 +1,8 @@
 training:
+  cluster:
+    0: A100_40GB
+    1: B200
+    2: A100_40GB
   phase: 2
   tmux_session: "hpc-full-actions-b200-w"
   sb3_norm: true

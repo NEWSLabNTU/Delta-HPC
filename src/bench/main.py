@@ -1,8 +1,11 @@
-from typing import Any, Dict, List, Optional, Tuple, cast
 import os
+import yaml
 import datetime
 import argparse
+import io
+import contextlib
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import numpy as np
 from tqdm import tqdm
@@ -27,6 +30,19 @@ from src.bench.prints import (
 )
 from src.bench.heuristic import RuleBasedHeuristic
 
+def sync_bench_cluster_config():
+    # Sync cluster config from bench_config.yaml to simulation_config.yaml
+    with open("configs/bench_config.yaml", "r") as f:
+        _bench_data = yaml.safe_load(f)
+        
+    with open("configs/simulation_config.yaml", "r") as f:
+        _sim_data = yaml.safe_load(f)
+        
+    _sim_data["simulation"]["cluster"] = _bench_data["cluster"]
+    
+    with open("configs/simulation_config.yaml", "w") as f:
+        yaml.dump(_sim_data, f, default_flow_style=False)
+
 
 class BenchRunner:
     def __init__(
@@ -46,6 +62,11 @@ class BenchRunner:
         self.venv: Optional[VecNormalize] = None
         self.obs: Any = None
         self.ckpt = ckpt
+        if ckpt and "results" in ckpt.parts:
+            idx = ckpt.parts.index("results")
+            self.run_id = ckpt.parts[idx + 1]
+        else:
+            self.run_id = f"bench_{self.mode.name.lower()}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         self._setup_execution(ckpt)
 
@@ -401,9 +422,7 @@ class BenchRunner:
 
     def _plot_timeline(self, stats: Dict[str, Any], ckpt: Optional[Path]):
         run_name = ckpt.stem if ckpt else self.mode.name
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        folder_name = f"{timestamp}_{run_name}"
-        save_dir = Path("fig") / folder_name
+        save_dir = Path(f"results/{self.run_id}/bench/figs/{run_name}")
         os.makedirs(save_dir, exist_ok=True)
 
         times = stats["timeline_time"]
@@ -620,6 +639,7 @@ class BenchRunner:
     ):
         """Phase 1 now simply runs multiple trials to verify random initialization stability."""
         results: List[Dict[str, Dict[str, Any]]] = []
+        runner = None
         for _ in range(5):  # Run 5 random trials
             runner = cls(
                 ckpt,
@@ -630,10 +650,17 @@ class BenchRunner:
             )
             results.append(runner.run())
 
-        # Note: print_matrix_metrics expects a matrix, but Phase 1 matrix is deprecated
-        # by mandatory randomization. We just print the last result for now or could
-        # extend reporting for random trials.
-        print_metrics(results[-1])
+        bench_dir = Path(f"results/{runner.run_id}/bench")
+        bench_dir.mkdir(parents=True, exist_ok=True)
+
+        f_out = io.StringIO()
+        with contextlib.redirect_stdout(f_out):
+            print_metrics(results[-1])
+
+        print(f_out.getvalue())
+        run_name = ckpt.stem if ckpt else mode.name
+        with open(bench_dir / f"results_{run_name}.txt", "w") as f:
+            f.write(f_out.getvalue())
 
     @classmethod
     def _run_phase_2_trial(
@@ -645,10 +672,22 @@ class BenchRunner:
     ):
         runner = cls(ckpt, Workload.HYBRID, mode, requests, phase_history)
         results = runner.run()
-        print_metrics(results)
+
+        bench_dir = Path(f"results/{runner.run_id}/bench")
+        bench_dir.mkdir(parents=True, exist_ok=True)
+
+        f_out = io.StringIO()
+        with contextlib.redirect_stdout(f_out):
+            print_metrics(results)
+
+        print(f_out.getvalue())
+        run_name = ckpt.stem if ckpt else mode.name
+        with open(bench_dir / f"results_{run_name}.txt", "w") as f:
+            f.write(f_out.getvalue())
 
 
 def main():
+    sync_bench_cluster_config()
     BenchRunner.run_suite()
 
 

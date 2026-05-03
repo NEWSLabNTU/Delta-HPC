@@ -1,4 +1,8 @@
 phase: 2
+cluster:
+  0: A100_40GB
+  1: B200
+  2: A100_40GB
 seed: 32
 benchmark-length: 1024
 workloads:
