@@ -1,5 +1,5 @@
 from typing import Dict, List
-from src.simulation import utils
+
 
 import src.simulation.models as m
 from src.training.config import TRAINING_CONFIG
@@ -7,7 +7,7 @@ from src.training.config import TRAINING_CONFIG
 
 def _compute_gpu_affinity_bonus(gpu_engines: Dict[int, List[m.LLMEngine]]) -> float:
     agent_sm_gpu_num: Dict[m.AgentId, Dict[int, int]] = {
-        agent_id: {gpu: 0 for gpu in range(utils.SIM_CONFIG.num_managed_gpus)}
+        agent_id: {gpu: 0 for gpu in gpu_engines.keys()}
         for agent_id in m.AgentId
     }
 

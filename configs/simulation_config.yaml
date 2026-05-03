@@ -347,7 +347,7 @@ simulation:
           model: random
   cluster:
     0: A100_40GB
-    1: B200
+    1: A100_40GB
     2: A100_40GB
   initial_state:
     gpu_initial_agents:
@@ -358,7 +358,7 @@ simulation:
     permanent_engines:
     - agent: CodingAgent
       gpu: 2
-      mig: 4g.20gb
+      mig: 2g.10gb
     - agent: RAGAgent
       gpu: 2
-      mig: 3g.20gb
+      mig: 2g.10gb

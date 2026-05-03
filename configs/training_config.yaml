@@ -1,10 +1,10 @@
 training:
   cluster:
     0: A100_40GB
-    1: B200
-    2: A100_40GB
+    1: A100_40GB
+    2: A100_40GB # 1g.10gb permanent engine
   phase: 2
-  tmux_session: "hpc-full-actions-b200-w"
+  tmux_session: "hpc-manual-adjust"
   sb3_norm: true
   action-interval: 120.0 # seconds
   total_timesteps: 1024000
@@ -114,7 +114,7 @@ training:
         1g.45gb: 1.0
         1g.23gb: 1.0
     alpha:
-      CodingAgent: 1.1
+      CodingAgent: 1.0
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
@@ -123,4 +123,4 @@ training:
     clipping: -30
     use_quality_bonus: true
     use_affinity_bonus: true
-    affinity_bonus_weight: 0.5
+    affinity_bonus_weight: 0.1

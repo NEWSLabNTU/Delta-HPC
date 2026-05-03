@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Any, Type
+from typing import Dict, List, Any, Type, Literal
 
 import random
 import yaml
@@ -36,7 +36,11 @@ class SimulationConfig:
 
     def __post_init__(self):
         # Store the permanent engines from YAML
-        self._base_engines = self.initial_state.copy()
+        self._base_engines = []
+        for e in self.initial_state:
+            new_e = e.copy()
+            new_e["is-permanent"] = True
+            self._base_engines.append(new_e)
 
     @property
     def num_managed_gpus(self) -> int:
@@ -127,13 +131,94 @@ class SimulationConfig:
             model=data["model"],
         )
 
+    def _pad_partial_gpu_states(
+        self, new_state: List[Dict[str, Any]], mode: Literal["random", "no_mig", "split_extreme"]
+    ) -> None:
+        """
+        Takes the current permanent engines in `new_state` and checks if they form 
+        strict subsets of valid GPU hardware states. If so, pads them to a full state.
+        Raises ValueError if the combination is physically impossible.
+        """
+        gpu_to_engines = {}
+        for e in new_state:
+            gpu_id = e["gpu"]
+            gpu_to_engines.setdefault(gpu_id, []).append(e)
+
+        for gpu_id, engines in gpu_to_engines.items():
+            logical_profiles = []
+            for e in engines:
+                mig_str = e["mig"]
+                hw_prof = next(p for p in GPU_MIG_PROFILE[gpu_id] if p.string == mig_str)
+                logical_profiles.append(hw_prof.profile_type)
+
+            logical_profiles_sorted = sorted(logical_profiles, key=lambda x: x.value, reverse=True)
+            valid_combos = GPU_VALID_COMBINATIONS[gpu_id]
+
+            exact_match = False
+            for combo in valid_combos:
+                if sorted(list(combo), key=lambda x: x.value, reverse=True) == logical_profiles_sorted:
+                    exact_match = True
+                    break
+
+            if exact_match:
+                continue
+
+            supersets = []
+            for combo in valid_combos:
+                combo_list = list(combo)
+                is_subset = True
+                for lp in set(logical_profiles):
+                    if logical_profiles.count(lp) > combo_list.count(lp):
+                        is_subset = False
+                        break
+                if is_subset:
+                    supersets.append(combo)
+
+            if not supersets:
+                raise ValueError(
+                    f"GPU {gpu_id} permanent engines {logical_profiles} do not form a valid hardware state subset. "
+                    f"Check NVIDIA MIG specifications or STATE_DEFINITIONS."
+                )
+
+            if mode == "no_mig":
+                chosen_combo = min(supersets, key=lambda c: len(c))
+            elif mode == "split_extreme":
+                chosen_combo = max(supersets, key=lambda c: len(c))
+            else:
+                chosen_combo = random.choice(supersets)
+
+            chosen_list = list(chosen_combo)
+            for lp in logical_profiles:
+                chosen_list.remove(lp)
+
+            agent_names = self.gpu_initial_agents.get(gpu_id, [])
+            if not agent_names:
+                agent_names = list(GPU_AGENTS_CONFIG[gpu_id].keys())
+                
+            for lp in chosen_list:
+                hw_prof = next(p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == lp)
+                valid_agents = [
+                    aname for aname in agent_names
+                    if aname in GPU_AGENTS_CONFIG[gpu_id]
+                    and hw_prof.string in GPU_AGENTS_CONFIG[gpu_id][aname]["mig"]
+                ]
+                if not valid_agents:
+                    raise ValueError(f"No valid agent to pad profile {hw_prof.string} on GPU {gpu_id}")
+                
+                agent_name = random.choice(valid_agents)
+                new_state.append({
+                    "gpu": gpu_id,
+                    "mig": hw_prof.string,
+                    "agent": agent_name,
+                    "is-permanent": True,
+                    "is-unused": True,
+                })
+
     def generate_initial_state(self) -> None:
         """
         Initializes the initial_state list with a random valid combination for each GPU.
         """
         new_state = [e.copy() for e in self._base_engines]
-        for e in new_state:
-            e["is-permanent"] = True
 
         occupied_gpus = {e["gpu"] for e in new_state}
 
@@ -172,6 +257,7 @@ class SimulationConfig:
                         "is-permanent": False,
                     }
                 )
+        self._pad_partial_gpu_states(new_state, mode="random")
         self.initial_state = new_state
 
     def generate_no_mig_initial_state(self) -> None:
@@ -180,8 +266,6 @@ class SimulationConfig:
         Used by the STATIC_NO_MIG baseline.
         """
         new_state = [e.copy() for e in self._base_engines]
-        for e in new_state:
-            e["is-permanent"] = True
 
         occupied_gpus = {e["gpu"] for e in new_state}
 
@@ -216,6 +300,7 @@ class SimulationConfig:
                     "is-permanent": False,
                 }
             )
+        self._pad_partial_gpu_states(new_state, mode="no_mig")
         self.initial_state = new_state
 
     def generate_split_extreme_initial_state(self) -> None:
@@ -225,8 +310,6 @@ class SimulationConfig:
         Used by the STATIC_SPLIT_EXTREME baseline.
         """
         new_state = [e.copy() for e in self._base_engines]
-        for e in new_state:
-            e["is-permanent"] = True
 
         occupied_gpus = {e["gpu"] for e in new_state}
 
@@ -263,6 +346,7 @@ class SimulationConfig:
                         "is-permanent": False,
                     }
                 )
+        self._pad_partial_gpu_states(new_state, mode="split_extreme")
         self.initial_state = new_state
 
     def get_model(

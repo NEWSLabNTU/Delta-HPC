@@ -871,7 +871,8 @@ class SimulatorImpl(m.Simulator):
                 mig_index=-1,  # Fixed later
                 is_permanent=is_permanent,
             )
-            agent.add_engine(eng)
+            if not eng_conf.get("is-unused", False):
+                agent.add_engine(eng)
             self._engines[eid] = eng
 
         # Step 3: Identify state and fix mig_index
