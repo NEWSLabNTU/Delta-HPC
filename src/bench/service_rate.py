@@ -10,6 +10,7 @@ import src.simulation.models as m
 from src.simulation.request import RequestImpl
 import src.simulation.utils as utils
 import src.simulation.config as config
+from src.simulation.mig_matrix import STATE_DEFINITIONS
 
 
 def check_rate(
@@ -35,29 +36,76 @@ def check_rate(
         req.arrival_time = idx / rate
         requests.append(req)
 
-    agent = AgentImpl(agent_id)
-    eid = utils.generate_engine_id(gpu_id, hw_mig.string)
-    engine = LLMEngineImpl.create(
-        gpu=gpu_id,
-        engine_id=eid,
-        owner=agent,
-        mig_profile=hw_mig,
-        current_time=0.0,
-        mig_index=0,
-        is_permanent=True,
-    )
-    agent.add_engine(engine)
+    # Find a valid state in STATE_DEFINITIONS that contains the target profile
+    target_sid = -1
+    for sid, defs in STATE_DEFINITIONS.items():
+        if hw_mig.profile_type in defs:
+            target_sid = sid
+            break
+    assert target_sid != -1, f"No state found containing {hw_mig.profile_type}"
 
+    target_profiles = STATE_DEFINITIONS[target_sid]
+
+    # Initialize all agents
     agents: Dict[m.AgentId, m.Agent] = {aid: AgentImpl(aid) for aid in m.AgentId}
-    agents[agent_id] = agent
 
-    sim = SimulatorImpl(agents=agents, engines={eid: engine}, no_log=True)
-    sim.add_arrival_events(requests)
-    for e in sim.engines.values():
-        e.activate(sim.current_time)
+    # Identify which index in the state will be our "measured" engine
+    # We use the first matching profile index.
+    main_idx = -1
+    for i, p in enumerate(target_profiles):
+        if p == hw_mig.profile_type:
+            main_idx = i
+            break
 
-    while sim.run():
-        pass
+    engines: Dict[str, m.LLMEngine] = {}
+
+    for i, p in enumerate(target_profiles):
+        if i == main_idx:
+            curr_hw_mig = hw_mig
+            owner_id = agent_id
+        else:
+            # Find any hardware profile for this logical profile
+            curr_hw_mig = None
+            for hp in config.GPU_MIG_PROFILE[gpu_id]:
+                if hp.profile_type == p:
+                    curr_hw_mig = hp
+                    break
+            assert curr_hw_mig is not None
+            # Assign dummy owner (rotate agents to ensure they exist)
+            owner_id = (
+                m.AgentId.RAG if agent_id == m.AgentId.CODING else m.AgentId.CODING
+            )
+
+        eid = utils.generate_engine_id(gpu_id, curr_hw_mig.string)
+
+        eng = LLMEngineImpl.create(
+            gpu=gpu_id,
+            engine_id=eid,
+            owner=agents[owner_id],
+            mig_profile=curr_hw_mig,
+            current_time=0.0,
+            mig_index=i,
+            is_permanent=True,
+        )
+        engines[eid] = eng
+        agents[owner_id].add_engine(eng)
+
+    # Temporarily override SIM_CONFIG.cluster to only include the target GPU
+    # This prevents SimulatorImpl from trying to identify states for other GPUs
+    orig_cluster = utils.SIM_CONFIG.cluster
+    utils.SIM_CONFIG.cluster = {gpu_id: orig_cluster[gpu_id]}
+
+    try:
+        sim = SimulatorImpl(agents=agents, engines=engines, no_log=True)
+        sim.add_arrival_events(requests)
+        for e in sim.engines.values():
+            e.activate(sim.current_time)
+
+        while sim.run():
+            pass
+    finally:
+        # Restore original cluster config
+        utils.SIM_CONFIG.cluster = orig_cluster
 
     # We define "queuing happens" if the wait time in the queue grows continuously.
     last_10_percent = requests[-int(len(requests) * 0.1) :]

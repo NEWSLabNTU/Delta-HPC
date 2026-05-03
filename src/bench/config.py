@@ -58,8 +58,12 @@ class BenchConfig:
 
         return float(agent_rates.get(mig_str, 0.0))
 
-    def get_rate_range(self, workload: Workload) -> Tuple[float, float]:
+    def get_rate_range(
+        self, workload: Workload, agent_id: m.AgentId
+    ) -> Tuple[float, float]:
         cfg = self._workloads[workload.value]["rate"]
+        if isinstance(cfg, dict):
+            cfg = cfg[agent_id.value]
         return float(cfg[0]), float(cfg[1])
 
     def get_duration_range(self, workload: Workload) -> Tuple[float, float]:

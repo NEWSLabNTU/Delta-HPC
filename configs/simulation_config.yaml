@@ -1,6 +1,6 @@
 simulation:
   cluster:
-    0: B200
+    0: A100_40GB
     1: B200
     2: A100_40GB
 

@@ -4,55 +4,54 @@ benchmark-length: 1024
 workloads:
   idle:
     rate:
-    - 0.3
-    - 0.4
-    duration:
-    - 2300.0
-    - 2500.0
+      CodingAgent: [ 0.2, 0.5 ]
+      RAGAgent: [ 0.1, 0.5 ]
+    duration: [ 3600.0, 4800.0 ]
   even:
     rate:
-    - 0.9
-    - 1.1
-    duration:
-    - 2300.0
-    - 2500.0
+      CodingAgent: [ 1.0, 2.5 ]
+      RAGAgent: [ 1.0, 2.0 ]
+    duration: [ 1800.0, 2200.0 ]
   busy:
     rate:
-    - 3.9
-    - 4.1
-    duration:
-    - 2300.0
-    - 2500.0
+      CodingAgent: [ 3.0, 4.0 ]
+      RAGAgent: [ 4.5, 5.5 ]
+    duration: [ 1800.0, 2200.0 ]
+  burst:
+    rate:
+      CodingAgent: [ 4.0, 5.0 ]
+      RAGAgent: [ 6.0, 8.0 ]
+    duration: [ 300.0, 700.0 ]
 heuristic:
   utilization_factor: 0.8
   high_threshold: 1.1
   low_threshold: 0.5
   service_rates:
-    A100_40GB:
-      CodingAgent:
-        7g.40gb: 1.19
-        4g.20gb: 1.65
-        3g.20gb: 1.5
-        2g.10gb: 1.65
-        1g.10gb: 1.27
-      RAGAgent:
-        7g.40gb: 3.68
-        4g.20gb: 3.99
-        3g.20gb: 3.36
-        2g.10gb: 5.54
-        1g.10gb: 3.68
     B200:
       CodingAgent:
-        7g.160gb: 2.98
-        4g.80gb: 4.3
-        3g.80gb: 3.44
-        2g.45gb: 2.67
-        1g.45gb: 1.81
-        1g.23gb: 1.27
+        7g.180gb: 6.63
+        4g.90gb: 8.96
+        3g.90gb: 6.47
+        2g.45gb: 1.89
+        1g.45gb: 1.42
+        1g.23gb: 2.28
       RAGAgent:
-        7g.160gb: 5.77
-        4g.80gb: 6.86
-        3g.80gb: 5.39
-        2g.45gb: 7.02
-        1g.45gb: 4.3
-        1g.23gb: 3.6
+        7g.180gb: 6.55
+        4g.90gb: 9.12
+        3g.90gb: 6.71
+        2g.45gb: 5.46
+        1g.45gb: 3.44
+        1g.23gb: 3.83
+    A100_40GB:
+      CodingAgent:
+        7g.40gb: 1.03
+        4g.20gb: 1.73
+        3g.20gb: 1.5
+        2g.10gb: 1.81
+        1g.10gb: 1.34
+      RAGAgent:
+        7g.40gb: 3.21
+        4g.20gb: 3.6
+        3g.20gb: 3.05
+        2g.10gb: 5.46
+        1g.10gb: 3.52

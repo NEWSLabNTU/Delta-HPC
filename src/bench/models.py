@@ -14,6 +14,7 @@ class Workload(Enum):
     IDLE = "idle"
     EVEN = "even"
     BUSY = "busy"
+    BURST = "burst"
     HYBRID = "hybrid"
 
 

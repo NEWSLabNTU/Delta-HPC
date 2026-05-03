@@ -177,22 +177,26 @@ class BenchRunner:
         self, enum_action: m.ResourceManagerAction, stats: Dict[str, Any]
     ):
         if enum_action != m.ResourceManagerAction.NO_ACTION:
-            stats["timeline_actions"].append((self.env.sim.current_time, enum_action))
-            act_val = enum_action.value
-            match act_val:
-                case m.MigAction:
-                    if act_val.action == "split":
-                        stats["split_count"][act_val.victim] += 1
-                    elif act_val.action == "merge":
-                        stats["merge_count"][act_val.victim] += 1
+            # Map the high-level enum action to a concrete simulator action
+            action = self.env.sim.map_to_action(enum_action)
+            if action is None:
+                return
 
-                    # If it's a combined action, also count the transfer
-                    if act_val.receiver is not None:
-                        stats["transfer_count"][act_val.victim] += 1
-                case m.VramTransferAction:
-                    stats["transfer_count"][act_val.giver] += 1
-                case _:
-                    raise ValueError(f"Unknown action type: {enum_action}")
+            stats["timeline_actions"].append((self.env.sim.current_time, action))
+
+            # Identify the "giver" (victim of the structural change or source of transfer)
+            # In the current simulator, all source engines must have the same owner for split/merge.
+            eng = self.env.sim.gpu_engines[action.gpu_id][action.mig_src[0]]
+            arc_agent = eng.owner.agent_id
+
+            if action.action == m.ActionType.SPLIT:
+                stats["split_count"][arc_agent] += 1
+            elif action.action == m.ActionType.MERGE:
+                stats["merge_count"][arc_agent] += 1
+
+            # If there's a receiver, it's also a transfer
+            if action.receiver is not None:
+                stats["transfer_count"][arc_agent] += 1
 
     def _tick_step_stats(self, stats: Dict[str, Any]):
         assert self.env is not None
@@ -213,7 +217,7 @@ class BenchRunner:
             stats["queue_lengths_sum"][aid] += ql_sum
             for engine in agent.engines:
                 if not engine.is_permanent:
-                    stats["presence_by_mig"][aid][engine.mig_profile] += 1
+                    stats["presence_by_mig"][aid][engine.mig_profile.profile_type] += 1
 
         # Accumulate completed requests
         for aid, reqs in self.env.sim.interval_requests.items():
@@ -266,7 +270,9 @@ class BenchRunner:
                 for aid, agent in self.env.sim.agents.items():
                     for eng in agent.engines:
                         if not eng.is_permanent:
-                            stats["presence_by_mig"][aid][eng.mig_profile] += 1
+                            stats["presence_by_mig"][aid][
+                                eng.mig_profile.profile_type
+                            ] += 1
 
                 # Accumulate completions
                 for aid, reqs in self.env.sim.interval_requests.items():
@@ -407,7 +413,7 @@ class BenchRunner:
         coding_patterns = stats["timeline_pattern_coding"]
         rag_patterns = stats["timeline_pattern_rag"]
 
-        mapping = {"idle": 0, "even": 1, "busy": 2}
+        mapping = {"idle": 0, "even": 1, "busy": 2, "burst": 3}
         y_coding = [mapping[p] for p in coding_patterns]
         y_rag = [mapping[p] for p in rag_patterns]
 
@@ -427,37 +433,34 @@ class BenchRunner:
                 times, y_rag, label="RAGAgent", where="post", alpha=0.8, linewidth=3
             )
 
-            for t, enum_action in stats["timeline_actions"]:
-                val = enum_action.value
-                if isinstance(val, m.MigAction):
-                    if val.action == "split" and target_action == "split":
-                        plt.axvline(
-                            x=t,
-                            color="red",
-                            linestyle="--",
-                            alpha=0.9,
-                            linewidth=2,
-                            label="Split",
-                        )
-                    elif val.action == "merge" and target_action == "merge":
-                        plt.axvline(
-                            x=t,
-                            color="blueviolet",
-                            linestyle="--",
-                            alpha=0.9,
-                            linewidth=2,
-                            label="Merge",
-                        )
-                elif isinstance(val, m.VramTransferAction):
-                    if target_action == "transfer":
-                        plt.axvline(
-                            x=t,
-                            color="forestgreen",
-                            linestyle="--",
-                            alpha=0.9,
-                            linewidth=2,
-                            label="Transfer",
-                        )
+            for t, action in stats["timeline_actions"]:
+                if action.action == m.ActionType.SPLIT and target_action == "split":
+                    plt.axvline(
+                        x=t,
+                        color="red",
+                        linestyle="--",
+                        alpha=0.9,
+                        linewidth=2,
+                        label="Split",
+                    )
+                elif action.action == m.ActionType.MERGE and target_action == "merge":
+                    plt.axvline(
+                        x=t,
+                        color="blueviolet",
+                        linestyle="--",
+                        alpha=0.9,
+                        linewidth=2,
+                        label="Merge",
+                    )
+                elif action.receiver is not None and target_action == "transfer":
+                    plt.axvline(
+                        x=t,
+                        color="forestgreen",
+                        linestyle="--",
+                        alpha=0.9,
+                        linewidth=2,
+                        label="Transfer",
+                    )
 
             plt.yticks(list(mapping.values()), list(mapping.keys()))
             plt.xlabel("Simulation Time (sec)")

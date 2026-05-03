@@ -16,8 +16,6 @@ class BenchRequestLoader:
         self.phase_history: Dict[
             m.AgentId, List[PhaseHistoryType]
         ] = {}  # {agent_id: [ {pattern, avg_rate, duration} ]}
-        if workload != Workload.HYBRID:
-            self.min_rate, self.max_rate = BENCH_CONFIG.get_rate_range(workload)
 
     def generate_requests(
         self, agent_id: m.AgentId, start_time: float = 0.0, turn: int = 0
@@ -47,9 +45,11 @@ class BenchRequestLoader:
             while current_time < max_time:
                 # Pick a random workload phase
                 phase_workload = random.choice(
-                    [Workload.IDLE, Workload.EVEN, Workload.BUSY]
+                    [Workload.IDLE, Workload.EVEN, Workload.BUSY, Workload.BURST]
                 )
-                min_rate, max_rate = BENCH_CONFIG.get_rate_range(phase_workload)
+                min_rate, max_rate = BENCH_CONFIG.get_rate_range(
+                    phase_workload, agent_id
+                )
                 min_dur, max_dur = BENCH_CONFIG.get_duration_range(phase_workload)
 
                 duration = random.uniform(min_dur, max_dur)
@@ -90,10 +90,11 @@ class BenchRequestLoader:
                 )
         else:
             # Discrete workload
+            min_rate, max_rate = BENCH_CONFIG.get_rate_range(self.workload, agent_id)
             phase_start_time = current_time
             rates_in_phase = []
             while current_time < max_time:
-                rate = random.uniform(self.min_rate, self.max_rate)
+                rate = random.uniform(min_rate, max_rate)
                 rates_in_phase.append(rate)
                 current_time += random.expovariate(rate)
                 if current_time >= max_time:

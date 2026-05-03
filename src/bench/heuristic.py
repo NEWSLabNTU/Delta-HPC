@@ -1,9 +1,10 @@
 from typing import Dict
 
 import src.simulation.models as m
-import src.simulation.utils as utils
 from src.bench.config import BENCH_CONFIG
 from src.training.config import TRAINING_CONFIG
+from src.simulation.config import GPU_MIG_PROFILE
+from src.simulation.mig_matrix import STATE_DEFINITIONS
 
 
 class RuleBasedHeuristic:
@@ -61,71 +62,41 @@ class RuleBasedHeuristic:
             action: m.ResourceManagerAction,
         ) -> Dict[m.AgentId, float]:
             new_rates = service_rates.copy()
-            val = action.value
+            sim_action = sim.map_to_action(action)
+            if sim_action is None or sim_action.target_state_id is None:
+                return new_rates
 
-            if isinstance(val, m.VramTransferAction):
-                engine_to_shift = utils.MIG_RULES.get_best_exact_match(
-                    val.giver, val.mig, val.receiver, list(sim.engines.values())
+            gpu_id = sim_action.gpu_id
+
+            # 1. Remove service rates of source engines
+            for idx in sim_action.mig_src:
+                eng = sim.gpu_engines[gpu_id][idx]
+                new_rates[eng.owner.agent_id] -= BENCH_CONFIG.get_service_rate(
+                    eng.owner.agent_id, eng.mig_profile, gpu_id=gpu_id
                 )
-                if engine_to_shift:
-                    gpu_id = engine_to_shift.gpu
-                    giver_rate = BENCH_CONFIG.get_service_rate(
-                        val.giver, val.mig, gpu_id=gpu_id
-                    )
-                    receiver_rate = BENCH_CONFIG.get_service_rate(
-                        val.receiver, val.mig, gpu_id=gpu_id
-                    )
-                    new_rates[val.giver] -= giver_rate
-                    new_rates[val.receiver] += receiver_rate
 
-            elif isinstance(val, m.MigAction):
-                victim = val.victim
-                receiver = val.receiver
+            # 2. Add service rates of target engines
+            # Identify the "giver" (current owner of source engines)
+            giver_id = sim.gpu_engines[gpu_id][sim_action.mig_src[0]].owner.agent_id
 
-                if val.action == "split":
-                    best_split = utils.MIG_RULES.get_best_specific_split(
-                        sim.agents[victim], val.profiles
-                    )
-                    if best_split:
-                        eng, new_profiles = best_split
-                        new_rates[victim] -= BENCH_CONFIG.get_service_rate(
-                            victim, eng.mig_profile, gpu_id=eng.gpu
-                        )
-                        for p in new_profiles:
-                            if (
-                                receiver is not None
-                                and p.profile_type == val.transfer_profile
-                            ):
-                                new_rates[receiver] += BENCH_CONFIG.get_service_rate(
-                                    receiver, p, gpu_id=eng.gpu
-                                )
-                            else:
-                                new_rates[victim] += BENCH_CONFIG.get_service_rate(
-                                    victim, p, gpu_id=eng.gpu
-                                )
+            target_profiles = STATE_DEFINITIONS[sim_action.target_state_id]
+            for idx in sim_action.mig_target:
+                logical_profile = target_profiles[idx]
+                # Find corresponding hardware profile
+                hardware_profile = None
+                for hp in GPU_MIG_PROFILE[gpu_id]:
+                    if hp.profile_type == logical_profile:
+                        hardware_profile = hp
+                        break
+                assert hardware_profile is not None
 
-                elif val.action == "merge":
-                    best_merge = utils.MIG_RULES.get_best_specific_merge(
-                        sim.agents[victim], val.profiles
-                    )
-                    if best_merge:
-                        engs, new_profile = best_merge
-                        for eng in engs:
-                            new_rates[victim] -= BENCH_CONFIG.get_service_rate(
-                                victim, eng.mig_profile, gpu_id=eng.gpu
-                            )
+                owner_id = giver_id
+                if sim_action.receiver and sim_action.receiver.mig_idx == idx:
+                    owner_id = sim_action.receiver.receiver_id
 
-                        if (
-                            receiver is not None
-                            and new_profile.profile_type == val.transfer_profile
-                        ):
-                            new_rates[receiver] += BENCH_CONFIG.get_service_rate(
-                                receiver, new_profile, gpu_id=engs[0].gpu
-                            )
-                        else:
-                            new_rates[victim] += BENCH_CONFIG.get_service_rate(
-                                victim, new_profile, gpu_id=engs[0].gpu
-                            )
+                new_rates[owner_id] += BENCH_CONFIG.get_service_rate(
+                    owner_id, hardware_profile, gpu_id=gpu_id
+                )
 
             for aid in m.AgentId:
                 new_rates[aid] = max(0.0, new_rates[aid])

@@ -1,11 +1,24 @@
 import tabulate
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 import src.simulation.models as m
 import src.simulation.utils as utils
 from src.bench.models import BenchMode, Workload
 from src.bench.config import BENCH_CONFIG
 from src.training.models import TrainingPhase
+
+
+def get_mig_name(mig: Union[m.MIGProfile, m.MIGProfileBase]) -> str:
+    profile = mig.profile_type if isinstance(mig, m.MIGProfileBase) else mig
+    mapping = {
+        m.MIGProfile.MIG_7G: "7G",
+        m.MIGProfile.MIG_4G: "4G",
+        m.MIGProfile.MIG_3G: "3G",
+        m.MIGProfile.MIG_2G: "2G",
+        m.MIGProfile.MIG_1G_LARGE: "1L",
+        m.MIGProfile.MIG_1G_SMALL: "1S",
+    }
+    return mapping[profile]
 
 
 def print_banner(mode: BenchMode, running_id: str):
@@ -35,20 +48,26 @@ def print_metrics(results: Dict[str, Any]):
         smt_str = f"{metrics['split_count']}/{metrics['merge_count']}/{metrics['transfer_count']}"
 
         mig_existence: List[str] = []
-        for mig in sorted(
-            metrics["mig_existence_percentages"].keys(), key=lambda m: m.size
-        ):
+        # Sort by logical profile index (7G=0, ..., 1S=5)
+        sorted_migs = sorted(
+            metrics["mig_existence_percentages"].keys(),
+            key=lambda x: x.idx if hasattr(x, "idx") else x.value,
+        )
+        for mig in sorted_migs:
             val = metrics["mig_existence_percentages"][mig]
-            mig_existence.append(f"{mig.size}g: {val:.1f}%")
+            name = get_mig_name(mig)
+            mig_existence.append(f"{name}: {val:.1f}%")
         existence_str = "\n".join(mig_existence)
 
         overall_token_mig: List[str] = []
-        for mig in sorted(
+        sorted_token_migs = sorted(
             metrics["overall_token_mig_percentages"].keys(),
-            key=lambda m: m.size,
-        ):
+            key=lambda x: x.idx if hasattr(x, "idx") else x.value,
+        )
+        for mig in sorted_token_migs:
             val = metrics["overall_token_mig_percentages"][mig]
-            overall_token_mig.append(f"{mig.size}g: {val:.1f}%")
+            name = get_mig_name(mig)
+            overall_token_mig.append(f"{name}: {val:.1f}%")
         overall_token_str = "\n".join(overall_token_mig)
 
         return [
@@ -85,7 +104,7 @@ def print_metrics(results: Dict[str, Any]):
     patterns = [w.value for w in Workload if w != Workload.HYBRID]
 
     print("\n● Tokens by MIG Matrix (%)")
-    print("Format: 7G | 4G | 3G | 2G | 1G")
+    print("Format: 7G | 4G | 3G | 2G | 1L | 1S")
     for aid in [m.AgentId.CODING, m.AgentId.RAG]:
         print(f"\n[{aid.name} Agent]")
         headers = ["Coding \\ RAG"] + patterns
@@ -96,7 +115,12 @@ def print_metrics(results: Dict[str, Any]):
             for pat_r in patterns:
                 pat_dict = token_mig_percentages[pat_c][pat_r]
                 mig_vals: List[str] = []
-                for mig in sorted(pat_dict.keys(), key=lambda x: x.size, reverse=True):
+                # Sort by logical profile index
+                sorted_pat_migs = sorted(
+                    pat_dict.keys(),
+                    key=lambda x: x.idx if hasattr(x, "idx") else x.value,
+                )
+                for mig in sorted_pat_migs:
                     mig_vals.append(f"{pat_dict[mig]:3.0f}%")
                 row_data.append(" | ".join(mig_vals))
             mat_data.append(row_data)
