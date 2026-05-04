@@ -39,6 +39,7 @@ model:
     generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 12
     vllm_config: configs/qwen3-next-80b-a3b-instruct-fp8.yaml
+
 simulation:
   agents:
     CodingAgent:
@@ -112,7 +113,7 @@ simulation:
       B200:
         mig:
           1g.23gb:
-            kv_cache_GB: 4.97
+            kv_cache_GB: 4.27
             model: qwen2.5-coder-7b-instruct
             param:
               prefill:
@@ -125,7 +126,7 @@ simulation:
                 sigma: 0.0011141595232364713
             restart_time: 63.2
           1g.45gb:
-            kv_cache_GB: 11.45
+            kv_cache_GB: 14.6
             model: qwen2.5-coder-14b-instruct
             param:
               prefill:
@@ -138,7 +139,7 @@ simulation:
                 sigma: 0.0011141595232364713
             restart_time: 63.2
           2g.45gb:
-            kv_cache_GB: 11.45
+            kv_cache_GB: 14.6
             model: qwen2.5-coder-14b-instruct
             param:
               prefill:
@@ -151,7 +152,7 @@ simulation:
                 sigma: 0.0005937982119924863
             restart_time: 61.4
           3g.90gb:
-            kv_cache_GB: 10.0
+            kv_cache_GB: 1.0
             model: qwen3-coder-next-fp8
             param:
               prefill:
@@ -164,7 +165,7 @@ simulation:
                 sigma: 0.0005542026973441775
             restart_time: 62.5
           4g.90gb:
-            kv_cache_GB: 10.0
+            kv_cache_GB: 1.0
             model: qwen3-coder-next-fp8
             param:
               prefill:
@@ -177,7 +178,7 @@ simulation:
                 sigma: 0.0004502867542284373
             restart_time: 62.1
           7g.180gb:
-            kv_cache_GB: 20.0
+            kv_cache_GB: 1.83
             model: qwen3-coder-next
             param:
               prefill:
@@ -264,7 +265,7 @@ simulation:
       B200:
         mig:
           1g.23gb:
-            kv_cache_GB: 4.97
+            kv_cache_GB: 4.27
             model: qwen2.5-7b-instruct
             param:
               prefill:
@@ -277,7 +278,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           1g.45gb:
-            kv_cache_GB: 11.45
+            kv_cache_GB: 14.6
             model: qwen2.5-14b-instruct
             param:
               prefill:
@@ -290,7 +291,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           2g.45gb:
-            kv_cache_GB: 11.45
+            kv_cache_GB: 11.0
             model: qwen2.5-14b-instruct
             param:
               prefill:
@@ -303,7 +304,7 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 61.4
           3g.90gb:
-            kv_cache_GB: 8.67
+            kv_cache_GB: 1.0
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
               prefill:
@@ -316,7 +317,7 @@ simulation:
                 sigma: 0.0005527448870265582
             restart_time: 62.5
           4g.90gb:
-            kv_cache_GB: 8.67
+            kv_cache_GB: 0.7
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
               prefill:
@@ -329,7 +330,7 @@ simulation:
                 sigma: 0.00043171032667850063
             restart_time: 62.1
           7g.180gb:
-            kv_cache_GB: 17.33
+            kv_cache_GB: 1.83
             model: qwen3-next-80b-a3b-instruct
             param:
               prefill:
@@ -347,18 +348,18 @@ simulation:
           model: random
   cluster:
     0: A100_40GB
-    1: A100_40GB
+    1: B200
     2: A100_40GB
   initial_state:
     gpu_initial_agents:
       0:
-      - CodingAgent
+        - CodingAgent
       1:
-      - RAGAgent
+        - RAGAgent
     permanent_engines:
-    - agent: CodingAgent
-      gpu: 2
-      mig: 2g.10gb
-    - agent: RAGAgent
-      gpu: 2
-      mig: 2g.10gb
+      - agent: CodingAgent
+        gpu: 2
+        mig: 2g.10gb
+      - agent: RAGAgent
+        gpu: 2
+        mig: 2g.10gb

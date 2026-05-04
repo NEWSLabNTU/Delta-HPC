@@ -1,8 +1,8 @@
 training:
   cluster:
-    0: A100_40GB
-    1: A100_40GB
-    2: A100_40GB # 1g.10gb permanent engine
+    0: B200
+    1: B200
+    2: A100_40GB # 2g.10gb permanent engine
   phase: 2
   tmux_session: "hpc-manual-adjust"
   sb3_norm: true
@@ -90,24 +90,24 @@ training:
     # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
     Q:
       CodingAgent:
-        7g.40gb: 15.0
+        7g.40gb: 10.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 15.0
+        7g.180gb: 10.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
       RAGAgent:
-        7g.40gb: 15.0
+        7g.40gb: 10.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 15.0
+        7g.180gb: 10.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
@@ -118,9 +118,9 @@ training:
       RAGAgent: 1.0
     w_ttft: 0.8 # weight in latency penalty
     w_tpot: 0.2 # weight in latency penalty
-    gamma: 15.0 # reconfiguration penalty
+    gamma: 10.0 # reconfiguration penalty
     scaling: 0.1
-    clipping: -30
+    clipping: -50
     use_quality_bonus: true
     use_affinity_bonus: true
     affinity_bonus_weight: 0.1

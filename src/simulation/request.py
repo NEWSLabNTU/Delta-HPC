@@ -62,6 +62,10 @@ class RequestImpl(m.Request):
     def prompt_tokens(self) -> int:
         return self._prompt_tokens
 
+    @prompt_tokens.setter
+    def prompt_tokens(self, value: int):
+        self._prompt_tokens = value
+
     @property
     def is_finished(self) -> bool:
         return self._generated_tokens >= self._completion_tokens

@@ -663,10 +663,11 @@ class SimulatorImpl(m.Simulator):
                 key=lambda e: len(e.waiting_queue) + len(e.running_queue),
             )
 
-            # Resolve completion_tokens based on the destination engine's model
+            # Resolve prompt and completion tokens based on the destination engine's model
             model_req_map = utils.TOKENS_MAP[agent.agent_id][engine.model_name]
             lookup_id = req.original_id if req.original_id else req.id
-            _, completion_tokens = model_req_map[lookup_id]
+            prompt_tokens, completion_tokens = model_req_map[lookup_id]
+            req.prompt_tokens = prompt_tokens
             req.completion_tokens = completion_tokens
 
             # Update serving engine

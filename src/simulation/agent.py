@@ -47,10 +47,11 @@ class AgentImpl(m.Agent):
 
         best_engine = min(active_engines, key=selection_key)
 
-        # Resolve completion_tokens based on the engine's current model
+        # Resolve prompt and completion tokens based on the engine's current model
         model_req_map = utils.TOKENS_MAP[self.agent_id][best_engine.model_name]
         lookup_id = request.original_id if request.original_id else request.id
-        _, completion_tokens = model_req_map[lookup_id]
+        prompt_tokens, completion_tokens = model_req_map[lookup_id]
+        request.prompt_tokens = prompt_tokens
         request.completion_tokens = completion_tokens
 
         # Resolve request's serving engine
