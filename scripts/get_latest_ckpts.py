@@ -5,9 +5,9 @@ from typing import Dict, Tuple
 
 
 def get_latest_checkpoints(phase_num: str):
-    base_path = Path("ckpts")
-    # Pattern to match the specific phase directory
-    pattern = f"*_phase_{phase_num}/rl_model_*_steps.zip"
+    base_path = Path("results")
+    # Pattern to match the specific phase directory within the results structure
+    pattern = f"*/ckpts/*_phase_{phase_num}/rl_model_*_steps.zip"
 
     latest_map: Dict[str, Tuple[int, Path]] = {}
 
