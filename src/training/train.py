@@ -140,9 +140,8 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
 
 
 def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
-    phase = TRAINING_CONFIG.phase
     run_id = run_id or os.environ["TRAINING_RUN_ID"]
-    run_name = f"{run_id}_phase_{phase.value}"
+    run_name = f"{run_id}"
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:

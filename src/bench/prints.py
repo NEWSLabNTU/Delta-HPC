@@ -1,11 +1,9 @@
 import tabulate
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Union
 
 import src.simulation.models as m
 import src.simulation.utils as utils
 from src.bench.models import BenchMode, Workload
-from src.bench.config import BENCH_CONFIG
-from src.training.models import TrainingPhase
 
 
 def get_mig_name(mig: Union[m.MIGProfile, m.MIGProfileBase]) -> str:
@@ -185,61 +183,10 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
     )
 
 
-def print_matrix_metrics(
-    matrix_results: Dict[
-        Tuple[m.MIGProfile, ...],
-        Dict[Tuple[m.MIGProfile, ...], Dict[str, Dict[str, Any]]],
-    ],
-):
-    def get_combo_name(combo: Tuple[m.MIGProfile, ...]) -> str:
-        # Generate a human-readable name like '7' or '4,3'
-        mapping = {
-            m.MIGProfile.MIG_7G: "7",
-            m.MIGProfile.MIG_4G: "4",
-            m.MIGProfile.MIG_3G: "3",
-            m.MIGProfile.MIG_2G: "2",
-            m.MIGProfile.MIG_1G_LARGE: "1L",
-            m.MIGProfile.MIG_1G_SMALL: "1S",
-        }
-        return ",".join([mapping[p] for p in combo])
-
-    col_keys = list(list(matrix_results.values())[0].keys())
-    headers = ["GPU 0 \\ GPU 1"] + [get_combo_name(c) for c in col_keys]
-
-    for aid in [m.AgentId.CODING, m.AgentId.RAG]:
-        table_data: List[List[str]] = []
-        for row_key, col_dict in matrix_results.items():
-            row_data = [get_combo_name(row_key)]
-            for col_key in col_keys:
-                results = col_dict[col_key]
-                metrics = results[aid.value]
-
-                ttft = metrics["ttft_percentiles"]
-                p25, p50, p75, p99 = ttft[0], ttft[1], ttft[2], ttft[3]
-                trans = metrics.get("transfer_count", 0)
-
-                cell_str = f"{p25:.2f}/{p50:.2f}/{p75:.2f}/{p99:.2f}/{trans}"
-                row_data.append(cell_str)
-
-            table_data.append(row_data)
-
-        print(f"\n● Phase 1 Performance Matrix ({aid.name} Agent)")
-        print("Format: TTFT @ 25 / 50 / 75 / 99 / Transfers")
-        print(
-            tabulate.tabulate(
-                table_data,
-                headers=headers,
-                tablefmt="fancy_outline",
-                headersglobalalign="center",
-            )
-        )
 
 
 def print_initial_state(init_mode: Any):
     # Display Initial State
-    if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-        print(f"\n[Initial State] {init_mode}")
-        return
     print("\n[Initial State]")
     state_info: List[List[str]] = []
     for e in utils.SIM_CONFIG.initial_state:

@@ -5,8 +5,6 @@ import numpy as np
 import numpy.typing as npt
 
 import src.simulation.models as m
-from src.training.config import TRAINING_CONFIG
-from src.training.models import TrainingPhase
 from src.training.rewards import compute_reward
 
 
@@ -48,26 +46,9 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             (len(m.ResourceManagerAction),), dtype=np.bool_
         )
 
-    def get_phase_action_mask(self, phase: TrainingPhase) -> npt.NDArray[np.bool_]:
-        mask = self.sim.get_action_mask()
-
-        if phase == TrainingPhase.PHASE_1:
-            # Phase 1: Only allow pure transfers or self-transitions
-            for act_id, action in enumerate(m.ResourceManagerAction):
-                if action == m.ResourceManagerAction.NO_ACTION:
-                    continue
-                val = action.value
-                # If it involves a state change, disable it in Phase 1
-                if val.target_state_id is not None:
-                    if val.target_state_id != self.sim.gpu_current_state[val.gpu_id]:
-                        mask[act_id] = False
-
-        return np.array(mask, dtype=np.bool_)
-
     def action_masks(self) -> npt.NDArray[np.bool_]:
-        # Subclasses should override or call get_phase_action_mask with specific phase
-        # Default behavior: use active phase from TRAINING_CONFIG
-        self._current_action_mask = self.get_phase_action_mask(TRAINING_CONFIG.phase)
+        # Directly get the full action mask from the simulator
+        self._current_action_mask = np.array(self.sim.get_action_mask(), dtype=np.bool_)
         return self._current_action_mask
 
     def _get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:

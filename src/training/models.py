@@ -6,8 +6,3 @@ class AgentPattern(Enum):
     IDLE = "idle"
     EVEN = "even"
     BURST = "burst"
-
-
-class TrainingPhase(Enum):
-    PHASE_1 = 1
-    PHASE_2 = 2

@@ -17,7 +17,6 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import src.simulation.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
-from src.training.models import TrainingPhase
 from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
@@ -594,14 +593,9 @@ class BenchRunner:
             u.SIM_CONFIG = u.init_config(Path("."))
             u.TOKENS_MAP = u.init_tokens_map(Path("."), u.SIM_CONFIG)
 
-            if BENCH_CONFIG.phase == TrainingPhase.PHASE_1:
-                cls._run_phase_1_matrix(
-                    mode, shared_requests, shared_loader.phase_history, ckpt
-                )
-            else:
-                cls._run_phase_2_trial(
-                    mode, shared_requests, shared_loader.phase_history, ckpt
-                )
+            cls._run_trial(
+                mode, shared_requests, shared_loader.phase_history, ckpt
+            )
 
         print("\nBenchmark Suite Completed.")
 
@@ -633,9 +627,7 @@ class BenchRunner:
         for bl in args.bl:
             if bl == "all":
                 modes.extend(
-                    [BenchMode.BASELINE_STATIC]
-                    if BENCH_CONFIG.phase == TrainingPhase.PHASE_1
-                    else [
+                    [
                         BenchMode.STATIC_NO_MIG,
                         BenchMode.STATIC_SPLIT_EXTREME,
                         BenchMode.BASELINE_HEURISTIC,
@@ -652,40 +644,7 @@ class BenchRunner:
         return modes
 
     @classmethod
-    def _run_phase_1_matrix(
-        cls,
-        mode: BenchMode,
-        requests: List[m.Request],
-        phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
-        ckpt: Optional[Path],
-    ):
-        """Phase 1 now simply runs multiple trials to verify random initialization stability."""
-        results: List[Dict[str, Dict[str, Any]]] = []
-        runner = None
-        for _ in range(5):  # Run 5 random trials
-            runner = cls(
-                ckpt,
-                Workload.HYBRID,
-                mode,
-                requests,
-                phase_history,
-            )
-            results.append(runner.run())
-
-        bench_dir = Path(f"results/{runner.run_id}/bench")
-        bench_dir.mkdir(parents=True, exist_ok=True)
-
-        f_out = io.StringIO()
-        with contextlib.redirect_stdout(f_out):
-            print_metrics(results[-1])
-
-        print(f_out.getvalue())
-        run_name = ckpt.stem if ckpt else mode.name
-        with open(bench_dir / f"results_{run_name}.txt", "w") as f:
-            f.write(f_out.getvalue())
-
-    @classmethod
-    def _run_phase_2_trial(
+    def _run_trial(
         cls,
         mode: BenchMode,
         requests: List[m.Request],

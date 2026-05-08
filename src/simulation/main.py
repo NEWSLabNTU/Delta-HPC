@@ -1,25 +1,15 @@
 import random
-import argparse
 from typing import Dict, List, cast
 
 import src.simulation.models as m
 from src.simulation.request_loader import RequestLoader
 from src.simulation.simulator import SimulatorImpl
 
-from src.training.models import TrainingPhase
 from src.training.rewards import compute_reward
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run simulation")
-    parser.add_argument("--no-log", action="store_true", help="Disable logging")
-    parser.add_argument(
-        "--phase", type=int, default=1, choices=[1, 2], help="Training phase (1 or 2)"
-    )
-    args = parser.parse_args()
-
-    phase = TrainingPhase(args.phase)
-    print(f"Starting simulation in {phase.name}...")
+    print("Starting simulation...")
 
     print("Loading config and datasets...")
     load_turn = 0
@@ -34,7 +24,7 @@ def main():
     sim = SimulatorImpl(
         agents=agents,
         engines=engines,
-        no_log=args.no_log,
+        no_log=True,
     )
 
     # For a quicker test we limit requests
@@ -48,18 +38,6 @@ def main():
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
 
-        # Apply phase-based masking
-        if phase == TrainingPhase.PHASE_1:
-            # Phase 1: Only allow pure transfers or self-transitions (no state changes)
-            for act_id, res_act in enumerate(m.ResourceManagerAction):
-                if res_act == m.ResourceManagerAction.NO_ACTION:
-                    continue
-                val = res_act.value
-                if val.target_state_id is not None:
-                    if val.target_state_id != sim.gpu_current_state[val.gpu_id]:
-                        mask[act_id] = False
-        elif phase == TrainingPhase.PHASE_2:
-            pass
 
         valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
         action = random.choice(valid_actions)

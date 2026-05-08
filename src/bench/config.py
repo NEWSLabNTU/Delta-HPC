@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Tuple, Union
 
 from src.bench.models import Workload
-from src.training.models import TrainingPhase
 import src.simulation.models as m
 
 
@@ -13,7 +12,6 @@ class BenchConfig:
             data = yaml.safe_load(f)
             self._workloads = data["workloads"]
             self._length = data["benchmark-length"]
-            self._phase = data.get("phase", 2)
             self._seed = data.get("seed", 42)
             self._heuristic = data.get(
                 "heuristic", {"watermark_high": 20.0, "watermark_low": 5.0}
@@ -74,9 +72,6 @@ class BenchConfig:
     def benchmark_length(self) -> int:
         return int(self._length)
 
-    @property
-    def phase(self) -> TrainingPhase:
-        return TrainingPhase(self._phase)
 
     @property
     def seed(self) -> int:

@@ -1,13 +1,12 @@
-import sys
 import re
 from pathlib import Path
 from typing import Dict, Tuple
 
 
-def get_latest_checkpoints(phase_num: str):
+def get_latest_checkpoints():
     base_path = Path("results")
-    # Pattern to match the specific phase directory within the results structure
-    pattern = f"*/ckpts/*_phase_{phase_num}/rl_model_*_steps.zip"
+    # Pattern to match any checkpoint directory within the results structure
+    pattern = "*/ckpts/*/rl_model_*_steps.zip"
 
     latest_map: Dict[str, Tuple[int, Path]] = {}
 
@@ -28,6 +27,4 @@ def get_latest_checkpoints(phase_num: str):
 
 
 if __name__ == "__main__":
-    # Default to phase 2 if no argument is provided
-    target_phase = sys.argv[1] if len(sys.argv) > 1 else "2"
-    print(get_latest_checkpoints(target_phase), end=" ")
+    print(get_latest_checkpoints(), end=" ")

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Tuple, List
 
 import src.simulation.models as m
-from src.training.models import AgentPattern, TrainingPhase
+from src.training.models import AgentPattern
 
 
 class TrainingConfig:
@@ -16,9 +16,6 @@ class TrainingConfig:
     def load(cls, config_path: Path):
         return cls(config_path)
 
-    @property
-    def phase(self) -> TrainingPhase:
-        return TrainingPhase(self._data["phase"])
 
     @property
     def sb3_norm(self) -> bool:
@@ -74,8 +71,7 @@ class TrainingConfig:
 
     @property
     def _ppo_cfg(self) -> Dict[str, Any]:
-        phase_key = f"phase_{self.phase.value}"
-        return self._data["PPO"][phase_key]
+        return self._data["PPO"]
 
     @property
     def episode_length(self) -> int:

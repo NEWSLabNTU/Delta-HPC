@@ -15,15 +15,15 @@ bench +ckpts:
 bench-bl +bl:
     python -m src.bench.main --bl {{ bl }}
 
-bench-all phase="2":
+bench-all:
     #!/usr/bin/env bash
     set -euo pipefail
-    ckpts=$(python scripts/get_latest_ckpts.py {{ phase }})
+    ckpts=$(python scripts/get_latest_ckpts.py)
     set -x
     python -m src.bench.main --bl all --ckpt $ckpts
 
-mock-train phase="2":
-    python -m src.simulation.main --phase {{ phase }} > test.log
+mock-train:
+    python -m src.simulation.main > test.log
 
 train ckpt="":
     CUDA_VISIBLE_DEVICES={{ gpu }} python -m src.training.train {{ if ckpt != "" { "--ckpt " + ckpt } else { "" } }}
