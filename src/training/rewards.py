@@ -7,8 +7,7 @@ from src.training.config import TRAINING_CONFIG
 
 def _compute_gpu_affinity_bonus(gpu_engines: Dict[int, List[m.LLMEngine]]) -> float:
     agent_sm_gpu_num: Dict[m.AgentId, Dict[int, int]] = {
-        agent_id: {gpu: 0 for gpu in gpu_engines.keys()}
-        for agent_id in m.AgentId
+        agent_id: {gpu: 0 for gpu in gpu_engines.keys()} for agent_id in m.AgentId
     }
 
     for gpu_id, engines in gpu_engines.items():

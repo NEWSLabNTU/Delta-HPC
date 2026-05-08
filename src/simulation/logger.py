@@ -12,7 +12,7 @@ class SimulationLoggerImpl(m.SimulationLogger):
         self.enabled = enabled
         self.buffer: List[str] = []
         self.buffer_size = 1000
-        
+
         if not self.enabled:
             return
 

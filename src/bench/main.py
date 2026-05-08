@@ -30,6 +30,7 @@ from src.bench.prints import (
 )
 from src.bench.heuristic import RuleBasedHeuristic
 
+
 def sync_bench_cluster_config(ckpt: Optional[Path] = None):
     # Sync cluster config from snapshot if available, else bench_config.yaml
     cluster_source = None
@@ -48,12 +49,12 @@ def sync_bench_cluster_config(ckpt: Optional[Path] = None):
         with open("configs/bench_config.yaml", "r") as f:
             _bench_data = yaml.safe_load(f)
         cluster_source = _bench_data["cluster"]
-        
+
     with open("configs/simulation_config.yaml", "r") as f:
         _sim_data = yaml.safe_load(f)
-        
+
     _sim_data["simulation"]["cluster"] = cluster_source
-    
+
     with open("configs/simulation_config.yaml", "w") as f:
         yaml.dump(_sim_data, f, default_flow_style=False)
 
@@ -589,6 +590,7 @@ class BenchRunner:
             # Sync cluster config and reload dynamically for this specific trial
             sync_bench_cluster_config(ckpt)
             import src.simulation.utils as u
+
             u.SIM_CONFIG = u.init_config(Path("."))
             u.TOKENS_MAP = u.init_tokens_map(Path("."), u.SIM_CONFIG)
 
@@ -708,6 +710,7 @@ class BenchRunner:
 
 def main():
     BenchRunner.run_suite()
+
 
 if __name__ == "__main__":
     main()

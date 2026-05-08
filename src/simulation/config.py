@@ -132,10 +132,12 @@ class SimulationConfig:
         )
 
     def _pad_partial_gpu_states(
-        self, new_state: List[Dict[str, Any]], mode: Literal["random", "no_mig", "split_extreme"]
+        self,
+        new_state: List[Dict[str, Any]],
+        mode: Literal["random", "no_mig", "split_extreme"],
     ) -> None:
         """
-        Takes the current permanent engines in `new_state` and checks if they form 
+        Takes the current permanent engines in `new_state` and checks if they form
         strict subsets of valid GPU hardware states. If so, pads them to a full state.
         Raises ValueError if the combination is physically impossible.
         """
@@ -148,15 +150,22 @@ class SimulationConfig:
             logical_profiles = []
             for e in engines:
                 mig_str = e["mig"]
-                hw_prof = next(p for p in GPU_MIG_PROFILE[gpu_id] if p.string == mig_str)
+                hw_prof = next(
+                    p for p in GPU_MIG_PROFILE[gpu_id] if p.string == mig_str
+                )
                 logical_profiles.append(hw_prof.profile_type)
 
-            logical_profiles_sorted = sorted(logical_profiles, key=lambda x: x.value, reverse=True)
+            logical_profiles_sorted = sorted(
+                logical_profiles, key=lambda x: x.value, reverse=True
+            )
             valid_combos = GPU_VALID_COMBINATIONS[gpu_id]
 
             exact_match = False
             for combo in valid_combos:
-                if sorted(list(combo), key=lambda x: x.value, reverse=True) == logical_profiles_sorted:
+                if (
+                    sorted(list(combo), key=lambda x: x.value, reverse=True)
+                    == logical_profiles_sorted
+                ):
                     exact_match = True
                     break
 
@@ -194,25 +203,32 @@ class SimulationConfig:
             agent_names = self.gpu_initial_agents.get(gpu_id, [])
             if not agent_names:
                 agent_names = list(GPU_AGENTS_CONFIG[gpu_id].keys())
-                
+
             for lp in chosen_list:
-                hw_prof = next(p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == lp)
+                hw_prof = next(
+                    p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == lp
+                )
                 valid_agents = [
-                    aname for aname in agent_names
+                    aname
+                    for aname in agent_names
                     if aname in GPU_AGENTS_CONFIG[gpu_id]
                     and hw_prof.string in GPU_AGENTS_CONFIG[gpu_id][aname]["mig"]
                 ]
                 if not valid_agents:
-                    raise ValueError(f"No valid agent to pad profile {hw_prof.string} on GPU {gpu_id}")
-                
+                    raise ValueError(
+                        f"No valid agent to pad profile {hw_prof.string} on GPU {gpu_id}"
+                    )
+
                 agent_name = random.choice(valid_agents)
-                new_state.append({
-                    "gpu": gpu_id,
-                    "mig": hw_prof.string,
-                    "agent": agent_name,
-                    "is-permanent": True,
-                    "is-unused": True,
-                })
+                new_state.append(
+                    {
+                        "gpu": gpu_id,
+                        "mig": hw_prof.string,
+                        "agent": agent_name,
+                        "is-permanent": True,
+                        "is-unused": True,
+                    }
+                )
 
     def generate_initial_state(self) -> None:
         """

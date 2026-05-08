@@ -244,19 +244,23 @@ def print_initial_state(init_mode: Any):
     state_info: List[List[str]] = []
     for e in utils.SIM_CONFIG.initial_state:
         if e.get("is-unused", False):
-            state_info.append([
-                str(e["gpu"]),
-                "Unused (Pad)",
-                str(e["mig"]),
-                " ",
-            ])
+            state_info.append(
+                [
+                    str(e["gpu"]),
+                    "Unused (Pad)",
+                    str(e["mig"]),
+                    " ",
+                ]
+            )
         else:
-            state_info.append([
-                str(e["gpu"]),
-                str(e["agent"]),
-                str(e["mig"]),
-                "✓" if e.get("is-permanent", False) else " ",
-            ])
+            state_info.append(
+                [
+                    str(e["gpu"]),
+                    str(e["agent"]),
+                    str(e["mig"]),
+                    "✓" if e.get("is-permanent", False) else " ",
+                ]
+            )
     print(
         tabulate.tabulate(
             state_info,
