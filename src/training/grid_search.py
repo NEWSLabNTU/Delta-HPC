@@ -126,7 +126,6 @@ def main():
         cmd_str = (
             f"cd /home/yclo/Delta-HPC && source .venv/bin/activate && "
             f"export CUDA_VISIBLE_DEVICES='{cuda_devices}' && "
-            f"export TRAINING_CONFIG_PATH='{snapshot_path}' && "
             f"export TRAINING_RUN_ID='{timestamp}' && "
             f"python -m src.training.train; bash"
         )

@@ -1,6 +1,6 @@
 phase: 2
 cluster:
-  0: A100_40GB
+  0: B200
   1: B200
   2: A100_40GB
 seed: 32
@@ -9,47 +9,47 @@ workloads:
   idle:
     rate:
       CodingAgent:
-      - 0.2
-      - 0.5
+        - 0.2
+        - 0.5
       RAGAgent:
-      - 0.1
-      - 0.5
+        - 0.1
+        - 0.5
     duration:
-    - 3600.0
-    - 4800.0
+      - 3600.0
+      - 4800.0
   even:
     rate:
       CodingAgent:
-      - 1.0
-      - 2.5
+        - 1.0
+        - 2.5
       RAGAgent:
-      - 1.0
-      - 2.0
+        - 1.0
+        - 2.0
     duration:
-    - 1800.0
-    - 2200.0
+      - 1800.0
+      - 2200.0
   busy:
     rate:
       CodingAgent:
-      - 3.0
-      - 4.0
+        - 3.0
+        - 4.0
       RAGAgent:
-      - 4.5
-      - 5.5
+        - 4.5
+        - 5.5
     duration:
-    - 1800.0
-    - 2200.0
+      - 1800.0
+      - 2200.0
   burst:
     rate:
       CodingAgent:
-      - 4.0
-      - 5.0
+        - 4.0
+        - 5.0
       RAGAgent:
-      - 6.0
-      - 8.0
+        - 6.0
+        - 8.0
     duration:
-    - 300.0
-    - 700.0
+      - 300.0
+      - 700.0
 heuristic:
   utilization_factor: 0.8
   high_threshold: 1.1

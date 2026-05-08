@@ -1,5 +1,7 @@
 from typing import Dict, Any, List, Tuple, Optional
 import os
+import yaml
+import shutil
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -30,10 +32,6 @@ from src.training.callbacks import (
 )
 
 
-import yaml
-import shutil
-
-
 def setup_training_environment() -> str:
     run_id = os.environ.get(
         "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
@@ -46,16 +44,9 @@ def setup_training_environment() -> str:
     snapshots_dir.mkdir(parents=True, exist_ok=True)
 
     # Handle snapshotting config
-    config_path_env = os.environ.get(
-        "TRAINING_CONFIG_PATH", "configs/training_config.yaml"
-    )
-    config_path = Path(config_path_env)
+    config_path = Path("configs/training_config.yaml")
     snapshot_path = snapshots_dir / "training_config.yaml"
-
-    if config_path.resolve() != snapshot_path.resolve():
-        if not snapshot_path.exists():
-            shutil.copy2(config_path, snapshot_path)
-        os.environ["TRAINING_CONFIG_PATH"] = str(snapshot_path)
+    shutil.copy2(config_path, snapshot_path)
 
     # Update simulation_config.yaml cluster
     with open(snapshot_path, "r") as f:

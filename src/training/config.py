@@ -237,5 +237,5 @@ class TrainingConfig:
         return self._data["total_timesteps"]
 
 
-config_path_env = os.environ.get("TRAINING_CONFIG_PATH", "configs/training_config.yaml")
+config_path_env = "configs/training_config.yaml"
 TRAINING_CONFIG = TrainingConfig.load(Path(config_path_env))
