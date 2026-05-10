@@ -72,7 +72,6 @@ class BenchConfig:
     def benchmark_length(self) -> int:
         return int(self._length)
 
-
     @property
     def seed(self) -> int:
         return int(self._seed)

@@ -38,7 +38,6 @@ def main():
         # 1. Choose a random valid action
         mask = sim.get_action_mask()
 
-
         valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
         action = random.choice(valid_actions)
         # action = m.ResourceManagerAction.NO_ACTION

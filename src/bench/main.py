@@ -593,9 +593,7 @@ class BenchRunner:
             u.SIM_CONFIG = u.init_config(Path("."))
             u.TOKENS_MAP = u.init_tokens_map(Path("."), u.SIM_CONFIG)
 
-            cls._run_trial(
-                mode, shared_requests, shared_loader.phase_history, ckpt
-            )
+            cls._run_trial(mode, shared_requests, shared_loader.phase_history, ckpt)
 
         print("\nBenchmark Suite Completed.")
 
