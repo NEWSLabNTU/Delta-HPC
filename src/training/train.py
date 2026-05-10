@@ -18,13 +18,14 @@ from stable_baselines3.common.callbacks import (
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-import src.simulation.models as m
+import src.share.models as m
 from src.simulation.agent import AgentImpl
-from src.simulation.env import BaseMIGResourceEnv
+from src.share.env import BaseMIGResourceEnv
 from src.simulation.simulator import SimulatorImpl
-from src.simulation.request_loader import RequestLoader
+from src.share.request_loader import RequestLoader
 from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
+from src.training.models import AgentPattern
 from src.training.callbacks import (
     SaveVecNormalizeCallback,
     EntCoefSchedulerCallback,
@@ -87,7 +88,15 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
         self._logger = TrainingLogger(
             log_dir=f"results/{run_id}/logs/train", enabled=enable_log
         )
-        self.request_loader = RequestLoader()
+        self.request_loader = RequestLoader(
+            num_steps=self.max_steps,
+            get_rate_range=lambda p, a: TRAINING_CONFIG.pattern_rate(
+                AgentPattern(p), a
+            ),
+            get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(
+                AgentPattern(p)
+            ),
+        )
 
     @property
     def logger(self) -> TrainingLogger:
@@ -135,7 +144,15 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
         # Training reset logic
         self.sim.reset()
         self._logger.start_episode(self.episode_count)
-        self.request_loader = RequestLoader()
+        self.request_loader = RequestLoader(
+            num_steps=self.max_steps,
+            get_rate_range=lambda p, a: TRAINING_CONFIG.pattern_rate(
+                AgentPattern(p), a
+            ),
+            get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(
+                AgentPattern(p)
+            ),
+        )
 
         requests: List[m.Request] = []
         for aid in m.AgentId:

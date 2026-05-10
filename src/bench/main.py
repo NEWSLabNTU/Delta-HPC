@@ -14,13 +14,13 @@ import matplotlib.pyplot as plt
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-import src.simulation.models as m
+import src.share.models as m
 from src.simulation.agent import AgentImpl
 from src.simulation.simulator import SimulatorImpl
 from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
-from src.bench.request_loader import BenchRequestLoader
+from src.share.request_loader import RequestLoader
 from src.bench.prints import (
     print_banner,
     print_metrics,
@@ -62,12 +62,10 @@ class BenchRunner:
     def __init__(
         self,
         ckpt: Optional[Path],
-        workload: Workload,
         mode: BenchMode,
         requests: List[m.Request],
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
     ):
-        self.workload = workload
         self.mode = mode
         self.requests = requests
         self.phase_history = phase_history
@@ -90,7 +88,7 @@ class BenchRunner:
         stats = self._init_stats_tracking()
 
         # 2. Display Context
-        print_initial_state(self.mode.name)
+        print_initial_state()
 
         # 3. Main Simulation Loop
         self._run_benchmark_loop(stats=stats)
@@ -139,7 +137,7 @@ class BenchRunner:
         self.venv = venv
 
     def _init_stats_tracking(self) -> Dict[str, Any]:
-        patterns = [w.value for w in Workload if w != Workload.HYBRID]
+        patterns = [w.value for w in Workload]
         return {
             "queue_lengths_sum": {aid: 0 for aid in m.AgentId},
             "split_count": {aid: 0 for aid in m.AgentId},
@@ -167,7 +165,7 @@ class BenchRunner:
 
         for _ in tqdm(
             range(BENCH_CONFIG.benchmark_length),
-            desc=f"{self.mode.name:<5} | {self.workload.name:<8}",
+            desc=f"{self.mode.name:<5} | HYBRID  ",
             leave=True,
             ncols=100,
         ):
@@ -572,7 +570,13 @@ class BenchRunner:
 
         # 1. Prepare Workload
         print("Pre-generating workload requests...")
-        shared_loader = BenchRequestLoader(Workload.HYBRID, seed=BENCH_CONFIG.seed)
+        shared_loader = RequestLoader(
+            num_steps=BENCH_CONFIG.benchmark_length,
+            get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
+            get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
+            seed=BENCH_CONFIG.seed,
+            track_history=True,
+        )
         shared_requests: List[m.Request] = []
         for aid in m.AgentId:
             shared_requests.extend(
@@ -649,7 +653,7 @@ class BenchRunner:
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
         ckpt: Optional[Path],
     ):
-        runner = cls(ckpt, Workload.HYBRID, mode, requests, phase_history)
+        runner = cls(ckpt, mode, requests, phase_history)
         results = runner.run()
 
         bench_dir = Path(f"results/{runner.run_id}/bench")

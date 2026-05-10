@@ -1,8 +1,8 @@
 import tabulate
 from typing import Any, Dict, List, Union
 
-import src.simulation.models as m
-import src.simulation.utils as utils
+import src.share.models as m
+from src.simulation.utils import SIM_CONFIG
 from src.bench.models import BenchMode, Workload
 
 
@@ -99,7 +99,7 @@ def print_metrics(results: Dict[str, Any]):
         )
     )
 
-    patterns = [w.value for w in Workload if w != Workload.HYBRID]
+    patterns = [w.value for w in Workload]
 
     print("\n● Tokens by MIG Matrix (%)")
     print("Format: 7G | 4G | 3G | 2G | 1L | 1S")
@@ -183,11 +183,11 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
     )
 
 
-def print_initial_state(init_mode: Any):
+def print_initial_state():
     # Display Initial State
     print("\n[Initial State]")
     state_info: List[List[str]] = []
-    for e in utils.SIM_CONFIG.initial_state:
+    for e in SIM_CONFIG.initial_state:
         if e.get("is-unused", False):
             state_info.append(
                 [

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from src.simulation.models import AgentId, MIGProfile
+from src.share.models import AgentId, MIGProfile, MIGProfileBase
 
 # Mapping of gpu_idx → ordered list of ProfilePlacement, covering all managed GPUs.
 AllGpuMIGConfigs = Dict[int, List["ProfilePlacement"]]
@@ -89,7 +89,7 @@ class DetectedGPU:
     nvml_name:
         Raw NVML device name, e.g. ``"NVIDIA A100-SXM4-40GB"``.
     mig_profile_cls:
-        Hardware-specific :class:`~src.simulation.models.MIGProfileBase`
+        Hardware-specific :class:`~src.share.models.MIGProfileBase`
         enum class loaded from ``configs/gpus/<model_name>.py``.
     valid_combos:
         All valid logical MIG profile tuples for this GPU (mirrors
@@ -102,7 +102,7 @@ class DetectedGPU:
     gpu_idx: int
     model_name: str
     nvml_name: str
-    mig_profile_cls: type
+    mig_profile_cls: MIGProfileBase
     valid_combos: List[Tuple[MIGProfile, ...]] = field(default_factory=list)
     combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = field(default_factory=dict)
 
@@ -133,7 +133,7 @@ class MIGSlotState:
     container_name:
         Docker compose project name for this slot, or ``None``.
     agent_id:
-        The RL agent (:class:`~src.simulation.models.AgentId`) assigned to this slot,
+        The RL agent (:class:`~src.share.models.AgentId`) assigned to this slot,
         or ``None``.
     """
 

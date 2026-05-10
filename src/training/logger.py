@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Dict
 
-import src.simulation.models as m
+import src.share.models as m
 
 
 class TrainingLogger:

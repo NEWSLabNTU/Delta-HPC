@@ -2,7 +2,7 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, Literal, Tuple, List
 
-import src.simulation.models as m
+import src.share.models as m
 from src.training.models import AgentPattern
 
 

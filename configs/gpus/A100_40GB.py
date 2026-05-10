@@ -1,4 +1,4 @@
-from src.simulation.models import MIGProfileBase, MIGProfile, ProfileInfo
+from src.share.models import MIGProfileBase, MIGProfile, ProfileInfo
 
 
 class MIGProfileA100(MIGProfileBase):

@@ -4,7 +4,7 @@ from gymnasium import spaces
 import numpy as np
 import numpy.typing as npt
 
-import src.simulation.models as m
+import src.share.models as m
 from src.training.rewards import compute_reward
 
 
@@ -104,14 +104,13 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data["downtime_ratio"]))
 
         # Agent Ratios (CODING - RAG)
-        obs_list.append(float(state_data.get("agent_arrival_rate_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_avg_queue_len_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_avg_running_req_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_avg_kv_cache_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_avg_composite_latency_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_n_mig_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_vram_ratio", 0.0)))
-        obs_list.append(float(state_data.get("agent_sm_ratio", 0.0)))
+        obs_list.append(float(state_data["agent_arrival_rate_ratio"]))
+        obs_list.append(float(state_data["agent_avg_queue_len_ratio"]))
+        obs_list.append(float(state_data["agent_avg_running_req_ratio"]))
+        obs_list.append(float(state_data["agent_avg_kv_cache_ratio"]))
+        obs_list.append(float(state_data["agent_avg_composite_latency_ratio"]))
+        obs_list.append(float(state_data["agent_vram_ratio"]))
+        obs_list.append(float(state_data["agent_sm_ratio"]))
 
         # MIG Geometry: 4 values — GPU 0 [coding, rag] and GPU 1 [coding, rag] (pre-normalized)
         mig_geom = state_data["mig_geometry"]

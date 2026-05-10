@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Tuple, Union
 
 from src.bench.models import Workload
-import src.simulation.models as m
+import src.share.models as m
 
 
 class BenchConfig:

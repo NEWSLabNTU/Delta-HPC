@@ -51,8 +51,8 @@ from src.deploy.models import (
     MIGSlotState,
     ProfilePlacement,
 )
-from src.simulation.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
-from src.simulation.models import MIGProfile, MIGProfileBase
+from src.share.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
+from src.share.models import MIGProfile, MIGProfileBase
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _load_mig_profile_class(gpu_model: str) -> type:
+def _load_mig_profile_class(gpu_model: str) -> MIGProfileBase:
     """Import and return the ``MIG_PROFILE`` enum class for *gpu_model*.
 
     Parameters
@@ -94,7 +94,7 @@ def _load_mig_profile_class(gpu_model: str) -> type:
 
 
 def _derive_valid_combinations(
-    mig_profile_cls: type,
+    mig_profile_cls: MIGProfileBase,
 ) -> List[Tuple[MIGProfile, ...]]:
     """Return valid logical profile tuples supported by *mig_profile_cls*.
 
@@ -117,20 +117,20 @@ def _derive_valid_combinations(
 def _combo_to_placement(
     logical_combo: Tuple[MIGProfile, ...],
     state_id: int,
-    mig_profile_cls: type,
+    mig_profile_cls: MIGProfileBase,
 ) -> List[ProfilePlacement]:
     """Translate a logical MIG profile tuple into a concrete hardware placement.
 
     Parameters
     ----------
     logical_combo:
-        Tuple of :class:`~src.simulation.models.MIGProfile` values that form
+        Tuple of :class:`~src.share.models.MIGProfile` values that form
         the chosen MIG state (in the same order as ``STATE_DEFINITIONS[state_id]``).
     state_id:
-        The integer key in :data:`~src.simulation.mig_matrix.STATE_DEFINITIONS`
+        The integer key in :data:`~src.share.mig_matrix.STATE_DEFINITIONS`
         that corresponds to *logical_combo*.
     mig_profile_cls:
-        Hardware-specific :class:`~src.simulation.models.MIGProfileBase` enum
+        Hardware-specific :class:`~src.share.models.MIGProfileBase` enum
         class (e.g. ``MIGProfileA100``).
 
     Returns
@@ -388,7 +388,7 @@ class DeployGPUSetup:
         -------
         tuple
             ``(logical_combo, state_id)`` where *logical_combo* is a tuple of
-            :class:`~src.simulation.models.MIGProfile` values and *state_id*
+            :class:`~src.share.models.MIGProfile` values and *state_id*
             is the corresponding key in ``STATE_DEFINITIONS``.
         """
         info = self.gpu_info[gpu_idx]

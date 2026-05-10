@@ -3,8 +3,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Tuple, Optional
 
-import src.simulation.models as m
-from src.simulation.mig_matrix import STATE_ID_MAP, SLICE_MAPPING
+import src.share.models as m
+import src.simulation.models as sm
+from src.share.mig_matrix import STATE_ID_MAP, SLICE_MAPPING
 from src.training.config import TRAINING_CONFIG
 from src.simulation.config import NUM_MIG_SLICES
 
@@ -35,7 +36,7 @@ class AgentStats:
     # action_history keys: "split", "merge", "give", "receive"
     # Each value is a dict with "steps": int and (optionally) "amount": float
     action_history: Dict[
-        m.ActionHistoryKey,
+        sm.ActionHistoryKey,
         Dict[Literal["steps", "amount"], int],
     ] = field(
         default_factory=lambda: {
@@ -48,7 +49,7 @@ class AgentStats:
     pending_request_count: int = 0
 
 
-class EnvironmentStateImpl(m.EnvironmentState):
+class EnvironmentStateImpl(sm.EnvironmentState):
     def __init__(self):
         self._agent_stats: Dict[m.AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
@@ -105,7 +106,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             stats.action_history["give"]["amount"] = 0
 
     def set_last_action(
-        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey, amount: int = 0
+        self, agent_id: m.AgentId, event_type: sm.ActionHistoryKey, amount: int = 0
     ) -> None:
         entry = self._agent_stats[agent_id].action_history[event_type]
         entry["steps"] = 0
@@ -127,7 +128,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         return self._agent_stats[agent_id].pending_request_count
 
     def get_steps_since(
-        self, agent_id: m.AgentId, event_type: m.ActionHistoryKey
+        self, agent_id: m.AgentId, event_type: sm.ActionHistoryKey
     ) -> int:
         return self._agent_stats[agent_id].action_history[event_type]["steps"]
 
@@ -222,7 +223,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
         kv = self._get_kv_cache_utilization(agents)
         latent_proportions, raw_latent_totals = self._get_avg_composite_latency(agents)
         vram = self._get_total_vram_ratio(agents)
-        sm = self._get_total_sm_ratio(agents)
+        sz = self._get_total_sm_ratio(agents)
 
         mig_profile_id_onehot = self._get_mig_profile_id_onehot(gpu_current_state)
         ownership_grid = self._get_ownership_grid(gpu_current_state, agents)
@@ -234,7 +235,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             kv,
             raw_latent_totals,
             vram,
-            sm,
+            sz,
         )
 
         # 2. Create the state dictionary
@@ -253,7 +254,7 @@ class EnvironmentStateImpl(m.EnvironmentState):
             "mig_geometry": self._get_mig_geometry(agents),
             "current_budget": self._get_current_budget(),
             "downtime_ratio": self._get_downtime_ratio(),
-            "total_sm_ratio": sm,
+            "total_sm_ratio": sz,
             "total_vram_ratio": vram,
             "recovery_flag": self._reconfig_flag,
             "last_split": self._get_last_split(agents),
@@ -283,22 +284,22 @@ class EnvironmentStateImpl(m.EnvironmentState):
         kv: Dict[m.AgentId, Tuple[float, ...]],
         raw_latent_totals: Dict[m.AgentId, float],
         vram: Dict[m.AgentId, float],
-        sm: Dict[m.AgentId, float],
-    ) -> Dict[m.AgentRatioKeys, float]:
+        sz: Dict[m.AgentId, float],
+    ) -> Dict[sm.AgentRatioKeys, float]:
         def get_total(data_dict: Dict[m.AgentId, Any], aid: m.AgentId):
             val = data_dict[aid]
             return sum(val) if isinstance(val, (tuple, list)) else float(val)  # type: ignore
 
-        metrics: Dict[m.AgentRatioKeys, Dict[m.AgentId, Any]] = {
+        metrics: Dict[sm.AgentRatioKeys, Dict[m.AgentId, Any]] = {
             "agent_arrival_rate_ratio": rates,
             "agent_avg_queue_len_ratio": avg_qs,
             "agent_avg_running_req_ratio": run_reqs,
             "agent_avg_kv_cache_ratio": kv,
             "agent_vram_ratio": vram,
-            "agent_sm_ratio": sm,
+            "agent_sm_ratio": sz,
         }
 
-        ratios: Dict[m.AgentRatioKeys, float] = {}
+        ratios: Dict[sm.AgentRatioKeys, float] = {}
         epsilon = 1e-6
         for key, data in metrics.items():
             c_val = get_total(data, m.AgentId.CODING)

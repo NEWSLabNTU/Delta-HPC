@@ -1,6 +1,6 @@
 from typing import Tuple, Dict
 
-import src.simulation.models as m
+import src.share.models as m
 
 STATE_DEFINITIONS: Dict[int, Tuple[m.MIGProfile, ...]] = {
     1: (m.MIGProfile.MIG_7G,),

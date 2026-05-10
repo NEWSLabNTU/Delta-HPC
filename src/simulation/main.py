@@ -1,10 +1,12 @@
 import random
 from typing import Dict, List, cast
 
-import src.simulation.models as m
-from src.simulation.request_loader import RequestLoader
+import src.share.models as m
+import src.simulation.models as sm
+from src.share.request_loader import RequestLoader
 from src.simulation.simulator import SimulatorImpl
-
+from src.training.config import TRAINING_CONFIG
+from src.training.models import AgentPattern
 from src.training.rewards import compute_reward
 
 
@@ -13,7 +15,11 @@ def main():
 
     print("Loading config and datasets...")
     load_turn = 0
-    request_loader = RequestLoader()
+    request_loader = RequestLoader(
+        num_steps=TRAINING_CONFIG.episode_length,
+        get_rate_range=lambda p, a: TRAINING_CONFIG.pattern_rate(AgentPattern(p), a),
+        get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(AgentPattern(p)),
+    )
     requests: List[m.Request] = []
     for aid in m.AgentId:
         requests.extend(request_loader.generate_requests(agent_id=aid, turn=load_turn))
@@ -40,7 +46,7 @@ def main():
 
         valid_actions = [a for a, msk in zip(m.ResourceManagerAction, mask) if msk]
         action = random.choice(valid_actions)
-        # action = m.ResourceManagerAction.NO_ACTION
+        # action = sm.ResourceManagerAction.NO_ACTION
         print(f"Step {step} (Time {sim.current_time:.2f}s) - Action: {action}")
         print("  GPU Geometry:")
         for gpu_id, gpu_engines in sim.gpu_engines.items():
@@ -57,7 +63,7 @@ def main():
         for aid in m.AgentId:
             cooldowns = {
                 k: sim._environment_state.get_steps_since(
-                    aid, cast(m.ActionHistoryKey, k)
+                    aid, cast(sm.ActionHistoryKey, k)
                 )
                 for k in ["split", "merge", "give", "receive"]
             }

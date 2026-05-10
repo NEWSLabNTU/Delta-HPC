@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Set
 
 import pickle
-import src.simulation.models as m
+import src.share.models as m
 from src.simulation.config import SimulationConfig, GPU_AGENTS_CONFIG
 
 ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
@@ -111,7 +111,7 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
 base_dir = Path(".")
 SIM_CONFIG: SimulationConfig = init_config(base_dir)
 
-# Global token map: { m.AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
+# Global token map: { sm.AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
 TOKENS_MAP: TokensMapType = init_tokens_map(base_dir, SIM_CONFIG)
 
 # Global set to track used engine IDs to ensure uniqueness

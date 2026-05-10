@@ -4,10 +4,11 @@ import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-import src.simulation.models as m
+import src.share.models as m
+import src.simulation.models as sm
 
 
-class SimulationLoggerImpl(m.SimulationLogger):
+class SimulationLoggerImpl(sm.SimulationLogger):
     def __init__(self, log_dir: Optional[str] = None, enabled: bool = True):
         self.enabled = enabled
         self.buffer: List[str] = []
@@ -150,7 +151,7 @@ class SimulationLoggerImpl(m.SimulationLogger):
         eng_str = f"{eng.engine_id}" if eng else "None"
         msg = (
             f"[{current_time:.4f}] EVENT: RAG_SEARCH_COMPLETE | "
-            f"ReqId: {req.id} | m.Agent: {req.agent_id.value} | Engine: {eng_str}"
+            f"ReqId: {req.id} | sm.Agent: {req.agent_id.value} | Engine: {eng_str}"
         )
         self.log(msg)
 

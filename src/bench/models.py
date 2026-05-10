@@ -1,6 +1,12 @@
 from enum import Enum
 from typing import TypedDict
 
+__all__ = [
+    "BenchMode",
+    "Workload",
+    "PhaseHistoryType",
+]
+
 
 class BenchMode(Enum):
     RL = "RL"
@@ -15,7 +21,6 @@ class Workload(Enum):
     EVEN = "even"
     BUSY = "busy"
     BURST = "burst"
-    HYBRID = "hybrid"
 
 
 class PhaseHistoryType(TypedDict):

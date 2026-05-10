@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-import src.simulation.models as m
+import src.share.models as m
+import src.simulation.models as sm
 
 
 class RequestImpl(m.Request):
@@ -22,7 +23,7 @@ class RequestImpl(m.Request):
         self._serving_engine = None
         self._completion_tokens = 0
         self._decode_time = 0.0
-        self._state = m.RequestState.PENDING
+        self._state = sm.RequestState.PENDING
         self._prefilled_tokens = 0
         self._generated_tokens = 0
         self._start_time: Optional[float] = None
@@ -63,8 +64,8 @@ class RequestImpl(m.Request):
         return self._prompt_tokens
 
     @prompt_tokens.setter
-    def prompt_tokens(self, value: int):
-        self._prompt_tokens = value
+    def prompt_tokens(self, v: int):
+        self._prompt_tokens = v
 
     @property
     def is_finished(self) -> bool:
@@ -103,11 +104,11 @@ class RequestImpl(m.Request):
         self._decode_time = value
 
     @property
-    def state(self) -> m.RequestState:
+    def state(self) -> sm.RequestState:
         return self._state
 
     @state.setter
-    def state(self, value: m.RequestState):
+    def state(self, value: sm.RequestState):
         self._state = value
 
     @property
@@ -151,7 +152,7 @@ class RequestImpl(m.Request):
         self._finish_time = value
 
 
-class RunningRequestsImpl(m.RunningRequests):
+class RunningRequestsImpl(sm.RunningRequests):
     def __init__(self):
         self._prefill_requests: List[m.Request] = []
         self._decoding_requests: List[m.Request] = []

@@ -2,7 +2,8 @@ from __future__ import annotations
 import random
 from typing import List, Dict, Optional
 
-import src.simulation.models as m
+import src.share.models as m
+import src.simulation.models as sm
 import src.simulation.utils as utils
 from src.simulation.request import RunningRequestsImpl
 
@@ -85,7 +86,7 @@ class LLMEngineImpl(m.LLMEngine):
         # State
         self._current_time: float = current_time
         self._status: m.EngineStatus = m.EngineStatus.ACTIVE
-        self._shutdown_pending: Optional[m.ShutdownPayload] = None
+        self._shutdown_pending: Optional[sm.ShutdownPayload] = None
 
     @property
     def gpu(self) -> int:
@@ -132,7 +133,7 @@ class LLMEngineImpl(m.LLMEngine):
         return self._waiting_queue
 
     @property
-    def running_queue(self) -> m.RunningRequests:
+    def running_queue(self) -> sm.RunningRequests:
         return self._running_queue
 
     @property
@@ -144,11 +145,11 @@ class LLMEngineImpl(m.LLMEngine):
         current = 0
         for req in self._running_queue.all_requests:
             match req.state:
-                case m.RequestState.PREFILLING:
+                case sm.RequestState.PREFILLING:
                     current += req.prefilled_tokens
-                case m.RequestState.DECODING:
+                case sm.RequestState.DECODING:
                     current += req.prompt_tokens + req.generated_tokens
-                case m.RequestState.PENDING | m.RequestState.COMPLETED:
+                case sm.RequestState.PENDING | sm.RequestState.COMPLETED:
                     pass
         return current / self._max_kv_cache_tokens
 
@@ -201,8 +202,8 @@ class LLMEngineImpl(m.LLMEngine):
         self._current_time = max(self._current_time, current_time)
 
     def trigger_shutdown(
-        self, payload: m.ShutdownPayload, current_time: float
-    ) -> Optional[m.SimulationEvent]:
+        self, payload: sm.ShutdownPayload, current_time: float
+    ) -> Optional[sm.SimulationEvent]:
         """Trigger engine shutdown for reallocation or MIG operations."""
         self._status = m.EngineStatus.DRAINING
         self._current_time = max(self._current_time, current_time)
@@ -212,21 +213,21 @@ class LLMEngineImpl(m.LLMEngine):
             return self._start_shutdown()
         return None
 
-    def _start_shutdown(self) -> m.SimulationEvent:
+    def _start_shutdown(self) -> sm.SimulationEvent:
         """Emit the stored shutdown payload as a SHUTDOWN_COMPLETE event."""
         assert self._shutdown_pending is not None
         payload = self._shutdown_pending
         self._shutdown_pending = None
-        return m.SimulationEvent(
+        return sm.SimulationEvent(
             time=self._current_time,
             event_type=m.EventType.ENGINE_SHUTDOWN_COMPLETE,
             payload=payload,
         )
 
-    def trigger_boot(self, payload: m.BootPayload) -> m.SimulationEvent:
+    def trigger_boot(self, payload: sm.BootPayload) -> sm.SimulationEvent:
         """Move to BOOTING and schedule boot completion."""
         self._status = m.EngineStatus.BOOTING
-        return m.SimulationEvent(
+        return sm.SimulationEvent(
             time=self._current_time + self._restart_time,
             event_type=m.EventType.ENGINE_BOOT_COMPLETE,
             payload=payload,
@@ -264,7 +265,7 @@ class LLMEngineImpl(m.LLMEngine):
 
     def step(
         self, current_time: float, next_arrival_time: Optional[float] = None
-    ) -> Optional[m.SimulationEvent]:
+    ) -> Optional[sm.SimulationEvent]:
         """
         Calculates the next forward pass duration and state updates.
         Returns the finish Event of this step, or None if idle.
@@ -314,7 +315,7 @@ class LLMEngineImpl(m.LLMEngine):
                     break
 
                 req = self._waiting_queue.pop(0)
-                req.state = m.RequestState.PREFILLING
+                req.state = sm.RequestState.PREFILLING
                 if req.start_time is None:
                     req.start_time = self._current_time
                 self._running_queue.prefill_requests.append(req)
@@ -351,7 +352,7 @@ class LLMEngineImpl(m.LLMEngine):
             new_prefill: List[m.Request] = []
             for req in self._running_queue.prefill_requests:
                 if req.prefill_completed:
-                    req.state = m.RequestState.DECODING
+                    req.state = sm.RequestState.DECODING
                     self._running_queue.decoding_requests.append(req)
                 else:
                     new_prefill.append(req)
@@ -364,7 +365,7 @@ class LLMEngineImpl(m.LLMEngine):
         # Once loop is broken, move finished out
         finished = [r for r in self._running_queue.all_requests if r.is_finished]
         for r in finished:
-            r.state = m.RequestState.COMPLETED
+            r.state = sm.RequestState.COMPLETED
             r.finish_time = self._current_time
             self._owner.completed_requests.append(r)
 
@@ -381,7 +382,7 @@ class LLMEngineImpl(m.LLMEngine):
                 return self._start_shutdown()
 
         if steps_taken > 0 or finished:
-            return m.SimulationEvent(
+            return sm.SimulationEvent(
                 time=self._current_time,
                 event_type=m.EventType.ENGINE_STEP_COMPLETE,
                 payload={"engine_id": self._engine_id, "steps_taken": steps_taken},

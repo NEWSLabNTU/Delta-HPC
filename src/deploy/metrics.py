@@ -28,12 +28,8 @@ _TTFT_SUM = re.compile(
 _TTFT_COUNT = re.compile(
     r"^vllm:time_to_first_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)", re.M
 )
-_WAITING = re.compile(
-    r"^vllm:num_requests_waiting\{[^}]*\}\s+([\d.eE+\-]+)", re.M
-)
-_RUNNING = re.compile(
-    r"^vllm:num_requests_running\{[^}]*\}\s+([\d.eE+\-]+)", re.M
-)
+_WAITING = re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
+_RUNNING = re.compile(r"^vllm:num_requests_running\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 
 
 def _first(pattern: re.Pattern[str], text: str, default: float = 0.0) -> float:

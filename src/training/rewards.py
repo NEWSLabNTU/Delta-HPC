@@ -1,7 +1,7 @@
 from typing import Dict, List
 
 
-import src.simulation.models as m
+import src.share.models as m
 from src.training.config import TRAINING_CONFIG
 
 

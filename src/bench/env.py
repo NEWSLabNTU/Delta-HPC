@@ -2,10 +2,10 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 
-from src.simulation.env import BaseMIGResourceEnv
+import src.share.models as m
+from src.share.env import BaseMIGResourceEnv
 from src.bench.models import BenchMode
 from src.bench.config import BENCH_CONFIG
-import src.simulation.models as m
 
 
 class BenchMIGResourceEnv(BaseMIGResourceEnv):

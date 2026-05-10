@@ -60,7 +60,7 @@ import src.deploy.metrics as metrics
 import src.deploy.system as system
 from src.deploy.config import DEPLOY_CONFIG
 from src.deploy.models import GPUState, MIGSlotState
-from src.simulation.models import AgentId
+from src.share.models import AgentId
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ class VLLMManager:
         """
         assert slot.port is not None
         client = metrics.VLLMMetricsClient(slot.port, timeout=5.0)
-        
+
         logger.info(
             "vllm: GPU %d [%s] waiting for in-flight requests to drain …",
             slot.gpu_idx,

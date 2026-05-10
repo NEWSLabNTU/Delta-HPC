@@ -4,7 +4,8 @@ from collections import defaultdict
 from sortedcontainers import SortedList
 from typing import List, Dict, Literal, Optional, cast
 
-import src.simulation.models as m
+import src.share.models as m
+import src.simulation.models as sm
 import src.simulation.utils as utils
 from src.simulation.agent import AgentImpl
 from src.simulation.engine import LLMEngineImpl
@@ -14,7 +15,7 @@ from src.simulation.config import (
     GPU_MIG_PROFILE,
     GPU_VALID_COMBINATIONS,
 )
-from src.simulation.mig_matrix import (
+from src.share.mig_matrix import (
     STATE_DEFINITIONS,
     TRANSITION_MATRIX,
 )
@@ -30,10 +31,10 @@ class SimulatorImpl(m.Simulator):
     ):
         self._agents = agents
         self._engines = engines
-        self._events: SortedList[m.SimulationEvent] = SortedList()
+        self._events: SortedList[sm.SimulationEvent] = SortedList()
         self._current_time: float = 0.0
         self._logger = SimulationLoggerImpl(enabled=not no_log)
-        self._comming_budget_refresh: Optional[m.SimulationEvent] = None
+        self._comming_budget_refresh: Optional[sm.SimulationEvent] = None
 
         self._environment_state = EnvironmentStateImpl()
         self._environment_state.reset_for_next_interval(0.0, self._agents)
@@ -53,7 +54,7 @@ class SimulatorImpl(m.Simulator):
         return self._engines
 
     @property
-    def events(self) -> SortedList[m.SimulationEvent]:
+    def events(self) -> SortedList[sm.SimulationEvent]:
         return self._events
 
     @property
@@ -61,7 +62,7 @@ class SimulatorImpl(m.Simulator):
         return self._current_time
 
     @property
-    def logger(self) -> m.SimulationLogger:
+    def logger(self) -> sm.SimulationLogger:
         return self._logger
 
     @property
@@ -82,7 +83,7 @@ class SimulatorImpl(m.Simulator):
     def latest_arrival_time(self, agent_id: m.AgentId) -> float:
         for e in reversed(self._events):
             if e.event_type == m.EventType.REQUEST_ARRIVAL:
-                e.payload = cast(m.RequestArrivalPayload, e.payload)
+                e.payload = cast(sm.RequestArrivalPayload, e.payload)
                 if e.payload["request"].agent_id == agent_id:
                     return e.time
         return self._current_time
@@ -92,7 +93,7 @@ class SimulatorImpl(m.Simulator):
         for req in requests:
             counts[req.agent_id] += 1
             self._events.add(
-                m.SimulationEvent(
+                sm.SimulationEvent(
                     time=req.arrival_time,
                     event_type=m.EventType.REQUEST_ARRIVAL,
                     payload={"request": req},
@@ -104,11 +105,11 @@ class SimulatorImpl(m.Simulator):
         self._sample_rag_searches(requests)
 
     def _sample_rag_searches(self, requests: List[m.Request]) -> None:
-        search_evts: List[m.SimulationEvent] = []
+        search_evts: List[sm.SimulationEvent] = []
         for req in requests:
             if req.agent_id == m.AgentId.RAG:
                 search_evts.append(
-                    m.SimulationEvent(
+                    sm.SimulationEvent(
                         time=req.arrival_time + utils.SIM_CONFIG.get_rag_overhead(),
                         event_type=m.EventType.RAG_SEARCH_COMPLETE,
                         payload={"request": req},
@@ -125,7 +126,7 @@ class SimulatorImpl(m.Simulator):
         for i in range(1, max_steps + 2):  # extra +1 as the stopping condition
             t = i * TRAINING_CONFIG.action_interval
             self._events.add(
-                m.SimulationEvent(
+                sm.SimulationEvent(
                     time=t,
                     event_type=m.EventType.RESOURCE_MANAGER_TRIGGER,
                     payload={},
@@ -181,9 +182,9 @@ class SimulatorImpl(m.Simulator):
             engs = [self._gpu_engines[action.gpu_id][idx] for idx in action.mig_src]
             assert all(e is not None for e in engs)
             eids = [e.engine_id for e in engs]
-            merge_payload: m.ShutdownMergePayload = {
+            merge_payload: sm.ShutdownMergePayload = {
                 "engine_id": engs[0].engine_id,
-                "purpose": m.OperationPurpose.MERGE,
+                "purpose": sm.OperationPurpose.MERGE,
                 "merge_engine_ids": tuple(eids),
                 "drained_ids": [],
                 "target_mig_indices": action.mig_target,
@@ -193,7 +194,7 @@ class SimulatorImpl(m.Simulator):
                 "target_state_id": action.target_state_id,
             }
             for e in engs:
-                per_engine_payload: m.ShutdownMergePayload = {
+                per_engine_payload: sm.ShutdownMergePayload = {
                     **merge_payload,
                     "engine_id": e.engine_id,
                 }
@@ -210,9 +211,9 @@ class SimulatorImpl(m.Simulator):
                 if action.receiver
                 else None
             )
-            split_payload: m.ShutdownSplitPayload = {
+            split_payload: sm.ShutdownSplitPayload = {
                 "engine_id": eng.engine_id,
-                "purpose": m.OperationPurpose.SPLIT,
+                "purpose": sm.OperationPurpose.SPLIT,
                 "target_mig_indices": action.mig_target,
                 "agent_id": eng.owner.agent_id,
                 "gpu": action.gpu_id,
@@ -234,9 +235,9 @@ class SimulatorImpl(m.Simulator):
 
         self._environment_state.reconfig_flag = True
 
-        shutdown_payload: m.ShutdownReallocatePayload = {
+        shutdown_payload: sm.ShutdownReallocatePayload = {
             "engine_id": engine_to_shift.engine_id,
-            "purpose": m.OperationPurpose.REALLOCATE,
+            "purpose": sm.OperationPurpose.REALLOCATE,
             "receiver_id": action.receiver.receiver_id,
         }
         self._logger.log_vram_transfer(
@@ -443,7 +444,7 @@ class SimulatorImpl(m.Simulator):
 
         if self._comming_budget_refresh is not None:
             self._events.remove(self._comming_budget_refresh)
-        refresh_evt = m.SimulationEvent(
+        refresh_evt = sm.SimulationEvent(
             time=self._current_time + TRAINING_CONFIG.refresh_period,
             event_type=m.EventType.REFRESH_ACTION_BUDGET,
             payload={},
@@ -464,7 +465,7 @@ class SimulatorImpl(m.Simulator):
         self._step_draining_or_active_engines()
 
     def _handle_shutdown_complete_reallocate(
-        self, payload: m.ShutdownReallocatePayload
+        self, payload: sm.ShutdownReallocatePayload
     ):
         engine_id = payload["engine_id"]
         receiver_id = payload["receiver_id"]
@@ -492,14 +493,14 @@ class SimulatorImpl(m.Simulator):
         )
         self._sync_ownership()
 
-        boot_payload: m.BootPayload = {
+        boot_payload: sm.BootPayload = {
             "engine_id": engine_id,
-            "purpose": m.OperationPurpose.REALLOCATE,
+            "purpose": sm.OperationPurpose.REALLOCATE,
             "sibling_engine_ids": None,
         }
         self._events.add(engine.trigger_boot(boot_payload))
 
-    def _handle_shutdown_complete_merge(self, payload: m.ShutdownMergePayload):
+    def _handle_shutdown_complete_merge(self, payload: sm.ShutdownMergePayload):
         engine_id = payload["engine_id"]
 
         # Mark this engine as drained; both sibling events share the same
@@ -546,9 +547,9 @@ class SimulatorImpl(m.Simulator):
                 target_mig_idx,
             )
 
-            boot_plain: m.BootPayload = {
+            boot_plain: sm.BootPayload = {
                 "engine_id": new_eid,
-                "purpose": m.OperationPurpose.PLAIN,
+                "purpose": sm.OperationPurpose.PLAIN,
                 "sibling_engine_ids": None,
             }
             self._events.add(new_eng.trigger_boot(boot_plain))
@@ -557,7 +558,7 @@ class SimulatorImpl(m.Simulator):
             self._sync_ownership()
             self._logger.log_mig_merge_complete(self._current_time, new_eid)
 
-    def _handle_shutdown_complete_split(self, payload: m.ShutdownSplitPayload):
+    def _handle_shutdown_complete_split(self, payload: sm.ShutdownSplitPayload):
         engine_id = payload["engine_id"]
         agent = self._agents[payload["agent_id"]]
 
@@ -611,9 +612,9 @@ class SimulatorImpl(m.Simulator):
             new_owner.add_engine(new_eng)
             self._engines[new_eid] = new_eng
 
-            boot_split: m.BootPayload = {
+            boot_split: sm.BootPayload = {
                 "engine_id": new_eid,
-                "purpose": m.OperationPurpose.SPLIT,
+                "purpose": sm.OperationPurpose.SPLIT,
                 "sibling_engine_ids": new_eids,
             }
             self._events.add(new_eng.trigger_boot(boot_split))
@@ -623,21 +624,21 @@ class SimulatorImpl(m.Simulator):
 
     def _handle_shutdown_complete(
         self,
-        payload: m.ShutdownPayload,
+        payload: sm.ShutdownPayload,
     ):
         purpose = payload["purpose"]
         match purpose:
-            case m.OperationPurpose.REALLOCATE:
+            case sm.OperationPurpose.REALLOCATE:
                 self._handle_shutdown_complete_reallocate(
-                    cast(m.ShutdownReallocatePayload, payload)
+                    cast(sm.ShutdownReallocatePayload, payload)
                 )
-            case m.OperationPurpose.MERGE:
+            case sm.OperationPurpose.MERGE:
                 self._handle_shutdown_complete_merge(
-                    cast(m.ShutdownMergePayload, payload)
+                    cast(sm.ShutdownMergePayload, payload)
                 )
-            case m.OperationPurpose.SPLIT:
+            case sm.OperationPurpose.SPLIT:
                 self._handle_shutdown_complete_split(
-                    cast(m.ShutdownSplitPayload, payload)
+                    cast(sm.ShutdownSplitPayload, payload)
                 )
             case _:
                 raise ValueError(f"Unexpected shutdown purpose {purpose}")
@@ -675,7 +676,7 @@ class SimulatorImpl(m.Simulator):
 
             engine.waiting_queue.append(req)
 
-    def _handle_boot_complete(self, payload: m.BootPayload) -> None:
+    def _handle_boot_complete(self, payload: sm.BootPayload) -> None:
         engine_id = payload["engine_id"]
 
         engine = self._engines[engine_id]
@@ -685,7 +686,7 @@ class SimulatorImpl(m.Simulator):
         self._logger.log_engine_boot_complete(self._current_time, engine_id)
 
         # Defer waiting-queue processing if split siblings are still booting
-        if payload["purpose"] == m.OperationPurpose.SPLIT:
+        if payload["purpose"] == sm.OperationPurpose.SPLIT:
             assert payload["sibling_engine_ids"] is not None
             still_booting = any(
                 self._engines[sid].status == m.EngineStatus.BOOTING
@@ -707,7 +708,7 @@ class SimulatorImpl(m.Simulator):
                 if evt:
                     self._events.add(evt)
 
-    def _handle_request_arrival(self, payload: m.RequestArrivalPayload):
+    def _handle_request_arrival(self, payload: sm.RequestArrivalPayload):
         req = payload["request"]
         agent_id = req.agent_id
 
@@ -731,7 +732,7 @@ class SimulatorImpl(m.Simulator):
             if evt:
                 self._events.add(evt)
 
-    def _handle_rag_search_complete(self, payload: m.RequestArrivalPayload):
+    def _handle_rag_search_complete(self, payload: sm.RequestArrivalPayload):
         req = payload["request"]
         agent_id = req.agent_id
         assert agent_id == m.AgentId.RAG
@@ -747,7 +748,7 @@ class SimulatorImpl(m.Simulator):
             if evt:
                 self._events.add(evt)
 
-    def _handle_engine_step_complete(self, payload: m.EngineStepPayload):
+    def _handle_engine_step_complete(self, payload: sm.EngineStepPayload):
         engine_id = payload["engine_id"]
         engine = self._engines[engine_id]
 
@@ -787,23 +788,23 @@ class SimulatorImpl(m.Simulator):
             match current_event.event_type:
                 case m.EventType.ENGINE_SHUTDOWN_COMPLETE:
                     self._handle_shutdown_complete(
-                        cast(m.ShutdownPayload, current_event.payload)
+                        cast(sm.ShutdownPayload, current_event.payload)
                     )
                 case m.EventType.ENGINE_BOOT_COMPLETE:
                     self._handle_boot_complete(
-                        cast(m.BootPayload, current_event.payload)
+                        cast(sm.BootPayload, current_event.payload)
                     )
                 case m.EventType.REQUEST_ARRIVAL:
                     self._handle_request_arrival(
-                        cast(m.RequestArrivalPayload, current_event.payload)
+                        cast(sm.RequestArrivalPayload, current_event.payload)
                     )
                 case m.EventType.RAG_SEARCH_COMPLETE:
                     self._handle_rag_search_complete(
-                        cast(m.RequestArrivalPayload, current_event.payload)
+                        cast(sm.RequestArrivalPayload, current_event.payload)
                     )
                 case m.EventType.ENGINE_STEP_COMPLETE:
                     self._handle_engine_step_complete(
-                        cast(m.EngineStepPayload, current_event.payload)
+                        cast(sm.EngineStepPayload, current_event.payload)
                     )
                 case m.EventType.REFRESH_ACTION_BUDGET:
                     self._comming_budget_refresh = None
@@ -1106,14 +1107,14 @@ class SimulatorImpl(m.Simulator):
             if evt.event_type == m.EventType.RESOURCE_MANAGER_TRIGGER:
                 return evt.time
             if evt.event_type == m.EventType.REQUEST_ARRIVAL:
-                payload = cast(m.RequestArrivalPayload, evt.payload)
+                payload = cast(sm.RequestArrivalPayload, evt.payload)
                 if (
                     payload["request"].agent_id == agent_id
                     and agent_id != m.AgentId.RAG
                 ):
                     return evt.time
             if evt.event_type == m.EventType.RAG_SEARCH_COMPLETE:
-                payload = cast(m.RequestArrivalPayload, evt.payload)
+                payload = cast(sm.RequestArrivalPayload, evt.payload)
                 if (
                     payload["request"].agent_id == agent_id
                     and agent_id == m.AgentId.RAG

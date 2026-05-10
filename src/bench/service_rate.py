@@ -6,11 +6,11 @@ from typing import Dict, List, Tuple, Type
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.agent import AgentImpl
 from src.simulation.engine import LLMEngineImpl
-import src.simulation.models as m
+import src.share.models as m
 from src.simulation.request import RequestImpl
 import src.simulation.utils as utils
 import src.simulation.config as config
-from src.simulation.mig_matrix import STATE_DEFINITIONS
+from src.share.mig_matrix import STATE_DEFINITIONS
 
 
 def check_rate(

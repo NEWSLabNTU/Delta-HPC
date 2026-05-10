@@ -1,10 +1,10 @@
 from typing import Dict
 
-import src.simulation.models as m
+import src.share.models as m
+from src.share.mig_matrix import STATE_DEFINITIONS
 from src.bench.config import BENCH_CONFIG
 from src.training.config import TRAINING_CONFIG
 from src.simulation.config import GPU_MIG_PROFILE
-from src.simulation.mig_matrix import STATE_DEFINITIONS
 
 
 class RuleBasedHeuristic:
@@ -133,13 +133,13 @@ class RuleBasedHeuristic:
                 best_action = action
                 # best_ratios = new_ratios
 
-        # if best_action != m.ResourceManagerAction.NO_ACTION:
+        # if best_action != sm.ResourceManagerAction.NO_ACTION:
         # mig_config_strs = []
-        # for aid in m.AgentId:
+        # for aid in sm.AgentId:
         #     profiles = [
         #         e.mig_profile.string
         #         for e in sim.agents[aid].engines
-        #         if e.status != m.EngineStatus.BOOTING
+        #         if e.status != sm.EngineStatus.BOOTING
         #     ]
         #     mig_config_strs.append(f"{aid.name}: [{', '.join(profiles)}]")
         # current_config_str = " | ".join(mig_config_strs)
@@ -147,9 +147,9 @@ class RuleBasedHeuristic:
         # log_str = (
         #     f"[Heuristic] Scaling Triggered!\n"
         #     f"  Current Config : {current_config_str}\n"
-        #     f"  Current Ratios : Coding={scaling_ratios[m.AgentId.CODING]:.2f}, RAG={scaling_ratios[m.AgentId.RAG]:.2f}\n"
+        #     f"  Current Ratios : Coding={scaling_ratios[sm.AgentId.CODING]:.2f}, RAG={scaling_ratios[sm.AgentId.RAG]:.2f}\n"
         #     f"  Action Taken   : {best_action.name}\n"
-        #     f"  Expected Ratios: Coding={best_ratios[m.AgentId.CODING]:.2f}, RAG={best_ratios[m.AgentId.RAG]:.2f}"
+        #     f"  Expected Ratios: Coding={best_ratios[sm.AgentId.CODING]:.2f}, RAG={best_ratios[sm.AgentId.RAG]:.2f}"
         # )
         # print(log_str)
 

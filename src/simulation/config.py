@@ -7,8 +7,8 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 import importlib.util
-import src.simulation.models as m
-from src.simulation.mig_matrix import STATE_DEFINITIONS
+import src.share.models as m
+from src.share.mig_matrix import STATE_DEFINITIONS
 
 # Hardware Constants
 NUM_MIG_SLICES = 7

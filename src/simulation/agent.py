@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import deque
 from typing import List, Optional
 
-import src.simulation.models as m
+import src.share.models as m
 import src.simulation.utils as utils
 
 
