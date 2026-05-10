@@ -16,6 +16,11 @@ class TrainingConfig:
     def load(cls, config_path: Path):
         return cls(config_path)
 
+    def update(self, config_path: Path):
+        """Update the configuration data from a new file."""
+        with open(config_path, "r") as f:
+            data = yaml.safe_load(f)
+            self._data = data["training"]
 
     @property
     def sb3_norm(self) -> bool:
@@ -71,7 +76,11 @@ class TrainingConfig:
 
     @property
     def _ppo_cfg(self) -> Dict[str, Any]:
-        return self._data["PPO"]
+        cfg = self._data["PPO"]
+        if "phase" in self._data:  # backward compatibility
+            phase = self._data["phase"]
+            return cfg[f"phase_{phase}"]
+        return cfg
 
     @property
     def episode_length(self) -> int:

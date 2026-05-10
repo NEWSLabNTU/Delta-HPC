@@ -32,7 +32,7 @@ from src.training.callbacks import (
 )
 
 
-def setup_training_environment() -> str:
+def setup_training_environment(ckpt: Optional[Path] = None) -> str:
     run_id = os.environ.get(
         "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
     )
@@ -45,6 +45,16 @@ def setup_training_environment() -> str:
 
     # Handle snapshotting config
     config_path = Path("configs/training_config.yaml")
+    if ckpt is not None:
+        old_snapshot = ckpt.parent.parent.parent / "snapshots" / "training_config.yaml"
+        if old_snapshot.exists():
+            print(f"Using old snapshot config from {old_snapshot}")
+            config_path = old_snapshot
+        else:
+            print(
+                f"Warning: Old snapshot not found at {old_snapshot}, using current config"
+            )
+
     snapshot_path = snapshots_dir / "training_config.yaml"
     shutil.copy2(config_path, snapshot_path)
 
@@ -142,6 +152,13 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
 def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
     run_id = run_id or os.environ["TRAINING_RUN_ID"]
     run_name = f"{run_id}"
+
+    # Ensure we use the snapshotted config if loading from a checkpoint
+    if ckpt is not None:
+        snapshot_path = Path(f"results/{run_id}/snapshots/training_config.yaml")
+        if snapshot_path.exists():
+            print(f"Reloading TRAINING_CONFIG from session snapshot: {snapshot_path}")
+            TRAINING_CONFIG.update(snapshot_path)
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
@@ -193,6 +210,8 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
 
     def lr_schedule(progress_remaining: float) -> float:
         """Linearly decays from lr_max (start) to lr_min (end)."""
+        if ckpt is not None:
+            return lr_min
         return lr_min + (lr_max - lr_min) * progress_remaining
 
     model: MaskablePPO
@@ -201,6 +220,14 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
         custom_objects: Dict[str, Any] = {
             "learning_rate": lr_schedule,
             "tensorboard_log": f"results/{run_id}/tboards/{run_name}",
+            "ent_coef": TRAINING_CONFIG.rl_min_ent_coef,
+            "n_steps": TRAINING_CONFIG.rl_n_steps,
+            "batch_size": TRAINING_CONFIG.rl_batch_size,
+            "n_epochs": TRAINING_CONFIG.rl_n_epochs,
+            "gamma": TRAINING_CONFIG.rl_gamma,
+            "gae_lambda": TRAINING_CONFIG.rl_gae_lambda,
+            "clip_range": TRAINING_CONFIG.rl_clip_range,
+            "clip_range_vf": TRAINING_CONFIG.rl_clip_range,
         }
         model = MaskablePPO.load(  # type: ignore
             ckpt,
@@ -243,7 +270,7 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
                 save_freq=5120, save_path=f"results/{run_id}/ckpts/{run_name}"
             )
         )
-    if TRAINING_CONFIG.rl_enable_ent_coef_schd:
+    if TRAINING_CONFIG.rl_enable_ent_coef_schd and ckpt is None:
         cb_list.append(
             EntCoefSchedulerCallback(
                 initial_ent_coef=TRAINING_CONFIG.rl_max_ent_coef,
@@ -281,5 +308,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    run_id = setup_training_environment()
+    run_id = setup_training_environment(ckpt=args.ckpt)
     train(ckpt=args.ckpt, run_id=run_id)
