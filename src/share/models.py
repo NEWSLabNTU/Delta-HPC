@@ -697,6 +697,22 @@ class ResourceManagerAction(Enum):
         1, 19, MIGProfile.MIG_1G_SMALL
     )
 
+    # GPU 0 Pure Transfer
+    TRANSFER_GPU_0_7G = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G)
+    TRANSFER_GPU_0_4G = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G)
+    TRANSFER_GPU_0_3G = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G)
+    TRANSFER_GPU_0_2G = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G)
+    TRANSFER_GPU_0_1L = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE)
+    TRANSFER_GPU_0_1S = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL)
+
+    # GPU 1 Pure Transfer
+    TRANSFER_GPU_1_7G = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G)
+    TRANSFER_GPU_1_4G = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G)
+    TRANSFER_GPU_1_3G = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G)
+    TRANSFER_GPU_1_2G = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G)
+    TRANSFER_GPU_1_1L = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE)
+    TRANSFER_GPU_1_1S = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL)
+
 
 class EnvironmentStateData(TypedDict):
     arrival_rate: Dict[AgentId, float]

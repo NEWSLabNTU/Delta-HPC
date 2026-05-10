@@ -109,6 +109,7 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data["agent_avg_running_req_ratio"]))
         obs_list.append(float(state_data["agent_avg_kv_cache_ratio"]))
         obs_list.append(float(state_data["agent_avg_composite_latency_ratio"]))
+        obs_list.append(0.0)
         obs_list.append(float(state_data["agent_vram_ratio"]))
         obs_list.append(float(state_data["agent_sm_ratio"]))
 
