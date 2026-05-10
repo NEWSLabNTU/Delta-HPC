@@ -2,7 +2,7 @@ import tabulate
 from typing import Any, Dict, List, Union
 
 import src.share.models as m
-from src.simulation.utils import SIM_CONFIG
+import src.simulation.utils as u
 from src.bench.models import BenchMode, Workload
 
 
@@ -187,7 +187,7 @@ def print_initial_state():
     # Display Initial State
     print("\n[Initial State]")
     state_info: List[List[str]] = []
-    for e in SIM_CONFIG.initial_state:
+    for e in u.SIM_CONFIG.initial_state:
         if e.get("is-unused", False):
             state_info.append(
                 [
