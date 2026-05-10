@@ -654,6 +654,7 @@ dependencies = [
     { name = "datasets" },
     { name = "httpx" },
     { name = "matplotlib" },
+    { name = "nvidia-ml-py" },
     { name = "pyyaml" },
     { name = "sb3-contrib" },
     { name = "seaborn" },
@@ -679,6 +680,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.7.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "nvidia-ml-py", specifier = ">=13.595.45" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sb3-contrib", specifier = ">=2.7.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
@@ -1246,6 +1248,15 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/73/b9/598f6ff36faaece4b3c50d26f50e38661499ff34346f00e057760b35cc9d/nvidia_cusparselt_cu12-0.7.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:8878dce784d0fac90131b6817b607e803c36e629ba34dc5b433471382196b6a5", size = 283835557, upload-time = "2025-02-26T00:16:54.265Z" },
     { url = "https://files.pythonhosted.org/packages/56/79/12978b96bd44274fe38b5dde5cfb660b1d114f70a65ef962bcbbed99b549/nvidia_cusparselt_cu12-0.7.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:f1bb701d6b930d5a7cea44c19ceb973311500847f81b634d802b7b539dc55623", size = 287193691, upload-time = "2025-02-26T00:15:44.104Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.595.45"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/49/c29f6e30d8662d2e94fef17739ea7309cc76aba269922ae999e4cc07f268/nvidia_ml_py-13.595.45.tar.gz", hash = "sha256:c9f34897fe0441ff35bc8f35baf80f830a20b0f4e6ce71e0a325bc0e66acf079", size = 50780, upload-time = "2026-03-19T16:59:44.956Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/24/fc256107d23597fa33d319505ce77160fa1a2349c096d01901ffc7cb7fc4/nvidia_ml_py-13.595.45-py3-none-any.whl", hash = "sha256:b65a7977f503d56154b14d683710125ef93594adb63fbf7e559336e3318f1376", size = 51776, upload-time = "2026-03-19T16:59:43.603Z" },
 ]
 
 [[package]]
@@ -2023,16 +2034,16 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl", upload-time = "2026-03-23T15:03:30Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", upload-time = "2026-03-23T15:03:32Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl", upload-time = "2026-03-23T15:03:33Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl", upload-time = "2026-03-23T15:03:40Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313t-manylinux_2_28_aarch64.whl", upload-time = "2026-03-23T15:03:51Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313t-manylinux_2_28_x86_64.whl", upload-time = "2026-03-23T15:03:53Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl", upload-time = "2026-03-23T15:03:54Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314-manylinux_2_28_x86_64.whl", upload-time = "2026-03-23T15:04:00Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314t-manylinux_2_28_aarch64.whl", upload-time = "2026-03-23T15:04:07Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314t-manylinux_2_28_x86_64.whl", upload-time = "2026-03-23T15:04:10Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2d053729aa4ca5daa466dc1418fd3770f221017cb94d0d5c0c60c15b2eeedffd", upload-time = "2026-04-27T18:41:08Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:68b83cb7d7d43bc67c2833c8aebaea6a966f2017c3389885affa3361c258b7e3", upload-time = "2026-04-27T18:42:10Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:20f9a7223804fbc2b39253933a2704756f1bd80529a093fe6e6cbef3341a303e", upload-time = "2026-04-27T18:43:19Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:fde1830d7f79641680865759dc57780e94a9de7e68a82ed61973e9bc7af29423", upload-time = "2026-04-27T18:44:31Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:ff79453f42655a3916a1cb8d2f2b41695dcbe0e289a1efecd5a05c8d1f6552f1", upload-time = "2026-04-27T18:45:40Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:254344b972a52620f83d2b8792889ff5ef2c432134211f4a5a1eb9e1b6c2fb02", upload-time = "2026-04-27T18:46:41Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:c0d6d74117e81b5ac6aac29241f045f8eccca8ac3ac950b4e80542bfbd7c19fd", upload-time = "2026-04-27T18:47:41Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:53896a7e9c6fb5dc5b9abf2512c58ae2884e8f64465ccfed20c527691c04b348", upload-time = "2026-04-27T18:48:40Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:8c1b554aaf73f5030ffb7682a417e64961262d4a2922ab6fcfc265fb1627b471", upload-time = "2026-04-27T18:49:39Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:5368e7289f948182224e62fa58fb837fc3479c1a6f527f48a967c4d341580ab6", upload-time = "2026-04-27T18:50:48Z" },
 ]
 
 [[package]]

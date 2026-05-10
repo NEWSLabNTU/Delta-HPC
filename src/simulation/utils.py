@@ -8,7 +8,6 @@ from typing import Dict, Tuple, Set
 import pickle
 import src.simulation.models as m
 from src.simulation.config import SimulationConfig, GPU_AGENTS_CONFIG
-from src.simulation.mig_rule import MIGProfileRuleImpl
 
 ModelsMapType = Dict[str, Dict[str, Tuple[int, int]]]
 TokensMapType = Dict[m.AgentId, ModelsMapType]
@@ -114,8 +113,6 @@ SIM_CONFIG: SimulationConfig = init_config(base_dir)
 
 # Global token map: { m.AgentId -> { model_name -> { req_id -> (prompt_tokens, completion_tokens) } } }
 TOKENS_MAP: TokensMapType = init_tokens_map(base_dir, SIM_CONFIG)
-
-MIG_RULES = MIGProfileRuleImpl()
 
 # Global set to track used engine IDs to ensure uniqueness
 USED_EIDS: Set[str] = set()
