@@ -449,3 +449,66 @@ class MIGController:
     def gpu_indices(self) -> List[int]:
         """The physical GPU indices managed by this controller."""
         return list(self._gpu_indices)
+
+    # ------------------------------------------------------------------
+    # MIG device UUID resolution
+    # ------------------------------------------------------------------
+
+    def list_mig_device_uuids(self, gpu_idx: int) -> List[Tuple[int, str]]:
+        """Return ``[(start_slice, mig_uuid), …]`` for each active MIG device on *gpu_idx*.
+
+        The UUID (e.g. ``"MIG-GPU-xxxx.../1/0"``) is the string needed by
+        docker-compose's ``device_ids`` field to pin a container to a specific
+        MIG compute instance.
+
+        The method assumes **one compute instance per GPU instance**, which is
+        the standard single-process setup created by
+        :meth:`apply_full_configuration`.  Entries are sorted by
+        *start_slice* (lowest first), matching the order returned by
+        :meth:`list_gis`.
+
+        Parameters
+        ----------
+        gpu_idx:
+            Physical GPU index.
+
+        Returns
+        -------
+        list of (int, str)
+            ``(start_slice, uuid)`` pairs, sorted by *start_slice*.
+        """
+        self._require_init()
+        handle = self._handle(gpu_idx)
+
+        # GPU instances sorted by start_slice — our placement reference.
+        gi_infos = self.list_gis(gpu_idx)
+
+        # MIG devices are also ordered by placement (ascending start_slice).
+        try:
+            max_count = pynvml.nvmlDeviceGetMaxMigDeviceCount(handle)  # type: ignore
+        except pynvml.NVMLError as exc:
+            logger.warning("GPU %d: cannot query MIG device count: %s", gpu_idx, exc)
+            return []
+
+        mig_uuids: List[str] = []
+        for i in range(max_count):
+            try:
+                mig_handle = pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, i)  # type: ignore
+                uuid: str = pynvml.nvmlDeviceGetUUID(mig_handle)  # type: ignore
+                mig_uuids.append(uuid)
+            except pynvml.NVMLError:
+                pass  # No MIG device at index i
+
+        if len(mig_uuids) != len(gi_infos):
+            logger.warning(
+                "GPU %d: %d GPU instances but %d MIG device UUIDs — "
+                "UUID list will be truncated to the shorter of the two.",
+                gpu_idx,
+                len(gi_infos),
+                len(mig_uuids),
+            )
+
+        result: List[Tuple[int, str]] = [
+            (gi.start_slice, uuid) for gi, uuid in zip(gi_infos, mig_uuids)
+        ]
+        return result

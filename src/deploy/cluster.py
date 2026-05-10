@@ -1,5 +1,5 @@
 """
-src/deploy/setup_gpu.py
+src/deploy/cluster.py
 
 Configures every MIG-capable GPU found on the machine to a randomly selected
 valid MIG combination before a deployment run.
@@ -19,7 +19,7 @@ just picking logical profile types we translate them to:
 
 Example usage::
 
-    from src.deploy.setup_gpu import DeployGPUSetup
+    from src.deploy.cluster import DeployGPUSetup
 
     setup = DeployGPUSetup()
     # Inspect what was detected
@@ -41,7 +41,16 @@ from pathlib import Path
 
 import pynvml
 
-from src.deploy.models import AllGpuMIGConfigs, DetectedGPU, ProfilePlacement
+import src.deploy.system as system
+from src.deploy.mig_controller import MIGController
+
+from src.deploy.models import (
+    AllGpuMIGConfigs,
+    DetectedGPU,
+    GPUState,
+    MIGSlotState,
+    ProfilePlacement,
+)
 from src.simulation.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
 from src.simulation.models import MIGProfile, MIGProfileBase
 
@@ -421,19 +430,22 @@ class DeployGPUSetup:
         *,
         dry_run: bool = False,
     ) -> None:
-        """Apply MIG configurations to the physical GPUs.
+        """Apply MIG configurations to the physical GPUs and register state.
+
+        After all GPU instances are created, MIG device UUIDs are resolved via
+        NVML and the resulting :class:`~src.deploy.models.GPUState` is stored
+        in :data:`~src.deploy.system.SYSTEM_STATE` so that
+        :class:`~src.deploy.vllm.VLLMManager` can find the UUIDs for docker.
 
         Parameters
         ----------
         configs:
-            Mapping from gpu_idx to a list of ``(profile_string, start_slice)``
-            pairs, as returned by :meth:`pick_random_combinations`.
+            Mapping from gpu_idx to a list of :class:`~src.deploy.models.ProfilePlacement`
+            objects, as returned by :meth:`pick_random_combinations`.
         dry_run:
             If ``True``, log what *would* be done but do not call any NVML
             functions.  Useful for testing without root privileges.
         """
-        from src.deploy.mig_controller import MIGController  # noqa: PLC0415
-
         if dry_run:
             logger.info("[DRY RUN] Would apply the following MIG configurations:")
             for gpu_idx, placements in configs.items():
@@ -441,10 +453,32 @@ class DeployGPUSetup:
             return
 
         with MIGController(gpu_indices=self.gpu_indices) as ctrl:
+            # 1. Apply hardware MIG configurations.
             for gpu_idx, placements in configs.items():
                 ctrl.apply_full_configuration(gpu_idx, placements)
 
-        logger.info("All GPU MIG configurations applied successfully.")
+            # 2. Resolve MIG UUIDs while NVML is still active, then register
+            #    the resulting GPUState into the global SYSTEM_STATE.
+            for gpu_idx, placements in configs.items():
+                uuid_map = dict(ctrl.list_mig_device_uuids(gpu_idx))
+                info = self.gpu_info[gpu_idx]
+
+                slots = [
+                    MIGSlotState(
+                        gpu_idx=gpu_idx,
+                        profile_placement=p,
+                        mig_uuid=uuid_map[p.start_slice],
+                    )
+                    for p in placements
+                ]
+                gpu_state = GPUState(
+                    gpu_idx=gpu_idx,
+                    model_name=info.model_name,
+                    slots=sorted(slots, key=lambda s: s.profile_placement.start_slice),
+                )
+                system.register_gpu(gpu_state)
+
+        logger.info("All GPU MIG configurations applied and SYSTEM_STATE updated.")
 
     def apply_random(self, *, dry_run: bool = False) -> AllGpuMIGConfigs:
         """Pick random valid combinations and immediately apply them.

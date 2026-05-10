@@ -183,8 +183,6 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
     )
 
 
-
-
 def print_initial_state(init_mode: Any):
     # Display Initial State
     print("\n[Initial State]")

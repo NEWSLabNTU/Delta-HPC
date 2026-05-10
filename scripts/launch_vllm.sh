@@ -18,7 +18,7 @@ export MODEL_ID
 export HOST_PORT
 export MIG_SHORT="${MIG_UUID:4:4}"
 
-PROJECT_NAME="vllm-${MODEL_ID}-${MIG_SHORT}"
+PROJECT_NAME="vllm-${MODEL_ID//./_}-${MIG_SHORT}"
 
 case "$ACTION" in
   up)

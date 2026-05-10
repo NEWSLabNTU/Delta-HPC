@@ -19,6 +19,7 @@ dependencies = [
     "tabulate>=0.10.0",
     "seaborn>=0.13.2",
     "nvidia-ml-py>=13.595.45",
+    "openai>=2.36.0",
 ]
 
 [tool.uv.sources]

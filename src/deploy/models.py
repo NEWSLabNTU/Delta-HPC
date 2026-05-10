@@ -11,9 +11,9 @@ a single, stable location without creating circular dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from src.simulation.models import MIGProfile
+from src.simulation.models import AgentId, MIGProfile
 
 # Mapping of gpu_idx → ordered list of ProfilePlacement, covering all managed GPUs.
 AllGpuMIGConfigs = Dict[int, List["ProfilePlacement"]]
@@ -105,3 +105,77 @@ class DetectedGPU:
     mig_profile_cls: type
     valid_combos: List[Tuple[MIGProfile, ...]] = field(default_factory=list)
     combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Live system state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MIGSlotState:
+    """Live state of a single physical MIG GPU-instance slot.
+
+    Attributes
+    ----------
+    gpu_idx:
+        Physical GPU index.
+    profile_placement:
+        Hardware profile string and starting slice (from :class:`ProfilePlacement`).
+    mig_uuid:
+        NVML MIG compute-instance UUID (e.g. ``"MIG-GPU-xxxx.../1/0"``).  Used
+        as the ``device_ids`` entry in docker-compose.
+    model_id:
+        vLLM model config ID currently running on this slot
+        (e.g. ``"qwen2.5-7b-instruct"``), or ``None`` when no container is up.
+    port:
+        Host TCP port the vLLM container listens on, or ``None``.
+    container_name:
+        Docker compose project name for this slot, or ``None``.
+    agent_id:
+        The RL agent (:class:`~src.simulation.models.AgentId`) assigned to this slot,
+        or ``None``.
+    """
+
+    gpu_idx: int
+    profile_placement: ProfilePlacement
+    mig_uuid: str
+    model_id: Optional[str] = None
+    port: Optional[int] = None
+    container_name: Optional[str] = None
+    agent_id: Optional[AgentId] = None
+
+
+@dataclass
+class GPUState:
+    """Live state of one physical GPU.
+
+    Attributes
+    ----------
+    gpu_idx:
+        Physical GPU index.
+    model_name:
+        Hardware model name, e.g. ``"A100_40GB"``.
+    slots:
+        Ordered list of :class:`MIGSlotState` objects, one per active MIG slot,
+        sorted by :attr:`ProfilePlacement.start_slice`.
+    """
+
+    gpu_idx: int
+    model_name: str
+    slots: List[MIGSlotState] = field(default_factory=list)
+
+
+@dataclass
+class ClusterState:
+    """Full live state of the deployed cluster.
+
+    Attributes
+    ----------
+    gpus:
+        Mapping from physical GPU index to its current :class:`GPUState`.
+        Only GPUs that have been configured by :class:`~src.deploy.cluster.DeployGPUSetup`
+        appear here.
+    """
+
+    gpus: Dict[int, GPUState] = field(default_factory=dict)
