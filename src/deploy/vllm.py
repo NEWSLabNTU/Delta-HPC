@@ -54,7 +54,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 import src.deploy.metrics as metrics
 import src.deploy.system as system
@@ -154,7 +154,7 @@ class VLLMManager:
         KeyError
             If no model is configured for this GPU / profile combination.
         """
-        profile = slot.profile_placement.profile_string
+        profile = slot.profile_placement.profile.string
         gpu_map = self._model_map[slot.gpu_idx]
         if profile not in gpu_map:
             raise KeyError(
@@ -242,7 +242,7 @@ class VLLMManager:
         logger.info(
             "vllm: GPU %d [%s] → model=%s  port=%d  container=%s",
             slot.gpu_idx,
-            slot.profile_placement.profile_string,
+            slot.profile_placement.profile.string,
             model_id,
             port,
             container_name,
@@ -268,7 +268,7 @@ class VLLMManager:
         logger.info(
             "vllm: GPU %d [%s] waiting for in-flight requests to drain …",
             slot.gpu_idx,
-            slot.profile_placement.profile_string,
+            slot.profile_placement.profile.string,
         )
         while True:
             try:
@@ -280,13 +280,13 @@ class VLLMManager:
                     logger.info(
                         "vllm: GPU %d [%s] drained (running=0 waiting=0).",
                         slot.gpu_idx,
-                        slot.profile_placement.profile_string,
+                        slot.profile_placement.profile.string,
                     )
                     return
                 logger.debug(
                     "vllm: GPU %d [%s] still busy — running=%.0f waiting=%.0f, retrying …",
                     slot.gpu_idx,
-                    slot.profile_placement.profile_string,
+                    slot.profile_placement.profile.string,
                     running,
                     waiting,
                 )
@@ -294,7 +294,7 @@ class VLLMManager:
                 logger.warning(
                     "vllm: GPU %d [%s] /metrics unreachable (%s) — assuming drained.",
                     slot.gpu_idx,
-                    slot.profile_placement.profile_string,
+                    slot.profile_placement.profile.string,
                     exc,
                 )
                 return
@@ -334,7 +334,7 @@ class VLLMManager:
         logger.info(
             "vllm: GPU %d [%s] stopped.",
             slot.gpu_idx,
-            slot.profile_placement.profile_string,
+            slot.profile_placement.profile.string,
         )
 
     def start_all(self, gpu_state: GPUState) -> None:
@@ -414,7 +414,7 @@ class VLLMManager:
     # Inference
     # ------------------------------------------------------------------
 
-    def send_request(
+    async def send_request(
         self,
         slot: MIGSlotState,
         messages: List[Dict[str, str]],
@@ -441,20 +441,53 @@ class VLLMManager:
         Returns
         -------
         dict
-            Raw JSON response from the ``/v1/chat/completions`` endpoint.
+            Raw JSON response from the ``/v1/chat/completions`` endpoint,
+            augmented with ``ttft`` and ``total_time`` metrics.
         """
         if slot.port is None or slot.model_id is None:
             raise RuntimeError(
                 "Slot is not running — call start() and wait_until_ready() first."
             )
 
-        client = OpenAI(base_url=f"http://localhost:{slot.port}/v1")
-        response = client.chat.completions.create(
+        client = AsyncOpenAI(base_url=f"http://localhost:{slot.port}/v1")
+
+        start_time = time.time()
+        ttft = None
+
+        response_stream = await client.chat.completions.create(
             model=slot.model_id,
             messages=messages,  # type: ignore
             max_tokens=max_tokens,
             temperature=0,
             timeout=self._cfg.vllm.request_timeout_s,
+            stream=True,
+            stream_options={"include_usage": True},
             extra_body=kwargs,
         )
-        return response.model_dump()
+
+        full_content = ""
+        usage = None
+
+        async for chunk in response_stream:
+            if ttft is None:
+                ttft = time.time() - start_time
+
+            if (
+                chunk.choices
+                and len(chunk.choices) > 0
+                and chunk.choices[0].delta.content
+            ):
+                full_content += chunk.choices[0].delta.content
+
+            if chunk.usage is not None:
+                usage = chunk.usage.model_dump()
+
+        total_time = time.time() - start_time
+
+        return {
+            "choices": [{"message": {"role": "assistant", "content": full_content}}],
+            "usage": usage
+            or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "ttft": ttft if ttft is not None else total_time,
+            "total_time": total_time,
+        }

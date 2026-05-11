@@ -150,7 +150,7 @@ def _combo_to_placement(
         hw_prof: MIGProfileBase = next(
             p for p in mig_profile_cls if p.profile_type == logical_prof
         )
-        placements.append(ProfilePlacement(hw_prof.string, slice_group[0]))
+        placements.append(ProfilePlacement(hw_prof, slice_group[0]))
 
     return placements
 
@@ -460,9 +460,15 @@ class DeployGPUSetup:
             # 2. Resolve MIG UUIDs while NVML is still active, then register
             #    the resulting GPUState into the global SYSTEM_STATE.
             for gpu_idx, placements in configs.items():
-                uuid_map = dict(ctrl.list_mig_device_uuids(gpu_idx))
                 info = self.gpu_info[gpu_idx]
-
+                
+                # Register the GPU first so MIGController can look up the profile class
+                system.register_gpu(
+                    GPUState(gpu_idx, info.model_name, info.mig_profile_cls)
+                )
+                
+                uuid_map = dict(ctrl.list_mig_device_uuids(gpu_idx))
+                
                 slots = [
                     MIGSlotState(
                         gpu_idx=gpu_idx,
@@ -474,6 +480,7 @@ class DeployGPUSetup:
                 gpu_state = GPUState(
                     gpu_idx=gpu_idx,
                     model_name=info.model_name,
+                    mig_profile_cls=info.mig_profile_cls,
                     slots=sorted(slots, key=lambda s: s.profile_placement.start_slice),
                 )
                 system.register_gpu(gpu_state)

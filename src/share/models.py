@@ -59,6 +59,10 @@ class MIGProfile(Enum):
             return 1
         return [7, 4, 3, 2, 1, 1][self.value]
 
+    @property
+    def short_name(self) -> str:
+        return ["7G", "4G", "3G", "2G", "1L", "1S"][self.value]
+
     def __eq__(self, other):
         if isinstance(other, MIGProfileBase):
             raise TypeError(
@@ -172,6 +176,14 @@ class Request(ABC):
     @property
     @abstractmethod
     def id(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def prompt(self) -> str: ...
+
+    @prompt.setter
+    @abstractmethod
+    def prompt(self, value: str) -> None: ...
 
     @abstractmethod
     def clone(self) -> Request: ...

@@ -30,15 +30,14 @@ class ProfilePlacement:
 
     Attributes
     ----------
-    profile_string:
-        Hardware profile string in the form ``"{size}g.{vram}gb"``,
-        e.g. ``"4g.20gb"``, ``"1g.10gb"``.
+    profile:
+        Hardware profile enum member (e.g. from ``MIGProfileA100``).
     start_slice:
         Index of the first memory slice to occupy (0-indexed).  Together with
         the profile's slice count this fully determines placement.
     """
 
-    profile_string: str
+    profile: MIGProfileBase
     start_slice: int
 
 
@@ -50,8 +49,8 @@ class GpuInstanceInfo:
     ----------
     instance_id:
         NVML GPU-instance ID.
-    profile_string:
-        Human-readable profile string, e.g. ``"4g.20gb"``.
+    profile:
+        Hardware profile enum member.
     start_slice:
         Starting memory-slice index.
     slice_count:
@@ -59,14 +58,14 @@ class GpuInstanceInfo:
     """
 
     instance_id: int
-    profile_string: str
+    profile: MIGProfileBase
     start_slice: int
     slice_count: int
 
     def __repr__(self) -> str:
         return (
             f"GpuInstanceInfo(id={self.instance_id}, "
-            f"profile={self.profile_string}, "
+            f"profile={self.profile.string}, "
             f"slices=[{self.start_slice}, {self.start_slice + self.slice_count - 1}])"
         )
 
@@ -121,7 +120,7 @@ class MIGSlotState:
     gpu_idx:
         Physical GPU index.
     profile_placement:
-        Hardware profile string and starting slice (from :class:`ProfilePlacement`).
+        Hardware profile enum member and starting slice (from :class:`ProfilePlacement`).
     mig_uuid:
         NVML MIG compute-instance UUID (e.g. ``"MIG-GPU-xxxx.../1/0"``).  Used
         as the ``device_ids`` entry in docker-compose.
@@ -156,6 +155,8 @@ class GPUState:
         Physical GPU index.
     model_name:
         Hardware model name, e.g. ``"A100_40GB"``.
+    mig_profile_cls:
+        Hardware-specific :class:`~src.share.models.MIGProfileBase` enum class.
     slots:
         Ordered list of :class:`MIGSlotState` objects, one per active MIG slot,
         sorted by :attr:`ProfilePlacement.start_slice`.
@@ -163,6 +164,7 @@ class GPUState:
 
     gpu_idx: int
     model_name: str
+    mig_profile_cls: type[MIGProfileBase]
     slots: List[MIGSlotState] = field(default_factory=list)
 
 

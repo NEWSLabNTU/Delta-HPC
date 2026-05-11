@@ -20,6 +20,7 @@ class RequestImpl(m.Request):
         self._prompt_tokens = prompt_tokens
         self._arrival_time = arrival_time
         self._original_id = original_id
+        self._prompt = ""
         self._serving_engine = None
         self._completion_tokens = 0
         self._decode_time = 0.0
@@ -42,6 +43,14 @@ class RequestImpl(m.Request):
     @property
     def id(self) -> str:
         return self._id
+
+    @property
+    def prompt(self) -> str:
+        return self._prompt
+
+    @prompt.setter
+    def prompt(self, value: str) -> None:
+        self._prompt = value
 
     @property
     def serving_engine(self) -> Optional[m.LLMEngine]:

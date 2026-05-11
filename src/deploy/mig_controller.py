@@ -31,6 +31,8 @@ from typing import Dict, List, Tuple
 import pynvml
 
 from src.deploy.models import GpuInstanceInfo, ProfilePlacement  # noqa: F401
+from src.share.models import MIGProfileBase
+from src.deploy.system import SYSTEM_STATE
 
 
 logger = logging.getLogger(__name__)
@@ -205,6 +207,11 @@ class MIGController:
         handle = self._handle(gpu_idx)
         profile_lookup = self._profile_lookup(gpu_idx)
 
+        gpu = SYSTEM_STATE.gpus.get(gpu_idx)
+        if gpu is None:
+            raise ValueError(f"GPU {gpu_idx} not found in SYSTEM_STATE")
+        mig_profile_cls = gpu.mig_profile_cls
+
         infos: List[GpuInstanceInfo] = []
         # Iterate over all supported profiles and collect existing instances.
         for prof_str, (prof_info, _) in profile_lookup.items():
@@ -218,7 +225,7 @@ class MIGController:
                 infos.append(
                     GpuInstanceInfo(
                         instance_id=inst_info.id,
-                        profile_string=prof_str,
+                        profile=mig_profile_cls.from_string(prof_str),
                         start_slice=placement.start,
                         slice_count=placement.size,
                     )
@@ -320,7 +327,7 @@ class MIGController:
     def create_gi(
         self,
         gpu_idx: int,
-        profile_string: str,
+        profile: MIGProfileBase,
         start_slice: int,
     ) -> pynvml.c_nvmlGpuInstance_t:  # type: ignore[valid-type]
         """Create a single GPU instance at an explicit slice placement.
@@ -329,8 +336,8 @@ class MIGController:
         ----------
         gpu_idx:
             Physical GPU index.
-        profile_string:
-            Hardware profile string, e.g. ``"4g.20gb"`` or ``"1g.10gb"``.
+        profile:
+            Hardware profile enum member (e.g. from ``MIGProfileA100``).
         start_slice:
             The memory-slice index at which the instance should begin.
 
@@ -350,14 +357,14 @@ class MIGController:
         handle = self._handle(gpu_idx)
         profile_lookup = self._profile_lookup(gpu_idx)
 
-        if profile_string not in profile_lookup:
+        if profile.string not in profile_lookup:
             available = sorted(profile_lookup.keys())
             raise ValueError(
-                f"Profile '{profile_string}' not supported on GPU {gpu_idx}.  "
+                f"Profile '{profile.string}' not supported on GPU {gpu_idx}.  "
                 f"Available profiles: {available}"
             )
 
-        prof_info, _ = profile_lookup[profile_string]
+        prof_info, _ = profile_lookup[profile.string]
 
         # Build the placement struct.
         placement = pynvml.c_nvmlGpuInstancePlacement_t()
@@ -370,7 +377,7 @@ class MIGController:
         logger.info(
             "GPU %d: created GPU instance  profile=%s  start_slice=%d  slice_count=%d.",
             gpu_idx,
-            profile_string,
+            profile.string,
             start_slice,
             prof_info.sliceCount,
         )
@@ -407,7 +414,7 @@ class MIGController:
         self._require_init()
         handles: List[pynvml.c_nvmlGpuInstance_t] = []  # type: ignore[valid-type]
         for p in profile_placements:
-            h = self.create_gi(gpu_idx, p.profile_string, p.start_slice)
+            h = self.create_gi(gpu_idx, p.profile, p.start_slice)
             handles.append(h)
         return handles
 
