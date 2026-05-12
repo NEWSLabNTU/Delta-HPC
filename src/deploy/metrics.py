@@ -30,6 +30,7 @@ _TTFT_COUNT = re.compile(
 )
 _WAITING = re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 _RUNNING = re.compile(r"^vllm:num_requests_running\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
+_KV_UTIL = re.compile(r"^vllm:gpu_cache_usage_perc\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 
 
 def _first(pattern: re.Pattern[str], text: str, default: float = 0.0) -> float:
@@ -110,4 +111,5 @@ class VLLMMetricsClient:
             "ttft_mean_s": ttft_mean,
             "queue_length": _first(_WAITING, text),
             "running_requests": _first(_RUNNING, text),
+            "kv_cache_util": _first(_KV_UTIL, text),
         }

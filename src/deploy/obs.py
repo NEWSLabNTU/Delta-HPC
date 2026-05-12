@@ -1,0 +1,542 @@
+import math
+import time
+import logging
+from collections import deque
+from dataclasses import dataclass, field
+import asyncio
+from typing import Any, Dict, List, Tuple, Optional
+
+import src.share.models as m
+from src.deploy.system import SYSTEM_STATE
+from src.training.config import TRAINING_CONFIG
+from src.simulation.config import NUM_MIG_SLICES
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentStats:
+    # Historical data for trends and history observation fields
+    arrival_rate_history: deque[float] = field(
+        default_factory=lambda: deque(
+            [0.0] * TRAINING_CONFIG.arrival_rate_history_length,
+            maxlen=TRAINING_CONFIG.arrival_rate_history_length,
+        )
+    )
+    # We store the last 2 interval averages to compute trends
+    avg_queue_length_history: deque[Tuple[float, ...]] = field(
+        default_factory=lambda: deque(maxlen=2)
+    )
+    avg_running_requests_history: deque[Tuple[float, ...]] = field(
+        default_factory=lambda: deque(maxlen=2)
+    )
+
+    # Accumulators for the CURRENT interval (reset every action_interval)
+    interval_requests_count: int = 0
+    # Latency samples (weighted by TRAINING_CONFIG)
+    composite_latencies: Dict[int, deque[float]] = field(
+        default_factory=lambda: {mig.value: deque(maxlen=100) for mig in m.MIGProfile}
+    )
+    perm_composite_latencies: deque[float] = field(
+        default_factory=lambda: deque(maxlen=100)
+    )
+
+    # Metric samples for averaging (collected at ~1Hz)
+    queue_length_samples: List[List[int]] = field(
+        default_factory=lambda: [[] for _ in range(7)]
+    )
+    running_req_samples: List[List[int]] = field(
+        default_factory=lambda: [[] for _ in range(7)]
+    )
+    kv_util_samples: List[List[float]] = field(
+        default_factory=lambda: [[] for _ in range(7)]
+    )
+
+    # Action history (cooldown tracking in terms of intervals)
+    action_history: Dict[str, Dict[str, Any]] = field(
+        default_factory=lambda: {
+            "split": {"intervals": TRAINING_CONFIG.action_cooldown},
+            "merge": {"intervals": TRAINING_CONFIG.action_cooldown},
+            "give": {"intervals": TRAINING_CONFIG.action_cooldown, "amount": 0},
+            "receive": {"intervals": TRAINING_CONFIG.action_cooldown, "amount": 0},
+        }
+    )
+
+
+class ObservationCollector:
+    def __init__(self):
+        self._agent_stats: Dict[m.AgentId, AgentStats] = {
+            m.AgentId.CODING: AgentStats(),
+            m.AgentId.RAG: AgentStats(),
+        }
+        self._last_interval_start = time.time()
+        self._current_budget = TRAINING_CONFIG.reconfig_budget
+        self._reconfig_flag = False
+        self._last_action_downtime = 0.0
+        self._refresh_task: Optional[asyncio.Task] = None
+
+    # -----------------------------------------------------------------------
+    # Event Hooks (Called by ReqPublisher or similar)
+    # -----------------------------------------------------------------------
+
+    def record_arrival(self, agent_id: m.AgentId):
+        self._agent_stats[agent_id].interval_requests_count += 1
+
+    def record_completion(
+        self,
+        agent_id: m.AgentId,
+        ttft: float,
+        tpot: float,
+        is_permanent: bool,
+        mig_idx: int,
+    ):
+        w_t = TRAINING_CONFIG.w("ttft")
+        w_p = TRAINING_CONFIG.w("tpot")
+        composite = w_t * ttft + w_p * tpot
+
+        stats = self._agent_stats[agent_id]
+        if is_permanent:
+            stats.perm_composite_latencies.append(composite)
+        else:
+            stats.composite_latencies[mig_idx].append(composite)
+
+    def record_samples(
+        self, agent_id: m.AgentId, samples_dict: Dict[int, Dict[str, float]]
+    ):
+        """
+        samples_dict: {slot_idx: {"running": int, "waiting": int, "kv_util": float}}
+        slot_idx: 0-5 for MIG, 6 for permanent
+        """
+        stats = self._agent_stats[agent_id]
+        for slot_idx, metrics in samples_dict.items():
+            stats.queue_length_samples[slot_idx].append(int(metrics["waiting"]))
+            stats.running_req_samples[slot_idx].append(int(metrics["running"]))
+            stats.kv_util_samples[slot_idx].append(metrics["kv_util"])
+
+    # -----------------------------------------------------------------------
+    # Interval Management
+    # -----------------------------------------------------------------------
+
+    def start_new_interval(self):
+        """Finalize metrics for the current interval and reset counters."""
+        now = time.time()
+        duration = now - self._last_interval_start
+
+        for agent_id, stats in self._agent_stats.items():
+            # 1. Arrival Rate
+            rate = stats.interval_requests_count / duration
+            stats.arrival_rate_history.appendleft(rate)
+            stats.interval_requests_count = 0
+
+            # 2. Avg Queue Lengths & Running Requests
+            avg_qs = []
+            avg_runs = []
+            for i in range(7):
+                qs = stats.queue_length_samples[i]
+                rs = stats.running_req_samples[i]
+                avg_qs.append(sum(qs) / len(qs) if qs else 0.0)
+                avg_runs.append(sum(rs) / len(rs) if rs else 0.0)
+                stats.queue_length_samples[i].clear()
+                stats.running_req_samples[i].clear()
+                # KV util samples are handled in get_state directly if needed,
+                # but let's clear them here too.
+                stats.kv_util_samples[i].clear()
+
+            stats.avg_queue_length_history.appendleft(tuple(avg_qs))
+            stats.avg_running_requests_history.appendleft(tuple(avg_runs))
+
+            # 3. Action Cooldowns
+            for entry in stats.action_history.values():
+                entry["intervals"] += 1
+
+        self._last_interval_start = now
+        # Budget refresh logic (simulating simulation/environment_state.py:91)
+        # Note: Real-time budget refresh might need a separate timer.
+
+    def set_last_action(self, agent_id: m.AgentId, action_type: str, amount: int = 0):
+        entry = self._agent_stats[agent_id].action_history[action_type]
+        entry["intervals"] = 0
+        if "amount" in entry:
+            entry["amount"] = amount
+
+    # -----------------------------------------------------------------------
+    # Budget & Reconfig Management
+    # -----------------------------------------------------------------------
+
+    def consume_budget(self, cost: float):
+        """Deduct reconfiguration cost from the current budget."""
+        self._current_budget = max(0.0, self._current_budget - cost)
+        self._last_action_downtime = cost
+        self._reconfig_flag = True
+        logger.info(
+            f"Consumed {cost:.1f}s from budget. Remaining: {self._current_budget:.1f}s"
+        )
+
+    def mark_reconfig_complete(self):
+        """Mark the reconfiguration process as finished."""
+        self._reconfig_flag = False
+        logger.info("Reconfiguration complete.")
+
+    def refresh_budget(self):
+        """Reset the reconfiguration budget to the default maximum."""
+        self._current_budget = TRAINING_CONFIG.reconfig_budget
+        logger.info(f"Budget refreshed to {self._current_budget}s.")
+
+    def start_budget_refresh_loop(self):
+        """Start a background task to refresh the budget periodically."""
+        if self._refresh_task is not None:
+            return
+
+        async def _loop():
+            while True:
+                await asyncio.sleep(TRAINING_CONFIG.refresh_period)
+                self.refresh_budget()
+
+        self._refresh_task = asyncio.create_task(_loop())
+        logger.info(
+            f"Budget refresh loop started (period: {TRAINING_CONFIG.refresh_period}s)"
+        )
+
+    # -----------------------------------------------------------------------
+    # Observation Generation
+    # -----------------------------------------------------------------------
+
+    def get_observation(self) -> m.EnvironmentStateData:
+        """Construct the full normalized observation dictionary."""
+        agents = list(m.AgentId)
+
+        # 1. Arrival Rate
+        arrival_rate = {}
+        arrival_rate_trend = {}
+        arrival_rate_history = {}
+        for aid in agents:
+            stats = self._agent_stats[aid]
+            curr = stats.arrival_rate_history[0]
+            prev = (
+                stats.arrival_rate_history[1]
+                if len(stats.arrival_rate_history) > 1
+                else 0.0
+            )
+
+            arrival_rate[aid] = curr / TRAINING_CONFIG.norm_arrival_rate
+            if prev == 0:
+                arrival_rate_trend[aid] = 1.0 if curr > 0 else 0.0
+            else:
+                arrival_rate_trend[aid] = (curr - prev) / prev
+
+            arrival_rate_history[aid] = tuple(
+                r / TRAINING_CONFIG.norm_arrival_rate
+                for r in stats.arrival_rate_history
+            )
+
+        predicted_arrival_rate = {
+            aid: arrival_rate[aid] * (1 + arrival_rate_trend[aid]) for aid in agents
+        }
+
+        # 2. Queue Lengths & Running Requests
+        avg_queue_length = {}
+        avg_queue_length_trend = {}
+        avg_running_requests = {}
+
+        max_q_expected = TRAINING_CONFIG.norm_avg_queue_length
+        q_denom = math.log10(1 + max_q_expected)
+
+        for aid in agents:
+            stats = self._agent_stats[aid]
+            curr_qs = (
+                stats.avg_queue_length_history[0]
+                if stats.avg_queue_length_history
+                else [0.0] * 7
+            )
+            prev_qs = (
+                stats.avg_queue_length_history[1]
+                if len(stats.avg_queue_length_history) > 1
+                else [0.0] * 7
+            )
+            curr_runs = (
+                stats.avg_running_requests_history[0]
+                if stats.avg_running_requests_history
+                else [0.0] * 7
+            )
+
+            # Normalized logs
+            avg_queue_length[aid] = tuple(math.log10(1 + q) / q_denom for q in curr_qs)
+
+            trends = []
+            for c, p in zip(curr_qs, prev_qs):
+                if p == 0:
+                    trends.append(1.0 if c > 0 else 0.0)
+                else:
+                    trd = (c - p) / p
+                    trd = max(
+                        -TRAINING_CONFIG.queue_length_trend_clamp,
+                        min(trd, TRAINING_CONFIG.queue_length_trend_clamp),
+                    )
+                    trends.append(trd)
+            avg_queue_length_trend[aid] = tuple(trends)
+
+            avg_running_requests[aid] = tuple(
+                r / TRAINING_CONFIG.norm_avg_running_requests for r in curr_runs
+            )
+
+        # 3. KV Cache & Latency
+        kv_cache_util = self._get_kv_cache_utilization()
+        latent_proportions, raw_latent_totals = self._get_avg_composite_latency()
+
+        # 4. Topology & Ownership
+        mig_profile_id_onehot = self._get_mig_profile_id_onehot()
+        ownership_grid = self._get_ownership_grid()
+        agent_owns_mig = self._get_agent_owns_mig()
+        mig_geometry = self._get_mig_geometry()
+
+        # 5. Global Ratios
+        vram_ratio = self._get_total_vram_ratio()
+        sm_ratio = self._get_total_sm_ratio()
+
+        ratios = self._calculate_global_agent_ratios(
+            arrival_rate,
+            avg_queue_length,
+            avg_running_requests,
+            kv_cache_util,
+            raw_latent_totals,
+            vram_ratio,
+            sm_ratio,
+        )
+
+        state_data: m.EnvironmentStateData = {
+            "arrival_rate": arrival_rate,
+            "predicted_arrival_rate": predicted_arrival_rate,
+            "arrival_rate_history": arrival_rate_history,
+            "avg_queue_length": avg_queue_length,
+            "avg_queue_length_trend": avg_queue_length_trend,
+            "avg_running_requests": avg_running_requests,
+            "kv_cache_utilization": kv_cache_util,
+            "avg_composite_latency": latent_proportions,
+            "mig_profile_id_onehot": mig_profile_id_onehot,
+            "ownership_grid": ownership_grid,
+            "agent_owns_mig": agent_owns_mig,
+            "mig_geometry": mig_geometry,
+            "current_budget": self._current_budget
+            / TRAINING_CONFIG.norm_current_budget,
+            "downtime_ratio": self._last_action_downtime
+            / TRAINING_CONFIG.action_interval,
+            "total_sm_ratio": sm_ratio,
+            "total_vram_ratio": vram_ratio,
+            "recovery_flag": self._reconfig_flag,
+            "last_split": {aid: self._get_action_norm(aid, "split") for aid in agents},
+            "last_merge": {aid: self._get_action_norm(aid, "merge") for aid in agents},
+            "last_give": {aid: self._get_action_norm(aid, "give") for aid in agents},
+            "last_receive": {
+                aid: self._get_action_norm(aid, "receive") for aid in agents
+            },
+            "last_give_amount": {
+                aid: self._get_action_amount_norm(aid, "give") for aid in agents
+            },
+            "last_receive_amount": {
+                aid: self._get_action_amount_norm(aid, "receive") for aid in agents
+            },
+            "requests": {aid: [] for aid in agents},
+            "agent_arrival_rate_ratio": ratios["agent_arrival_rate_ratio"],
+            "agent_avg_queue_len_ratio": ratios["agent_avg_queue_len_ratio"],
+            "agent_avg_running_req_ratio": ratios["agent_avg_running_req_ratio"],
+            "agent_avg_kv_cache_ratio": ratios["agent_avg_kv_cache_ratio"],
+            "agent_avg_composite_latency_ratio": ratios[
+                "agent_avg_composite_latency_ratio"
+            ],
+            "agent_vram_ratio": ratios["agent_vram_ratio"],
+            "agent_sm_ratio": ratios["agent_sm_ratio"],
+        }
+        return state_data
+
+    # -----------------------------------------------------------------------
+    # Helper Methods (Calculations)
+    # -----------------------------------------------------------------------
+
+    def _get_kv_cache_utilization(self) -> Dict[m.AgentId, Tuple[float, ...]]:
+        res = {}
+        for aid in list(m.AgentId):
+            stats = self._agent_stats[aid]
+            utils = []
+            for i in range(7):
+                samples = stats.kv_util_samples[i]
+                utils.append(sum(samples) / len(samples) if samples else 0.0)
+            res[aid] = tuple(utils)
+        return res
+
+    def _get_avg_composite_latency(
+        self,
+    ) -> Tuple[Dict[m.AgentId, Tuple[float, ...]], Dict[m.AgentId, float]]:
+        proportions = {}
+        raw_totals = {}
+        for aid in list(m.AgentId):
+            stats = self._agent_stats[aid]
+            raw_avgs = []
+            for i in range(6):
+                q = stats.composite_latencies[i]
+                raw_avgs.append(sum(q) / len(q) if q else 0.0)
+
+            pq = stats.perm_composite_latencies
+            raw_avgs.append(sum(pq) / len(pq) if pq else 0.0)
+
+            total = sum(raw_avgs)
+            raw_totals[aid] = total
+            if total > 0:
+                proportions[aid] = tuple(v / total for v in raw_avgs)
+            else:
+                proportions[aid] = tuple(0.0 for _ in raw_avgs)
+        return proportions, raw_totals
+
+    def _get_mig_profile_id_onehot(self) -> Dict[int, List[float]]:
+        from src.share.mig_matrix import STATE_DEFINITIONS, STATE_ID_MAP
+
+        onehot = {}
+        for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
+            # Reconstruction of state_id:
+            # Current profiles as a sorted list of MIGProfile enum members
+            current_profiles = sorted(
+                [
+                    slot.profile_placement.profile.profile_type
+                    for slot in gpu_state.slots
+                ],
+                key=lambda x: x.value,
+            )
+
+            found_sid = None
+            for sid, defs in STATE_DEFINITIONS.items():
+                if sorted(defs, key=lambda x: x.value) == current_profiles:
+                    found_sid = sid
+                    break
+
+            if found_sid is None:
+                raise ValueError(
+                    f"GPU {gpu_idx}: could not identify MIG state for profiles: {current_profiles}"
+                )
+
+            found_idx = STATE_ID_MAP.get(found_sid, 0)
+            vec = [0.0] * 15
+            vec[found_idx] = 1.0
+            onehot[gpu_idx] = vec
+        return onehot
+
+    def _get_ownership_grid(self) -> Dict[int, List[int]]:
+        grid_dict = {}
+        for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
+            grid = [0] * NUM_MIG_SLICES
+            for slot in gpu_state.slots:
+                if slot.agent_id:
+                    owner_val = 1 if slot.agent_id == m.AgentId.CODING else 2
+                    size = slot.profile_placement.profile.size
+                    start = slot.profile_placement.start_slice
+                    for i in range(start, start + size):
+                        if i < NUM_MIG_SLICES:
+                            grid[i] = owner_val
+            grid_dict[gpu_idx] = grid
+        return grid_dict
+
+    def _get_agent_owns_mig(self) -> Dict[m.AgentId, Tuple[float, ...]]:
+        res = {}
+        divisor = TRAINING_CONFIG.norm_mig_geometry
+        for aid in list(m.AgentId):
+            counts = [0] * len(m.MIGProfile)
+            for gpu in SYSTEM_STATE.gpus.values():
+                for slot in gpu.slots:
+                    if slot.agent_id == aid:
+                        counts[slot.profile_placement.profile.profile_type.value] += 1
+            res[aid] = tuple(c / divisor for c in counts)
+        return res
+
+    def _get_mig_geometry(self) -> Dict[int, List[float]]:
+        res = {}
+        divisor = TRAINING_CONFIG.norm_mig_geometry
+        agents = list(m.AgentId)
+        for gpu_idx, gpu in SYSTEM_STATE.gpus.items():
+            sizes = [0.0] * len(agents)
+            for slot in gpu.slots:
+                if slot.agent_id in agents:
+                    idx = agents.index(slot.agent_id)
+                    sizes[idx] += slot.profile_placement.profile.size
+            res[gpu_idx] = [s / divisor for s in sizes]
+        return res
+
+    def _get_total_sm_ratio(self) -> Dict[m.AgentId, float]:
+        res = {}
+        for aid in list(m.AgentId):
+            total_size = 0
+            for gpu in SYSTEM_STATE.gpus.values():
+                for slot in gpu.slots:
+                    if slot.agent_id == aid:
+                        total_size += slot.profile_placement.profile.size
+            res[aid] = total_size / TRAINING_CONFIG.norm_total_sm_ratio
+        return res
+
+    def _get_total_vram_ratio(self) -> Dict[m.AgentId, float]:
+        res = {}
+        for aid in list(m.AgentId):
+            total_vram = 0
+            for gpu in SYSTEM_STATE.gpus.values():
+                for slot in gpu.slots:
+                    if slot.agent_id == aid:
+                        total_vram += slot.profile_placement.profile.vram
+            res[aid] = total_vram / TRAINING_CONFIG.norm_total_vram_ratio
+        return res
+
+    def _get_action_norm(self, agent_id: m.AgentId, action: str) -> float:
+        norm = float(TRAINING_CONFIG.action_cooldown)
+        val = self._agent_stats[agent_id].action_history[action]["intervals"]
+        return min(val, norm) / norm
+
+    def _get_action_amount_norm(self, agent_id: m.AgentId, action: str) -> float:
+        norm_action = float(TRAINING_CONFIG.action_cooldown)
+        norm_amount = TRAINING_CONFIG.norm_vram_transfer_amount
+        entry = self._agent_stats[agent_id].action_history[action]
+        if entry["intervals"] == 0 or entry["intervals"] >= norm_action:
+            return 0.0
+        return entry["amount"] / norm_amount
+
+    def _calculate_global_agent_ratios(
+        self,
+        arrival_rate,
+        avg_queue_length,
+        avg_running_requests,
+        kv_cache_util,
+        raw_latent_totals,
+        vram_ratio,
+        sm_ratio,
+    ):
+        # Implementation of simulation/environment_state.py:279
+        def get_total(data_dict, aid):
+            val = data_dict[aid]
+            return sum(val) if isinstance(val, (tuple, list)) else float(val)
+
+        metrics_map = {
+            "agent_arrival_rate_ratio": arrival_rate,
+            "agent_avg_queue_len_ratio": avg_queue_length,
+            "agent_avg_running_req_ratio": avg_running_requests,
+            "agent_avg_kv_cache_ratio": kv_cache_util,
+            "agent_vram_ratio": vram_ratio,
+            "agent_sm_ratio": sm_ratio,
+        }
+
+        ratios = {}
+        epsilon = 1e-6
+        for key, data in metrics_map.items():
+            c_val = get_total(data, m.AgentId.CODING)
+            r_val = get_total(data, m.AgentId.RAG)
+            ratios[key] = (c_val - r_val) / (c_val + r_val + epsilon)
+
+        # Latency ratio (Log-Normalized symmetric ratio)
+        max_exp = TRAINING_CONFIG.norm_avg_composite_latency
+        denom = math.log10(1 + max_exp)
+        l_c_raw = raw_latent_totals[m.AgentId.CODING]
+        l_r_raw = raw_latent_totals[m.AgentId.RAG]
+        l_c_norm = math.log10(1 + l_c_raw) / denom
+        l_r_norm = math.log10(1 + l_r_raw) / denom
+        ratios["agent_avg_composite_latency_ratio"] = (l_c_norm - l_r_norm) / (
+            l_c_norm + l_r_norm + epsilon
+        )
+
+        return ratios
+
+
+# Global singleton
+OBS_COLLECTOR = ObservationCollector()

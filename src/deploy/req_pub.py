@@ -12,6 +12,7 @@ from src.deploy.models import MIGSlotState
 from src.deploy.system import SYSTEM_STATE
 from src.deploy.metrics import VLLMMetricsClient
 from src.share.request_loader import RequestLoader
+from src.deploy.obs import OBS_COLLECTOR
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,7 @@ class AgentMetrics:
         }
         self.total_observation_time: float = 0.0
 
-        self.tokens_by_profile: Dict[str, int] = {
-            p.short_name: 0 for p in m.MIGProfile
-        }
+        self.tokens_by_profile: Dict[str, int] = {p.short_name: 0 for p in m.MIGProfile}
 
 
 class ReqPublisher:
@@ -142,6 +141,7 @@ class ReqPublisher:
     async def _handle_request(
         self, agent_id: m.AgentId, req: m.Request, slot: MIGSlotState
     ):
+        OBS_COLLECTOR.record_arrival(agent_id)
         messages = [{"role": "user", "content": req.prompt}]
 
         slot_key = (slot.gpu_idx, slot.profile_placement.start_slice)
@@ -171,6 +171,18 @@ class ReqPublisher:
                 metrics.tokens_by_profile[profile_key] = 0
             metrics.tokens_by_profile[profile_key] += tokens_generated
 
+            # Record completion to OBS_COLLECTOR
+            ttft = response.get("ttft", 0.0)
+            total_time = response.get("total_time", 0.0)
+            tpot = (
+                (total_time - ttft) / tokens_generated if tokens_generated > 0 else 0.0
+            )
+            is_permanent = (
+                slot.profile_placement.profile.profile_type == m.MIGProfile.MIG_7G
+            )
+            mig_idx = slot.profile_placement.profile.profile_type.value
+            OBS_COLLECTOR.record_completion(agent_id, ttft, tpot, is_permanent, mig_idx)
+
         except Exception as e:
             logger.error(f"Request {req.id} failed on slot {slot_key}: {e}")
         finally:
@@ -186,17 +198,38 @@ class ReqPublisher:
                 break
 
             active_slots = self._get_active_slots(agent_id)
+            slot_samples: Dict[int, Dict[str, float]] = {}
+
             if active_slots:
                 total_q = 0.0
                 for s in active_slots:
                     if s.port is not None:
                         try:
                             client = VLLMMetricsClient(s.port, timeout=1.0)
-                            val = await asyncio.to_thread(client.running_requests)
-                            total_q += val
+                            data = await asyncio.to_thread(client.collect)
+                            total_q += data["running_requests"]
+
+                            # slot_idx mapping: 6 for permanent, else profile_type.value
+                            is_perm = (
+                                s.profile_placement.profile.profile_type
+                                == m.MIGProfile.MIG_7G
+                            )
+                            idx = (
+                                6
+                                if is_perm
+                                else s.profile_placement.profile.profile_type.value
+                            )
+                            slot_samples[idx] = {
+                                "running": data["running_requests"],
+                                "waiting": data["queue_length"],
+                                "kv_util": data["kv_cache_util"],
+                            }
                         except Exception as e:
                             logger.debug(f"Metrics fetch failed for port {s.port}: {e}")
+
                 metrics.queue_length_samples.append(total_q / len(active_slots))
+                if slot_samples:
+                    OBS_COLLECTOR.record_samples(agent_id, slot_samples)
             else:
                 metrics.queue_length_samples.append(0.0)
 
