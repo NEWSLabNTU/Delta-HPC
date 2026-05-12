@@ -115,24 +115,20 @@ class VLLMManager:
         agents_cfg = sim["agents"]
         cluster_cfg = sim["cluster"]
 
-        result: Dict[int, Dict[str, str]] = {}
+        result: Dict[int, Dict[AgentId, Dict[str, str]]] = {}
         for gpu_idx_str, hw_model in cluster_cfg.items():
             gpu_idx = int(gpu_idx_str)
-            agent_name = self._cfg.gpu_assignment[gpu_idx]
-            agent_cfg = agents_cfg[agent_name][hw_model]
-            mig_cfg: Dict[str, Any] = agent_cfg["mig"]
-
-            result[gpu_idx] = {
-                profile_str: profile_data["model"]
-                for profile_str, profile_data in mig_cfg.items()
-            }
-            logger.debug(
-                "GPU %d (%s / %s): model map = %s",
-                gpu_idx,
-                agent_name,
-                hw_model,
-                result[gpu_idx],
-            )
+            result[gpu_idx] = {}
+            # Build mapping for all agents, not just the default one
+            for agent_id in list(AgentId):
+                agent_name = agent_id.value
+                if agent_name in agents_cfg and hw_model in agents_cfg[agent_name]:
+                    agent_cfg = agents_cfg[agent_name][hw_model]
+                    mig_cfg = agent_cfg.get("mig", {})
+                    result[gpu_idx][agent_id] = {
+                        p_str: p_data["model"]
+                        for p_str, p_data in mig_cfg.items()
+                    }
 
         return result
 
@@ -155,13 +151,26 @@ class VLLMManager:
             If no model is configured for this GPU / profile combination.
         """
         profile = slot.profile_placement.profile.string
-        gpu_map = self._model_map[slot.gpu_idx]
-        if profile not in gpu_map:
+        gpu_id = slot.gpu_idx
+        # Respect existing ownership if set, otherwise fallback to GPU default
+        agent_id = slot.agent_id or AgentId(self._cfg.gpu_assignment[gpu_id])
+
+        if gpu_id not in self._model_map:
+            raise KeyError(f"GPU {gpu_id} not found in model map.")
+
+        agent_map = self._model_map[gpu_id]
+        if agent_id not in agent_map:
             raise KeyError(
-                f"No model configured for GPU {slot.gpu_idx} profile '{profile}'. "
-                f"Available: {list(gpu_map)}"
+                f"No models configured for Agent {agent_id.value} on GPU {gpu_id}."
             )
-        return gpu_map[profile]
+
+        profile_map = agent_map[agent_id]
+        if profile not in profile_map:
+            raise KeyError(
+                f"No model configured for GPU {gpu_id} / Agent {agent_id.value} / Profile '{profile}'. "
+                f"Available: {list(profile_map)}"
+            )
+        return profile_map[profile]
 
     # ------------------------------------------------------------------
     # Container lifecycle
@@ -229,7 +238,7 @@ class VLLMManager:
 
         self._run_script(slot.mig_uuid, model_id, port, "up")
 
-        agent_name = self._cfg.gpu_assignment[slot.gpu_idx]
+        agent_id = slot.agent_id or AgentId(self._cfg.gpu_assignment[slot.gpu_idx])
 
         system.update_slot(
             slot.gpu_idx,
@@ -237,7 +246,7 @@ class VLLMManager:
             model_id=model_id,
             port=port,
             container_name=container_name,
-            agent_id=AgentId(agent_name),
+            agent_id=agent_id,
         )
         logger.info(
             "vllm: GPU %d [%s] → model=%s  port=%d  container=%s",

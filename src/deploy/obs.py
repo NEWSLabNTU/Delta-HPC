@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import math
 import time
 import logging
@@ -12,6 +14,10 @@ from src.training.config import TRAINING_CONFIG
 from src.simulation.config import NUM_MIG_SLICES
 
 logger = logging.getLogger(__name__)
+
+
+CACHE_DIR = Path(".cache")
+CACHE_FILE = CACHE_DIR / "avg_response_len.json"
 
 
 @dataclass
@@ -40,6 +46,12 @@ class AgentStats:
     perm_composite_latencies: deque[float] = field(
         default_factory=lambda: deque(maxlen=100)
     )
+
+    tpot_samples: deque[float] = field(default_factory=lambda: deque(maxlen=100))
+
+    # Average response length tracking
+    avg_response_len: float = 256.0  # Default initial guess
+    total_completed_reqs: int = 0
 
     # Metric samples for averaging (collected at ~1Hz)
     queue_length_samples: List[List[int]] = field(
@@ -74,6 +86,46 @@ class ObservationCollector:
         self._reconfig_flag = False
         self._last_action_downtime = 0.0
         self._refresh_task: Optional[asyncio.Task] = None
+        self._load_cache()
+
+    def _load_cache(self):
+        if CACHE_FILE.exists():
+            try:
+                with open(CACHE_FILE, "r") as f:
+                    data = json.load(f)
+                    for aid_str, val in data.items():
+                        try:
+                            aid = m.AgentId(aid_str)
+                            if aid in self._agent_stats:
+                                self._agent_stats[aid].avg_response_len = val["avg"]
+                                self._agent_stats[aid].total_completed_reqs = val["count"]
+                        except ValueError:
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to load response length cache: {e}")
+
+    def _save_cache(self):
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            data = {
+                aid.value: {
+                    "avg": stats.avg_response_len,
+                    "count": stats.total_completed_reqs,
+                }
+                for aid, stats in self._agent_stats.items()
+            }
+            with open(CACHE_FILE, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.warning(f"Failed to save response length cache: {e}")
+
+    @property
+    def reconfig_flag(self) -> bool:
+        return self._reconfig_flag
+
+    @property
+    def current_budget(self) -> float:
+        return self._current_budget
 
     # -----------------------------------------------------------------------
     # Event Hooks (Called by ReqPublisher or similar)
@@ -89,6 +141,7 @@ class ObservationCollector:
         tpot: float,
         is_permanent: bool,
         mig_idx: int,
+        tokens: int = 0,
     ):
         w_t = TRAINING_CONFIG.w("ttft")
         w_p = TRAINING_CONFIG.w("tpot")
@@ -100,18 +153,27 @@ class ObservationCollector:
         else:
             stats.composite_latencies[mig_idx].append(composite)
 
+        if tokens > 0:
+            n = stats.total_completed_reqs
+            stats.avg_response_len = (stats.avg_response_len * n + tokens) / (n + 1)
+            stats.total_completed_reqs += 1
+            if stats.total_completed_reqs % 10 == 0:
+                self._save_cache()
+
     def record_samples(
         self, agent_id: m.AgentId, samples_dict: Dict[int, Dict[str, float]]
     ):
         """
-        samples_dict: {slot_idx: {"running": int, "waiting": int, "kv_util": float}}
-        slot_idx: 0-5 for MIG, 6 for permanent
+        samples_dict: {slot_idx: {"running": int, "waiting": int, "kv_util": float, "tpot": float}}
+        slot_idx: 0-5 for MIG (index 6 for permanent engines is currently ignored in deployment)
         """
         stats = self._agent_stats[agent_id]
         for slot_idx, metrics in samples_dict.items():
             stats.queue_length_samples[slot_idx].append(int(metrics["waiting"]))
             stats.running_req_samples[slot_idx].append(int(metrics["running"]))
             stats.kv_util_samples[slot_idx].append(metrics["kv_util"])
+            if metrics.get("tpot", 0.0) > 0:
+                stats.tpot_samples.append(metrics["tpot"])
 
     # -----------------------------------------------------------------------
     # Interval Management
@@ -200,6 +262,20 @@ class ObservationCollector:
     # -----------------------------------------------------------------------
     # Observation Generation
     # -----------------------------------------------------------------------
+
+    def get_last_queue_length(self, gpu_idx: int, start_slice: int) -> float:
+        """Return the most recent queue length sample for a specific slot."""
+        # Find the agent owning this slot (if any)
+        from src.deploy.system import get_slot
+
+        slot = get_slot(gpu_idx, start_slice)
+        if not slot or not slot.agent_id:
+            return 0.0
+
+        stats = self._agent_stats[slot.agent_id]
+        # Slot indices in OBS_COLLECTOR are typically sorted by start_slice
+        # but here we can just use the samples recorded by record_samples
+        return stats.queue_length_samples[start_slice][-1] if stats.queue_length_samples[start_slice] else 0.0
 
     def get_observation(self) -> m.EnvironmentStateData:
         """Construct the full normalized observation dictionary."""
@@ -385,6 +461,15 @@ class ObservationCollector:
             else:
                 proportions[aid] = tuple(0.0 for _ in raw_avgs)
         return proportions, raw_totals
+
+    def get_avg_response_len(self, agent_id: m.AgentId) -> float:
+        return self._agent_stats[agent_id].avg_response_len
+
+    def get_current_tpot(self, agent_id: m.AgentId) -> float:
+        samples = self._agent_stats[agent_id].tpot_samples
+        if not samples:
+            return 0.05  # Default fallback
+        return sum(samples) / len(samples)
 
     def _get_mig_profile_id_onehot(self) -> Dict[int, List[float]]:
         from src.share.mig_matrix import STATE_DEFINITIONS, STATE_ID_MAP

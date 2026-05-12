@@ -80,12 +80,26 @@ class ReqPublisher:
             self.report_metrics()
 
     def _get_active_slots(self, agent_id: m.AgentId) -> List[MIGSlotState]:
+        """Return slots ready to receive NEW requests."""
         active_slots = []
         for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
             for slot in gpu_state.slots:
-                if slot.agent_id == agent_id and slot.port is not None:
+                if (
+                    slot.agent_id == agent_id
+                    and slot.port is not None
+                    and not slot.is_draining
+                ):
                     active_slots.append(slot)
         return active_slots
+
+    def _get_all_slots(self, agent_id: m.AgentId) -> List[MIGSlotState]:
+        """Return all slots currently owned by the agent, including draining ones."""
+        slots = []
+        for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
+            for slot in gpu_state.slots:
+                if slot.agent_id == agent_id:
+                    slots.append(slot)
+        return slots
 
     async def _dispatch_loop(
         self, agent_id: m.AgentId, requests: List[m.Request], duration_s: float
@@ -177,11 +191,11 @@ class ReqPublisher:
             tpot = (
                 (total_time - ttft) / tokens_generated if tokens_generated > 0 else 0.0
             )
-            is_permanent = (
-                slot.profile_placement.profile.profile_type == m.MIGProfile.MIG_7G
-            )
+            is_permanent = False
             mig_idx = slot.profile_placement.profile.profile_type.value
-            OBS_COLLECTOR.record_completion(agent_id, ttft, tpot, is_permanent, mig_idx)
+            OBS_COLLECTOR.record_completion(
+                agent_id, ttft, tpot, is_permanent, mig_idx, tokens_generated
+            )
 
         except Exception as e:
             logger.error(f"Request {req.id} failed on slot {slot_key}: {e}")
@@ -197,43 +211,35 @@ class ReqPublisher:
             if now - start_time >= duration_s:
                 break
 
-            active_slots = self._get_active_slots(agent_id)
+            all_slots = self._get_all_slots(agent_id)
             slot_samples: Dict[int, Dict[str, float]] = {}
 
-            if active_slots:
+            if all_slots:
                 total_q = 0.0
-                for s in active_slots:
+                for s in all_slots:
                     if s.port is not None:
                         try:
                             client = VLLMMetricsClient(s.port, timeout=1.0)
                             data = await asyncio.to_thread(client.collect)
                             total_q += data["running_requests"]
 
-                            # slot_idx mapping: 6 for permanent, else profile_type.value
-                            is_perm = (
-                                s.profile_placement.profile.profile_type
-                                == m.MIGProfile.MIG_7G
-                            )
-                            idx = (
-                                6
-                                if is_perm
-                                else s.profile_placement.profile.profile_type.value
-                            )
+                            idx = s.profile_placement.profile.profile_type.value
                             slot_samples[idx] = {
                                 "running": data["running_requests"],
                                 "waiting": data["queue_length"],
                                 "kv_util": data["kv_cache_util"],
+                                "tpot": data["tpot_mean_s"],
                             }
                         except Exception as e:
                             logger.debug(f"Metrics fetch failed for port {s.port}: {e}")
 
-                metrics.queue_length_samples.append(total_q / len(active_slots))
+                metrics.queue_length_samples.append(total_q / len(all_slots))
                 if slot_samples:
                     OBS_COLLECTOR.record_samples(agent_id, slot_samples)
             else:
                 metrics.queue_length_samples.append(0.0)
 
-            for slot in active_slots:
+            for slot in all_slots:
                 profile_key = self._get_profile_key(slot.profile_placement.profile)
                 if profile_key not in metrics.profile_existence_time:
                     metrics.profile_existence_time[profile_key] = 0.0

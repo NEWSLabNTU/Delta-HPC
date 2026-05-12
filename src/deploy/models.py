@@ -143,6 +143,7 @@ class MIGSlotState:
     port: Optional[int] = None
     container_name: Optional[str] = None
     agent_id: Optional[AgentId] = None
+    is_draining: bool = False
 
 
 @dataclass

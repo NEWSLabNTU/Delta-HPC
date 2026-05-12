@@ -1,5 +1,4 @@
 from __future__ import annotations
-import dataclasses
 from collections import defaultdict
 from sortedcontainers import SortedList
 from typing import List, Dict, Literal, Optional, cast
@@ -18,6 +17,7 @@ from src.simulation.config import (
 from src.share.mig_matrix import (
     STATE_DEFINITIONS,
     TRANSITION_MATRIX,
+    map_res_action_to_action,
 )
 from src.training.config import TRAINING_CONFIG
 
@@ -1015,70 +1015,18 @@ class SimulatorImpl(m.Simulator):
         if res_action == m.ResourceManagerAction.NO_ACTION:
             return None
 
-        val = res_action.value
-        gpu_id, target_sid, trans_mig = (
-            val.gpu_id,
-            val.target_state_id,
-            val.transfer_mig,
-        )
+        gpu_id = res_action.value.gpu_id
         current_sid = self.gpu_current_state[gpu_id]
 
-        if target_sid is None:
-            # Pure Transfer
-            assert trans_mig is not None, (
-                "Transfer MIG must be specified for pure transfer action"
-            )
-            mig_idx = self._find_best_engine_index(gpu_id, trans_mig)
-            if mig_idx == -1:
-                return None
+        return map_res_action_to_action(
+            res_action=res_action,
+            current_sid=current_sid,
+            find_best_index_fn=self._find_best_engine_index,
+            get_owner_fn=self._get_engine_owner,
+        )
 
-            return m.Action(
-                action=m.ActionType.TRANSFER,
-                gpu_id=gpu_id,
-                mig_src=[mig_idx],
-                mig_target=[mig_idx],
-                target_state_id=current_sid,
-                receiver=m.Receiver(
-                    receiver_id=m.AgentId.RAG
-                    if self._gpu_engines[gpu_id][mig_idx].owner.agent_id
-                    == m.AgentId.CODING
-                    else m.AgentId.CODING,
-                    mig_idx=mig_idx,
-                ),
-            )
-
-        # State Transition (maybe with transfer)
-        transition_action = TRANSITION_MATRIX.get((current_sid, target_sid))
-        if not transition_action:
-            return None
-
-        receiver = None
-        if trans_mig:
-            # Find which index in the target state profile list matches trans_mig
-            # Must be one of the resulting MIGs
-            found_idx = -1
-            for idx in transition_action.mig_target:
-                if STATE_DEFINITIONS[target_sid][idx] == trans_mig:
-                    found_idx = idx
-                    break
-            assert found_idx != -1, (
-                f"Transfer MIG {trans_mig} not found in target results of state {target_sid}"
-            )
-
-            # Giver is the owner of the source engines (we checked they are same in masking)
-            src_idx = transition_action.mig_src[0]
-            eng = self._gpu_engines[gpu_id][src_idx]
-            assert eng is not None
-            current_owner = eng.owner.agent_id
-
-            receiver = m.Receiver(
-                receiver_id=m.AgentId.RAG
-                if current_owner == m.AgentId.CODING
-                else m.AgentId.CODING,
-                mig_idx=found_idx,
-            )
-
-        return dataclasses.replace(transition_action, gpu_id=gpu_id, receiver=receiver)
+    def _get_engine_owner(self, gpu_id: int, engine_idx: int) -> m.AgentId:
+        return self._gpu_engines[gpu_id][engine_idx].owner.agent_id
 
     def _identify_gpu_state(self, gpu_id: int) -> int:
         engs = [e for e in self._engines.values() if e.gpu == gpu_id]

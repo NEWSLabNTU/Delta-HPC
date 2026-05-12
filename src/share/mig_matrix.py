@@ -1,4 +1,5 @@
-from typing import Tuple, Dict
+import dataclasses
+from typing import Tuple, Dict, Callable, Optional
 
 import src.share.models as m
 
@@ -792,3 +793,71 @@ TRANSITION_MATRIX = {
         target_state_id=17,
     ),
 }
+
+
+def map_res_action_to_action(
+    res_action: m.ResourceManagerAction,
+    current_sid: int,
+    find_best_index_fn: Callable[[int, m.MIGProfile], int],
+    get_owner_fn: Callable[[int, int], m.AgentId],
+) -> Optional[m.Action]:
+    """Centralized logic to translate ResourceManagerAction to a concrete Action.
+
+    This function handles both pure transfers and state transitions (with optional
+    transfers) by abstracting the lookup of engine/slot indices and owners via
+    provided callbacks.
+    """
+    if res_action == m.ResourceManagerAction.NO_ACTION:
+        return None
+
+    val = res_action.value
+    gpu_id, target_sid, trans_mig = (
+        val.gpu_id,
+        val.target_state_id,
+        val.transfer_mig,
+    )
+
+    if target_sid is None:
+        # Pure Transfer
+        assert trans_mig is not None, "Transfer MIG must be specified for pure transfer"
+        mig_idx = find_best_index_fn(gpu_id, trans_mig)
+        if mig_idx == -1:
+            return None
+
+        current_owner = get_owner_fn(gpu_id, mig_idx)
+        receiver_id = (
+            m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
+        )
+
+        return m.Action(
+            action=m.ActionType.TRANSFER,
+            gpu_id=gpu_id,
+            mig_src=[mig_idx],
+            mig_target=[mig_idx],
+            target_state_id=current_sid,
+            receiver=m.Receiver(receiver_id=receiver_id, mig_idx=mig_idx),
+        )
+
+    # State Transition (potentially with transfer)
+    transition_action = TRANSITION_MATRIX.get((current_sid, target_sid))
+    if not transition_action:
+        return None
+
+    receiver = None
+    if trans_mig:
+        # Find which resulting index matches the transfer profile
+        found_idx = -1
+        for idx in transition_action.mig_target:
+            if STATE_DEFINITIONS[target_sid][idx] == trans_mig:
+                found_idx = idx
+                break
+
+        if found_idx != -1:
+            src_idx = transition_action.mig_src[0]
+            current_owner = get_owner_fn(gpu_id, src_idx)
+            receiver_id = (
+                m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
+            )
+            receiver = m.Receiver(receiver_id=receiver_id, mig_idx=found_idx)
+
+    return dataclasses.replace(transition_action, gpu_id=gpu_id, receiver=receiver)

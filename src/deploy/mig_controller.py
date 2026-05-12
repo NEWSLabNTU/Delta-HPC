@@ -248,9 +248,39 @@ class MIGController:
                 continue
         return handles
 
+    def get_gi_handles_map(
+        self, gpu_idx: int
+    ) -> Dict[int, pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
+        """Return a map of {start_slice: handle} for all existing GPU instances on *gpu_idx*."""
+        self._require_init()
+        handle = self._handle(gpu_idx)
+        profile_lookup = self._profile_lookup(gpu_idx)
+
+        res: Dict[int, pynvml.c_nvmlGpuInstance_t] = {}  # type: ignore[valid-type]
+        for _, (prof_info, _) in profile_lookup.items():
+            try:
+                instances = pynvml.nvmlDeviceGetGpuInstances(handle, prof_info.id)  # type: ignore
+                for inst in instances:
+                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)  # type: ignore
+                    res[inst_info.placement.start] = inst
+            except pynvml.NVMLError:
+                continue
+        return res
+
     # ------------------------------------------------------------------
     # Destroying instances
     # ------------------------------------------------------------------
+
+    def destroy_gis_at_slices(self, gpu_idx: int, start_slices: List[int]) -> None:
+        """Destroy specific GPU instances on *gpu_idx* identified by their starting slices."""
+        self._require_init()
+        gi_map = self.get_gi_handles_map(gpu_idx)
+        for s in start_slices:
+            if s in gi_map:
+                logger.info(f"GPU {gpu_idx}: destroying instance at slice {s}")
+                self.destroy_gi(gpu_idx, gi_map[s])
+            else:
+                logger.warning(f"GPU {gpu_idx}: no instance found at slice {s} to destroy")
 
     def destroy_gi(
         self,

@@ -28,6 +28,12 @@ _TTFT_SUM = re.compile(
 _TTFT_COUNT = re.compile(
     r"^vllm:time_to_first_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)", re.M
 )
+_TPOT_SUM = re.compile(
+    r"^vllm:time_per_output_token_seconds_sum\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+)
+_TPOT_COUNT = re.compile(
+    r"^vllm:time_per_output_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+)
 _WAITING = re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 _RUNNING = re.compile(r"^vllm:num_requests_running\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 _KV_UTIL = re.compile(r"^vllm:gpu_cache_usage_perc\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
@@ -107,8 +113,13 @@ class VLLMMetricsClient:
         ttft_count = _first(_TTFT_COUNT, text)
         ttft_mean = (ttft_sum / ttft_count) if ttft_count > 0 else 0.0
 
+        tpot_sum = _first(_TPOT_SUM, text)
+        tpot_count = _first(_TPOT_COUNT, text)
+        tpot_mean = (tpot_sum / tpot_count) if tpot_count > 0 else 0.0
+
         return {
             "ttft_mean_s": ttft_mean,
+            "tpot_mean_s": tpot_mean,
             "queue_length": _first(_WAITING, text),
             "running_requests": _first(_RUNNING, text),
             "kv_cache_util": _first(_KV_UTIL, text),
