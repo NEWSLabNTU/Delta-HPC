@@ -32,9 +32,6 @@ __all__ = [
     "BootPayload",
     "PayloadType",
     "SimulationEvent",
-    "VramTransferAction",
-    "MigAction",
-    "MIGProfileRule",
     "ActionHistoryKey",
     "AgentRatioKeys",
 ]
@@ -296,28 +293,6 @@ class SimulationEvent:
     time: float
     event_type: m.EventType
     payload: PayloadType = field(compare=False, repr=False)
-
-
-@dataclass
-class VramTransferAction:
-    giver: m.AgentId
-    receiver: m.AgentId
-    mig: m.MIGProfile
-    gpu: int = -1
-
-
-@dataclass
-class MigAction:
-    action: Literal["split", "merge"]
-    victim: m.AgentId
-    profiles: Tuple[m.MIGProfile, ...]
-    transfer_profile: Optional[m.MIGProfile] = None
-    receiver: Optional[m.AgentId] = None
-
-
-class MIGProfileRule(ABC):
-    @abstractmethod
-    def check(self, state: m.EnvironmentStateData) -> bool: ...
 
 
 ActionHistoryKey = Literal["split", "merge", "give", "receive"]
