@@ -98,6 +98,9 @@ class VLLMManager:
         # Port counter — assigned once per slot, incremented permanently.
         self._next_port: int = self._cfg.vllm.base_port
 
+        # {port: {request_id: current_tokens}}
+        self._active_reqs: Dict[int, Dict[str, int]] = {}
+
     # ------------------------------------------------------------------
     # Model-to-MIG mapping
     # ------------------------------------------------------------------
@@ -126,8 +129,7 @@ class VLLMManager:
                     agent_cfg = agents_cfg[agent_name][hw_model]
                     mig_cfg = agent_cfg.get("mig", {})
                     result[gpu_idx][agent_id] = {
-                        p_str: p_data["model"]
-                        for p_str, p_data in mig_cfg.items()
+                        p_str: p_data["model"] for p_str, p_data in mig_cfg.items()
                     }
 
         return result
@@ -477,21 +479,32 @@ class VLLMManager:
         full_content = ""
         usage = None
 
-        async for chunk in response_stream:
-            if ttft is None:
-                ttft = time.time() - start_time
+        if slot.port not in self._active_reqs:
+            self._active_reqs[slot.port] = {}
 
-            if (
-                chunk.choices
-                and len(chunk.choices) > 0
-                and chunk.choices[0].delta.content
-            ):
-                full_content += chunk.choices[0].delta.content
+        try:
+            async for chunk in response_stream:
+                if ttft is None:
+                    ttft = time.time() - start_time
 
-            if chunk.usage is not None:
-                usage = chunk.usage.model_dump()
+                if (
+                    chunk.choices
+                    and len(chunk.choices) > 0
+                    and chunk.choices[0].delta.content
+                ):
+                    full_content += chunk.choices[0].delta.content
 
-        total_time = time.time() - start_time
+                if chunk.usage is not None:
+                    usage = chunk.usage.model_dump()
+                    # Track current progress
+                    self._active_reqs[slot.port][chunk.id] = usage.get(
+                        "completion_tokens", 0
+                    )
+
+            total_time = time.time() - start_time
+        finally:
+            # Always clean up tracking even on failure/cancellation
+            self._active_reqs[slot.port].pop(chunk.id, None)
 
         return {
             "choices": [{"message": {"role": "assistant", "content": full_content}}],
@@ -500,3 +513,9 @@ class VLLMManager:
             "ttft": ttft if ttft is not None else total_time,
             "total_time": total_time,
         }
+
+    def get_running_requests_tokens(self, port: int) -> List[int]:
+        """Return the current token counts for all active requests on a port."""
+        if port not in self._active_reqs:
+            return []
+        return list(self._active_reqs[port].values())

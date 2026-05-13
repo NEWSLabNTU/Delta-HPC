@@ -388,18 +388,31 @@ class ActionController:
             return 0.0
 
         try:
+            # 1. Get real-time per-request token progress from VLLMManager
+            running_tokens = self.vllm_mgr.get_running_requests_tokens(slot.port)
+
             client = VLLMMetricsClient(slot.port, timeout=1.0)
             data = client.collect()
-            running = data.get("running_requests", 0)
-            if running == 0:
+            running_count = data.get("running_requests", 0)
+
+            if running_count == 0:
                 return 0.0
 
-            # Estimation: avg_response_len * tpot
+            # Estimation: (avg_response_len - current_progress) * tpot
             avg_len = OBS_COLLECTOR.get_avg_response_len(slot.agent_id)
             tpot = OBS_COLLECTOR.get_current_tpot(slot.agent_id)
 
-            # vLLM processes requests in parallel; time is roughly avg_len * tpot
-            return avg_len * tpot
+            if running_tokens:
+                # The request with the fewest tokens is furthest from completion.
+                # We assume its total length will be avg_len.
+                min_tokens = min(running_tokens)
+                remaining_tokens = max(0.0, avg_len - min_tokens)
+            else:
+                # Fallback if tracking is empty but metrics show running requests
+                # (e.g. requests sent from outside this ActionController's VLLMManager)
+                remaining_tokens = avg_len
+
+            return remaining_tokens * tpot
         except Exception as e:
             logger.debug(
                 f"Could not fetch metrics for drain prediction on port {slot.port}: {e}"
