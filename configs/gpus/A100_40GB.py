@@ -1,3 +1,4 @@
+from typing import List
 from src.share.models import MIGProfileBase, MIGProfile, ProfileInfo
 
 
@@ -7,10 +8,15 @@ class MIGProfileA100(MIGProfileBase):
     MIG_3G_20GB = ProfileInfo(3, 20, MIGProfile.MIG_3G)
     MIG_2G_10GB = ProfileInfo(2, 10, MIGProfile.MIG_2G)
     MIG_1G_10GB = ProfileInfo(1, 10, MIGProfile.MIG_1G_LARGE)
+    MIG_1G_5GB = ProfileInfo(1, 5, MIGProfile.MIG_1G_SMALL)
 
     @property
     def gpu_model(self) -> str:
         return "A100_40GB"
+
+    @classmethod
+    def unsupported_profiles(cls) -> List[MIGProfile]:
+        return [MIGProfile.MIG_1G_SMALL]
 
 
 MIG_PROFILE = MIGProfileA100

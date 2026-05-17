@@ -944,10 +944,9 @@ class SimulatorImpl(m.Simulator):
                     mask[act_id] = False
                     continue
             if trans_mig is not None:
-                supported_profiles = {
-                    p.profile_type for p in GPU_MIG_PROFILE[act_gpu_id]
-                }
-                if trans_mig not in supported_profiles:
+                supported_hw = {p.profile_type for p in GPU_MIG_PROFILE[act_gpu_id]}
+                unsupported = GPU_MIG_PROFILE[act_gpu_id].unsupported_profiles()
+                if trans_mig not in supported_hw or trans_mig in unsupported:
                     mask[act_id] = False
                     continue
 

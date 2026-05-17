@@ -105,6 +105,11 @@ class MIGProfileBase(Enum):
         """The GPU model name (e.g., A100_40GB)."""
         raise NotImplementedError()
 
+    @classmethod
+    def unsupported_profiles(cls) -> List[MIGProfile]:
+        """Profiles that exist on hardware but are not supported by the RL/Simulation."""
+        return []
+
     def __eq__(self, other):
         if isinstance(other, MIGProfile):
             raise TypeError(

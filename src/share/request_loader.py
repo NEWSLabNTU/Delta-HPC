@@ -82,6 +82,12 @@ class RequestLoader:
         else:
             random.seed()
 
+        shuffle_seed = (
+            (self.seed ^ (agent_idx * 0x9E3779B9)) if self.seed is not None else None
+        )
+        shuffle_rng = random.Random(shuffle_seed)
+        shuffle_rng.shuffle(items)
+
         current_time = start_time
         max_time = start_time + self.num_steps * TRAINING_CONFIG.action_interval
 

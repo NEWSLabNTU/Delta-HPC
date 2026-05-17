@@ -11,9 +11,25 @@ a single, stable location without creating circular dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TypedDict
 
 from src.share.models import AgentId, MIGProfile, MIGProfileBase
+
+
+class SimulatedEngineConfig(TypedDict):
+    """Configuration for a single simulated permanent engine."""
+
+    agent: str
+    mig: str
+
+
+class SimulatedGPUConfig(TypedDict):
+    """Configuration for a simulated GPU and its permanent engines."""
+
+    model: str
+    state_id: int
+    permanent_engines: List[SimulatedEngineConfig]
+
 
 # Mapping of gpu_idx → ordered list of ProfilePlacement, covering all managed GPUs.
 AllGpuMIGConfigs = Dict[int, List["ProfilePlacement"]]

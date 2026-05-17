@@ -27,13 +27,19 @@ Usage example
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict, List, Tuple
+import ctypes
 import pynvml
 
 from src.deploy.models import GpuInstanceInfo, ProfilePlacement  # noqa: F401
 from src.share.models import MIGProfileBase
 from src.deploy.system import SYSTEM_STATE
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +48,40 @@ logger = logging.getLogger(__name__)
 # constant, so we fall back to 16 which exceeds the current maximum (0xC = 12).
 _MAX_PROFILE_ID: int = getattr(pynvml, "NVML_GPU_INSTANCE_PROFILE_COUNT", 16)
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
 
 def _profile_string(size: int, vram: int) -> str:
     """Construct the canonical ``"{size}g.{vram}gb"`` key used across the repo."""
     return f"{size}g.{vram}gb"
+
+
+def _safe_nvml_device_get_gpu_instances(handle, profile_id):
+    """Retrieve GPU instances while handling raw ctypes signatures."""
+    # Some pynvml/driver versions return InvalidArgument if instances is None.
+    # We use a fixed-size array (32 is plenty for any current GPU) to get instances.
+    count = ctypes.c_uint(32)
+    array_type = pynvml.c_nvmlGpuInstance_t * 32
+    instances = array_type()
+    try:
+        pynvml.nvmlDeviceGetGpuInstances(
+            handle, profile_id, instances, ctypes.byref(count)
+        )
+    except pynvml.NVMLError:
+        return []
+    return [instances[i] for i in range(count.value)]
+
+
+def _safe_nvml_gpu_instance_get_compute_instances(handle, profile_id):
+    """Retrieve compute instances while handling raw ctypes signatures."""
+    count = ctypes.c_uint(32)
+    array_type = pynvml.c_nvmlComputeInstance_t * 32
+    instances = array_type()
+    try:
+        pynvml.nvmlGpuInstanceGetComputeInstances(
+            handle, profile_id, instances, ctypes.byref(count)
+        )
+    except pynvml.NVMLError:
+        return []
+    return [instances[i] for i in range(count.value)]
 
 
 def _build_profile_lookup(
@@ -66,13 +98,16 @@ def _build_profile_lookup(
             info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, profile_id)
         except pynvml.NVMLError:
             continue  # profile_id not supported on this GPU
-        key = _profile_string(info.sliceCount, info.memorySizeMB // 1024)  # type: ignore[arg-type]
+        # Ceiling division for VRAM to match config naming (e.g. 40320 MiB -> 40 GB)
+        vram_gb = (info.memorySizeMB + 1023) // 1024
+        key = _profile_string(info.sliceCount, vram_gb)  # type: ignore[arg-type]
         lookup[key] = (info, profile_id)  # type: ignore
         logger.debug(
-            "GPU profile discovered: id=%d  key=%s  multiprocessorCount=%d",
+            "GPU profile discovered: index=%d  id=%d  key=%s  multiprocessorCount=%d",
             profile_id,
+            info.id,
             key,
-            info.multiprocessorCount,  # type: ignore
+            info.multiprocessorCount,
         )
     return lookup
 
@@ -205,7 +240,6 @@ class MIGController:
         """
         self._require_init()
         handle = self._handle(gpu_idx)
-        profile_lookup = self._profile_lookup(gpu_idx)
 
         gpu = SYSTEM_STATE.gpus.get(gpu_idx)
         if gpu is None:
@@ -213,23 +247,40 @@ class MIGController:
         mig_profile_cls = gpu.mig_profile_cls
 
         infos: List[GpuInstanceInfo] = []
-        # Iterate over all supported profiles and collect existing instances.
-        for prof_str, (prof_info, _) in profile_lookup.items():
+        # Get all possible profiles to ensure we find all instances
+        seen_ids = set()
+        for i in range(32):
             try:
-                instances = pynvml.nvmlDeviceGetGpuInstances(handle, prof_info.id)  # type: ignore
-            except pynvml.NVMLError:
-                continue
-            for inst in instances:
-                inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)  # type: ignore
-                placement = inst_info.placement  # type: ignore
-                infos.append(
-                    GpuInstanceInfo(
-                        instance_id=inst_info.id,
-                        profile=mig_profile_cls.from_string(prof_str),
-                        start_slice=placement.start,
-                        slice_count=placement.size,
+                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
+                if prof_info.id in seen_ids:
+                    continue
+                seen_ids.add(prof_info.id)
+
+                instances = _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
+                for inst in instances:
+                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)
+                    placement = inst_info.placement
+
+                    # Heuristic to find a matching profile name
+                    vram_gb = (prof_info.memorySizeMB + 1023) // 1024
+                    prof_str = _profile_string(prof_info.sliceCount, vram_gb)
+
+                    infos.append(
+                        GpuInstanceInfo(
+                            instance_id=inst_info.id,
+                            profile=mig_profile_cls.from_string(prof_str),
+                            start_slice=placement.start,
+                            slice_count=placement.size,
+                        )
                     )
-                )
+            except (pynvml.NVMLError, ValueError) as exc:
+                if isinstance(exc, pynvml.NVMLError_NoPermission):
+                    logger.error(
+                        "GPU %d: Insufficient permissions to list GPU instances. Try running with sudo.",
+                        gpu_idx,
+                    )
+                    raise
+                continue
 
         infos.sort(key=lambda x: x.start_slice)
         return infos
@@ -238,30 +289,35 @@ class MIGController:
         """Return raw pynvml GPU-instance handles for *gpu_idx* (all profiles)."""
         self._require_init()
         handle = self._handle(gpu_idx)
-        profile_lookup = self._profile_lookup(gpu_idx)
 
         handles: List[pynvml.c_nvmlGpuInstance_t] = []  # type: ignore[valid-type]
-        for _, (prof_info, _) in profile_lookup.items():
+        seen_ids = set()
+        for i in range(32):
             try:
-                handles.extend(pynvml.nvmlDeviceGetGpuInstances(handle, prof_info.id))  # type: ignore
-            except pynvml.NVMLError:
+                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
+                if prof_info.id not in seen_ids:
+                    handles.extend(
+                        _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
+                    )
+                    seen_ids.add(prof_info.id)
+            except pynvml.NVMLError as exc:
+                if isinstance(exc, pynvml.NVMLError_NoPermission):
+                    raise
                 continue
         return handles
 
-    def get_gi_handles_map(
-        self, gpu_idx: int
-    ) -> Dict[int, pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
+    def get_gi_handles_map(self, gpu_idx: int) -> Dict[int, pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
         """Return a map of {start_slice: handle} for all existing GPU instances on *gpu_idx*."""
         self._require_init()
         handle = self._handle(gpu_idx)
-        profile_lookup = self._profile_lookup(gpu_idx)
 
-        res: Dict[int, pynvml.c_nvmlGpuInstance_t] = {}  # type: ignore[valid-type]
-        for _, (prof_info, _) in profile_lookup.items():
+        res: Dict[int, pynvml.c_nvmlGpuInstance_t] = {}
+        for i in range(32):
             try:
-                instances = pynvml.nvmlDeviceGetGpuInstances(handle, prof_info.id)  # type: ignore
+                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
+                instances = _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
                 for inst in instances:
-                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)  # type: ignore
+                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)
                     res[inst_info.placement.start] = inst
             except pynvml.NVMLError:
                 continue
@@ -280,7 +336,9 @@ class MIGController:
                 logger.info(f"GPU {gpu_idx}: destroying instance at slice {s}")
                 self.destroy_gi(gpu_idx, gi_map[s])
             else:
-                logger.warning(f"GPU {gpu_idx}: no instance found at slice {s} to destroy")
+                logger.warning(
+                    f"GPU {gpu_idx}: no instance found at slice {s} to destroy"
+                )
 
     def destroy_gi(
         self,
@@ -302,24 +360,47 @@ class MIGController:
             :meth:`get_gi_handles`.
         """
         self._require_init()
-        # Destroy every compute instance inside first.
         inst_info = pynvml.nvmlGpuInstanceGetInfo(instance_handle)
-        try:
-            ci_profiles = pynvml.nvmlGpuInstanceGetComputeInstanceProfileInfo(  # type: ignore
-                instance_handle, 0, pynvml.NVML_COMPUTE_INSTANCE_ENGINE_PROFILE_SHARED
-            )
-            compute_instances = pynvml.nvmlGpuInstanceGetComputeInstances(  # type: ignore
-                instance_handle, ci_profiles.id
-            )
-            for ci in compute_instances:
-                pynvml.nvmlComputeInstanceDestroy(ci)
-                logger.debug("GPU %d: destroyed compute instance.", gpu_idx)
-        except pynvml.NVMLError as exc:
-            logger.debug(
-                "GPU %d: skipping compute instance teardown (%s).", gpu_idx, exc
-            )
 
-        pynvml.nvmlGpuInstanceDestroy(instance_handle)
+        # Some driver/OS versions take a moment to release the device after the
+        # container stops. We retry the entire GI teardown (both CI and GI).
+        for attempt in range(5):
+            try:
+                # 1. Destroy compute instances (CI)
+                try:
+                    ci_profiles = pynvml.nvmlGpuInstanceGetComputeInstanceProfileInfo(  # type: ignore
+                        instance_handle,
+                        0,
+                        pynvml.NVML_COMPUTE_INSTANCE_ENGINE_PROFILE_SHARED,
+                    )
+                    compute_instances = _safe_nvml_gpu_instance_get_compute_instances(
+                        instance_handle, ci_profiles.id
+                    )
+                    for ci in compute_instances:
+                        pynvml.nvmlComputeInstanceDestroy(ci)
+                        logger.debug("GPU %d: destroyed compute instance.", gpu_idx)
+                except pynvml.NVMLError as exc:
+                    logger.debug(
+                        "GPU %d: compute instance teardown skipped/failed (%s).",
+                        gpu_idx,
+                        exc,
+                    )
+
+                # 2. Destroy GPU instance (GI)
+                pynvml.nvmlGpuInstanceDestroy(instance_handle)
+                break
+
+            except pynvml.NVMLError as exc:
+                if isinstance(exc, pynvml.NVMLError_InUse) and attempt < 4:
+                    logger.debug(
+                        "GPU %d: instance id=%d still in use, retrying in 1.5s...",
+                        gpu_idx,
+                        inst_info.id,
+                    )
+                    time.sleep(1.5)
+                    continue
+                raise
+
         logger.info(
             "GPU %d: destroyed GPU instance id=%d profile=%s start=%d.",
             gpu_idx,
@@ -396,22 +477,86 @@ class MIGController:
 
         prof_info, _ = profile_lookup[profile.string]
 
+        # Determine correct physical placement size from hardware.
+        # Profiles like 7G and 3G on A100 have physical footprints (8 and 4)
+        # larger than their logical slice count (7 and 3).
+        placement_size = self._get_placement_size(handle, prof_info.id, start_slice)
+        if placement_size != prof_info.sliceCount:
+            logger.debug(
+                "GPU %d: profile %s at slice %d requires physical size %d (logical slices %d)",
+                gpu_idx,
+                profile.string,
+                start_slice,
+                placement_size,
+                prof_info.sliceCount,
+            )
+
         # Build the placement struct.
         placement = pynvml.c_nvmlGpuInstancePlacement_t()
         placement.start = start_slice
-        placement.size = prof_info.sliceCount
+        placement.size = placement_size
+
+        logger.debug(
+            "GPU %d: calling nvmlDeviceCreateGpuInstanceWithPlacement(profile_id=%d, start=%d, size=%d)",
+            gpu_idx,
+            prof_info.id,
+            placement.start,
+            placement.size,
+        )
 
         instance = pynvml.nvmlDeviceCreateGpuInstanceWithPlacement(  # type: ignore
-            handle, prof_info.id, placement
+            handle, prof_info.id, ctypes.byref(placement)
         )
         logger.info(
-            "GPU %d: created GPU instance  profile=%s  start_slice=%d  slice_count=%d.",
+            "GPU %d: created GPU instance  profile=%s  start_slice=%d  phys_size=%d  log_slices=%d.",
             gpu_idx,
             profile.string,
             start_slice,
+            placement_size,
             prof_info.sliceCount,
         )
+
+        # Create a default compute instance for this GPU instance.
+        # This is required for the OS to expose a MIG device handle/UUID.
+        try:
+            # profileId 0 is the default "full" compute profile for the GI
+            ci_prof = pynvml.nvmlGpuInstanceGetComputeInstanceProfileInfo(
+                instance, 0, pynvml.NVML_COMPUTE_INSTANCE_ENGINE_PROFILE_SHARED
+            )
+            pynvml.nvmlGpuInstanceCreateComputeInstance(instance, ci_prof.id)
+            logger.info("GPU %d: created default compute instance.", gpu_idx)
+        except pynvml.NVMLError as exc:
+            logger.warning(
+                "GPU %d: failed to create compute instance: %s", gpu_idx, exc
+            )
+
         return instance
+
+    def _get_placement_size(
+        self, handle: pynvml.c_nvmlDevice_t, profile_id: int, start_slice: int
+    ) -> int:  # type: ignore[valid-type]
+        """Query NVML for the valid physical placement size at the given start slice."""
+        try:
+            count = ctypes.c_uint(32)
+            placements = (pynvml.c_nvmlGpuInstancePlacement_t * 32)()
+            pynvml.nvmlDeviceGetGpuInstancePossiblePlacements(
+                handle, profile_id, placements, ctypes.byref(count)
+            )
+            for i in range(count.value):
+                p = placements[i]
+                if p.start == start_slice:
+                    return p.size
+        except pynvml.NVMLError:
+            pass
+
+        # Fallback to logical slice count if query fails
+        # We need the profile info to get the slice count.
+        # Since we have the hardware ID, we should use nvmlDeviceGetGpuInstanceProfileInfoById.
+        try:
+            info = pynvml.nvmlDeviceGetGpuInstanceProfileInfoById(handle, profile_id)
+            return info.sliceCount
+        except pynvml.NVMLError:
+            return 1  # absolute fallback
 
     def create_gi_with_placement(
         self,
@@ -498,11 +643,9 @@ class MIGController:
         docker-compose's ``device_ids`` field to pin a container to a specific
         MIG compute instance.
 
-        The method assumes **one compute instance per GPU instance**, which is
-        the standard single-process setup created by
-        :meth:`apply_full_configuration`.  Entries are sorted by
-        *start_slice* (lowest first), matching the order returned by
-        :meth:`list_gis`.
+        This method uses explicit hardware mapping via ``nvmlDeviceGetGpuInstanceId``
+        to ensure that each UUID is matched to the correct physical placement
+        (start_slice), avoiding errors caused by non-deterministic discovery order.
 
         Parameters
         ----------
@@ -517,35 +660,42 @@ class MIGController:
         self._require_init()
         handle = self._handle(gpu_idx)
 
-        # GPU instances sorted by start_slice — our placement reference.
+        # 1. Get current GPU instances and their IDs
         gi_infos = self.list_gis(gpu_idx)
+        gi_id_to_slice = {info.instance_id: info.start_slice for info in gi_infos}
 
-        # MIG devices are also ordered by placement (ascending start_slice).
+        if not gi_infos:
+            return []
+
         try:
             max_count = pynvml.nvmlDeviceGetMaxMigDeviceCount(handle)  # type: ignore
         except pynvml.NVMLError as exc:
             logger.warning("GPU %d: cannot query MIG device count: %s", gpu_idx, exc)
             return []
 
-        mig_uuids: List[str] = []
+        # 2. Resolve MIG UUIDs with explicit GI mapping.
+        res: List[Tuple[int, str]] = []
+        res = []
         for i in range(max_count):
             try:
                 mig_handle = pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, i)  # type: ignore
                 uuid: str = pynvml.nvmlDeviceGetUUID(mig_handle)  # type: ignore
-                mig_uuids.append(uuid)
-            except pynvml.NVMLError:
-                pass  # No MIG device at index i
 
-        if len(mig_uuids) != len(gi_infos):
+                # Explicitly get the GPU Instance ID for this MIG device handle
+                gi_id = pynvml.nvmlDeviceGetGpuInstanceId(mig_handle)  # type: ignore
+
+                if gi_id in gi_id_to_slice:
+                    res.append((gi_id_to_slice[gi_id], uuid))
+            except pynvml.NVMLError:
+                continue
+
+        if len(res) != len(gi_infos):
             logger.warning(
-                "GPU %d: %d GPU instances but %d MIG device UUIDs — "
-                "UUID list will be truncated to the shorter of the two.",
+                "GPU %d: Expected %d MIG UUIDs but only resolved %d. "
+                "The system state may be inconsistent.",
                 gpu_idx,
                 len(gi_infos),
-                len(mig_uuids),
+                len(res),
             )
 
-        result: List[Tuple[int, str]] = [
-            (gi.start_slice, uuid) for gi, uuid in zip(gi_infos, mig_uuids)
-        ]
-        return result
+        return sorted(res, key=lambda x: x[0])

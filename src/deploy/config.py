@@ -24,6 +24,8 @@ from typing import Dict
 
 import yaml
 
+from src.deploy.models import SimulatedGPUConfig
+
 
 # ---------------------------------------------------------------------------
 # Sub-configs
@@ -88,6 +90,10 @@ class DeploymentConfig:
             health_timeout_s=float(v.get("health_timeout_s", 300)),
             request_timeout_s=float(v.get("request_timeout_s", 60)),
         )
+
+        self.simulated_gpus: Dict[int, SimulatedGPUConfig] = {
+            int(k): v for k, v in data.get("simulated_gpus", {}).items()
+        }
 
     @classmethod
     def load(cls, path: Path = Path("configs/deployment.yaml")) -> "DeploymentConfig":

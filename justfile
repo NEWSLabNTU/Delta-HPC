@@ -31,8 +31,11 @@ train ckpt="":
 grid-search conf:
     CUDA_VISIBLE_DEVICES={{ gpu }} python -m src.training.grid_search {{ conf }}
 
-clean:
-    rm logs/*.jsonl logs/*.log test.log
+clean: clean-deploy
+    rm -f logs/*.jsonl logs/*.log test.log
+
+clean-deploy:
+    ./scripts/cleanup_all.sh
 
 lint:
     ruff check src --fix && ruff format src

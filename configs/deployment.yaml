@@ -21,7 +21,19 @@ vllm:
   compose_file: docker-compose.yaml
 
   # Seconds to wait for a freshly started container to pass its /health check.
-  health_timeout_s: 180
+  health_timeout_s: 600
 
   # HTTP request timeout in seconds when calling vLLM inference or metrics endpoints.
-  request_timeout_s: 60
+  request_timeout_s: 120
+
+# Simulated GPUs (e.g. for permanent engines when extra hardware is missing).
+# Maps GPU index to its simulated hardware model and permanent engine list.
+simulated_gpus:
+  2:
+    model: A100_40GB
+    state_id: 8
+    permanent_engines:
+      - agent: CodingAgent
+        mig: 2g.10gb
+      - agent: RAGAgent
+        mig: 2g.10gb

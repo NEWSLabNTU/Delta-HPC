@@ -1,13 +1,14 @@
 services:
   vllm-server:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.17.0.custom
     tty: true
     runtime: nvidia
     ipc: host
     ports:
       - "${HOST_PORT}:8000"
     environment:
-      - MIG_UUID=${MIG_UUID} # Ensure this is set in your shell or an .env file
+      - MIG_UUID=${MIG_UUID}
+      - NVIDIA_VISIBLE_DEVICES=${MIG_UUID}
       - HF_HOME=/root/.cache/huggingface
       - VLLM_CACHE_ROOT=/root/.cache/vllm
     volumes:
@@ -19,5 +20,5 @@ services:
           devices:
             - driver: nvidia
               device_ids: ["${MIG_UUID}"]
-              capabilities: [gpu]
-    command: --config /vllm-workspace/configs/${MODEL_ID}.yaml
+              capabilities: [gpu, utility]
+    command: --config /vllm-workspace/configs/${MODEL_FILENAME}.yaml

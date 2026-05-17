@@ -43,7 +43,7 @@ import pynvml
 
 import src.deploy.system as system
 from src.deploy.mig_controller import MIGController
-
+from src.deploy.config import DEPLOY_CONFIG
 from src.deploy.models import (
     AllGpuMIGConfigs,
     DetectedGPU,
@@ -53,6 +53,7 @@ from src.deploy.models import (
 )
 from src.share.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
 from src.share.models import MIGProfile, MIGProfileBase
+import src.share.models as m
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +102,15 @@ def _derive_valid_combinations(
     Mirrors ``GPU_VALID_COMBINATIONS`` construction in
     ``src/simulation/config.py``.
     """
-    supported = {p.profile_type for p in mig_profile_cls}
-    return [
-        profiles
-        for profiles in STATE_DEFINITIONS.values()
-        if all(p in supported for p in profiles)
-    ]
+    unsupported = mig_profile_cls.unsupported_profiles()
+    supported = {
+        p.profile_type for p in mig_profile_cls if p.profile_type not in unsupported
+    }
+    result = []
+    for profiles in STATE_DEFINITIONS.values():
+        if all(p in supported for p in profiles):
+            result.append(profiles)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -461,14 +465,14 @@ class DeployGPUSetup:
             #    the resulting GPUState into the global SYSTEM_STATE.
             for gpu_idx, placements in configs.items():
                 info = self.gpu_info[gpu_idx]
-                
+
                 # Register the GPU first so MIGController can look up the profile class
                 system.register_gpu(
                     GPUState(gpu_idx, info.model_name, info.mig_profile_cls)
                 )
-                
+
                 uuid_map = dict(ctrl.list_mig_device_uuids(gpu_idx))
-                
+
                 slots = [
                     MIGSlotState(
                         gpu_idx=gpu_idx,
@@ -486,6 +490,88 @@ class DeployGPUSetup:
                 system.register_gpu(gpu_state)
 
         logger.info("All GPU MIG configurations applied and SYSTEM_STATE updated.")
+
+    def cleanup(self) -> None:
+        """Destroy all MIG instances on all managed GPUs."""
+        logger.info("Cleaning up all MIG instances on managed GPUs...")
+        with MIGController(gpu_indices=self.gpu_indices) as ctrl:
+            for gpu_idx in self.gpu_indices:
+                ctrl.disable_all_instances(gpu_idx)
+
+    def register_simulated_gpus(self) -> None:
+        """Register simulated GPUs and permanent engines into SYSTEM_STATE.
+
+        This method mirrors the permanent engine configuration defined in
+        DEPLOY_CONFIG.simulated_gpus for deployment environments that lack the extra hardware.
+        """
+
+        for gpu_id, cfg in DEPLOY_CONFIG.simulated_gpus.items():
+            # Only register if this GPU is NOT a physical MIG-enabled GPU
+            if gpu_id in self.gpu_info:
+                logger.warning(
+                    f"GPU {gpu_id} is detected as physical hardware. "
+                    "Skipping simulation registration for this GPU."
+                )
+                continue
+
+            model_name = cfg["model"]
+            state_id = cfg.get("state_id")
+            mig_profile_cls = _load_mig_profile_class(model_name)
+
+            slots = []
+            target_slices = SLICE_MAPPING[state_id]
+            target_profiles = STATE_DEFINITIONS[state_id]
+
+            # Match permanent engines to slots in the defined state
+            for i, engine in enumerate(cfg["permanent_engines"]):
+                mig_str = engine["mig"]
+                agent_id = m.AgentId(engine["agent"])
+
+                # Convert mig_str to a logical profile type for comparison
+                hw_prof = next(p for p in mig_profile_cls if p.string == mig_str)
+                target_prof_type = hw_prof.profile_type
+
+                # Find a slot in the state that matches the requested MIG profile
+                found = False
+                for slot_idx, prof in enumerate(target_profiles):
+                    if prof == target_prof_type:
+                        # Check if this slot is already taken
+                        start_slice = target_slices[slot_idx][0]
+                        if any(
+                            s.profile_placement.start_slice == start_slice
+                            for s in slots
+                        ):
+                            continue
+
+                        slots.append(
+                            MIGSlotState(
+                                gpu_idx=gpu_id,
+                                profile_placement=ProfilePlacement(
+                                    hw_prof, start_slice
+                                ),
+                                mig_uuid=f"SIM-MIG-GPU-{gpu_id}-{slot_idx}",
+                                model_id=None,
+                                agent_id=agent_id,
+                            )
+                        )
+                        found = True
+                        break
+
+                if not found:
+                    logger.error(
+                        f"Simulated GPU {gpu_id}: Could not find a '{mig_str}' slot in state {state_id}."
+                    )
+
+            gpu_state = GPUState(
+                gpu_idx=gpu_id,
+                model_name=model_name,
+                mig_profile_cls=mig_profile_cls,
+                slots=slots,
+            )
+            system.register_gpu(gpu_state)
+            logger.info(
+                f"Registered simulated GPU {gpu_id} ({model_name}) with {len(slots)} permanent engines."
+            )
 
     def apply_random(self, *, dry_run: bool = False) -> AllGpuMIGConfigs:
         """Pick random valid combinations and immediately apply them.

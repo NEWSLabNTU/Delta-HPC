@@ -8,6 +8,8 @@ from src.deploy.vllm import VLLMManager
 from src.deploy.mig_controller import MIGController
 from src.deploy.obs import OBS_COLLECTOR
 from src.training.config import TRAINING_CONFIG
+from src.deploy.metrics import VLLMMetricsClient
+from src.simulation.utils import SIM_CONFIG
 from src.share.mig_matrix import (
     STATE_DEFINITIONS,
     TRANSITION_MATRIX,
@@ -87,6 +89,11 @@ class ActionController:
                 ):
                     continue
 
+                # GLOBAL CONSTRAINT: Avoid states with unsupported profiles (not supported by current RL model for this GPU)
+                unsupported = GPU_MIG_PROFILE[act_gpu_id].unsupported_profiles()
+                if any(p in unsupported for p in STATE_DEFINITIONS[target_sid]):
+                    continue
+
                 # Check if transition exists in matrix
                 trans_action = TRANSITION_MATRIX.get((current_sid, target_sid))
                 if not trans_action:
@@ -109,7 +116,8 @@ class ActionController:
                 supported_profiles = {
                     p.profile_type for p in GPU_MIG_PROFILE[act_gpu_id]
                 }
-                if trans_mig not in supported_profiles:
+                unsupported = GPU_MIG_PROFILE[act_gpu_id].unsupported_profiles()
+                if trans_mig not in supported_profiles or trans_mig in unsupported:
                     continue
 
                 if transfer_blocked:
@@ -162,7 +170,6 @@ class ActionController:
     def predict_action_cost(self, action: m.Action) -> float:
         """Estimate the downtime cost (drain + boot) of an action."""
         # We reuse simulation cost constants for policy consistency
-        from src.simulation.utils import SIM_CONFIG
 
         cost = 0.0
         if action.action == m.ActionType.TRANSFER:
@@ -382,14 +389,13 @@ class ActionController:
 
     def _predict_drain_time(self, slot: MIGSlotState) -> float:
         """Estimate the time to drain in-flight requests from a slot."""
-        from src.deploy.metrics import VLLMMetricsClient
 
         if slot.port is None:
             return 0.0
 
         try:
             # 1. Get real-time per-request token progress from VLLMManager
-            running_tokens = self.vllm_mgr.get_running_requests_tokens(slot.port)
+            running_tokens = self.vllm_mgr.get_running_requests_tokens(slot.mig_uuid)
 
             client = VLLMMetricsClient(slot.port, timeout=1.0)
             data = client.collect()

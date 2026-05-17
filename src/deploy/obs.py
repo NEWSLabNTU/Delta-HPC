@@ -98,7 +98,9 @@ class ObservationCollector:
                             aid = m.AgentId(aid_str)
                             if aid in self._agent_stats:
                                 self._agent_stats[aid].avg_response_len = val["avg"]
-                                self._agent_stats[aid].total_completed_reqs = val["count"]
+                                self._agent_stats[aid].total_completed_reqs = val[
+                                    "count"
+                                ]
                         except ValueError:
                             continue
             except Exception as e:
@@ -275,7 +277,11 @@ class ObservationCollector:
         stats = self._agent_stats[slot.agent_id]
         # Slot indices in OBS_COLLECTOR are typically sorted by start_slice
         # but here we can just use the samples recorded by record_samples
-        return stats.queue_length_samples[start_slice][-1] if stats.queue_length_samples[start_slice] else 0.0
+        return (
+            stats.queue_length_samples[start_slice][-1]
+            if stats.queue_length_samples[start_slice]
+            else 0.0
+        )
 
     def get_observation(self) -> m.EnvironmentStateData:
         """Construct the full normalized observation dictionary."""

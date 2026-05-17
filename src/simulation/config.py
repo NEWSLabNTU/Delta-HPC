@@ -79,8 +79,14 @@ class SimulationConfig:
             mod = loaded_modules[model_name]
             GPU_MIG_PROFILE[gpu_id] = mod.MIG_PROFILE
 
-            # Derive VALID_COMBINATIONS from STATE_DEFINITIONS based on profiles defined in the GPU model class
-            supported = {p.profile_type for p in mod.MIG_PROFILE}
+            # Derive VALID_COMBINATIONS from STATE_DEFINITIONS.
+            # EXCLUSION: We explicitly exclude profiles marked as unsupported by the GPU model class.
+            unsupported = mod.MIG_PROFILE.unsupported_profiles()
+            supported = {
+                p.profile_type
+                for p in mod.MIG_PROFILE
+                if p.profile_type not in unsupported
+            }
 
             valid_combos = []
             for profiles in STATE_DEFINITIONS.values():
@@ -118,11 +124,16 @@ class SimulationConfig:
                     gid for gid, mname in gpu_to_model.items() if mname == model_name
                 )
                 agent_mig_configs = agent_defs[agent_id.value][model_name]["mig"]
+                # Verify hardware MIG profiles that are part of valid combinations
+                used_profile_types = {
+                    p for combo in GPU_VALID_COMBINATIONS[gpu_id] for p in combo
+                }
                 for hw_prof in GPU_MIG_PROFILE[gpu_id]:
-                    if hw_prof.string not in agent_mig_configs:
-                        raise ValueError(
-                            f"Agent {agent_id.value} on {model_name} lacks configuration for MIG profile {hw_prof.string}"
-                        )
+                    if hw_prof.profile_type in used_profile_types:
+                        if hw_prof.string not in agent_mig_configs:
+                            raise ValueError(
+                                f"Agent {agent_id.value} on {model_name} lacks configuration for MIG profile {hw_prof.string}"
+                            )
 
         return cls(
             cluster=gpu_to_model,

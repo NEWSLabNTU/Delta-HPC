@@ -48,9 +48,12 @@ from __future__ import annotations
 
 import yaml
 import time
+import random
+import asyncio
 import logging
 import requests
 import subprocess
+import concurrent.futures
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -61,6 +64,7 @@ import src.deploy.system as system
 from src.deploy.config import DEPLOY_CONFIG
 from src.deploy.models import GPUState, MIGSlotState
 from src.share.models import AgentId
+import src.simulation.utils as sim_utils
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +94,55 @@ class VLLMManager:
     ) -> None:
         self._cfg = DEPLOY_CONFIG
 
-        # _model_map[gpu_idx][profile_string] = model_id
-        self._model_map: Dict[int, Dict[str, str]] = self._build_model_map(
-            sim_config_path
+        # _model_map[gpu_idx][agent_id][profile_string] = model_id
+        self._model_map: Dict[int, Dict[AgentId, Dict[str, str]]] = (
+            self._build_model_map(sim_config_path)
         )
 
-        # Port counter — assigned once per slot, incremented permanently.
-        self._next_port: int = self._cfg.vllm.base_port
+        # Pre-allocate the full port pool: 2 × (7 slots/GPU × num_GPUs).
+        # Ports are returned to this set when a slot stops so they are reused
+        # on the next reconfiguration.  Using a single set avoids maintaining a
+        # separate counter and a separate free list.
+        _num_gpus = max(len(system.SYSTEM_STATE.gpus), 1)
+        _pool_size = 7 * _num_gpus * 2
+        self._port_pool: set[int] = set(
+            range(self._cfg.vllm.base_port, self._cfg.vllm.base_port + _pool_size)
+        )
 
-        # {port: {request_id: current_tokens}}
-        self._active_reqs: Dict[int, Dict[str, int]] = {}
+        # {mig_uuid: {request_id: current_tokens}}
+        # Keyed by MIG UUID so that state is always tied to a specific hardware
+        # instance.  Stopping a slot removes its entry; a new slot starts clean.
+        self._active_reqs: Dict[str, Dict[str, int]] = {}
 
     # ------------------------------------------------------------------
     # Model-to-MIG mapping
     # ------------------------------------------------------------------
 
-    def _build_model_map(self, sim_config_path: Path) -> Dict[int, Dict[str, str]]:
-        """Build ``{gpu_idx: {profile_string: model_id}}`` from the sim config.
+    def _build_model_map(
+        self, sim_config_path: Path
+    ) -> Dict[int, Dict[AgentId, Dict[str, str]]]:
+        """Build ``{gpu_idx: {agent_id: {profile_string: model_id}}}`` map.
 
-        For each GPU, the agent name is taken from
-        :attr:`~src.deploy.config.DeploymentConfig.gpu_assignment`.
+        Uses the actual hardware detected in :data:`~src.deploy.system.SYSTEM_STATE`
+        and cross-references it with the agent definitions in the simulation config.
         """
+        if not system.SYSTEM_STATE.gpus:
+            logger.warning(
+                "VLLMManager: SYSTEM_STATE.gpus is empty."
+                "Ensure cluster.DeployGPUSetup.apply() was called before init."
+            )
+
         with open(sim_config_path, "r") as f:
             raw: Dict[str, Any] = yaml.safe_load(f)
 
         sim = raw["simulation"]
         agents_cfg = sim["agents"]
-        cluster_cfg = sim["cluster"]
 
         result: Dict[int, Dict[AgentId, Dict[str, str]]] = {}
-        for gpu_idx_str, hw_model in cluster_cfg.items():
-            gpu_idx = int(gpu_idx_str)
+        for gpu_idx, gpu_state in system.SYSTEM_STATE.gpus.items():
+            hw_model = gpu_state.model_name
             result[gpu_idx] = {}
+
             # Build mapping for all agents, not just the default one
             for agent_id in list(AgentId):
                 agent_name = agent_id.value
@@ -131,6 +152,13 @@ class VLLMManager:
                     result[gpu_idx][agent_id] = {
                         p_str: p_data["model"] for p_str, p_data in mig_cfg.items()
                     }
+                else:
+                    logger.debug(
+                        "GPU %d (%s): No model mapping for agent %s.",
+                        gpu_idx,
+                        hw_model,
+                        agent_name,
+                    )
 
         return result
 
@@ -179,9 +207,16 @@ class VLLMManager:
     # ------------------------------------------------------------------
 
     def _alloc_port(self) -> int:
-        port = self._next_port
-        self._next_port += 1
+        """Remove and return the lowest port number from the pool."""
+        if not self._port_pool:
+            raise RuntimeError("Port pool exhausted — too many concurrent MIG slots.")
+        port = min(self._port_pool)
+        self._port_pool.discard(port)
         return port
+
+    def _release_port(self, port: int) -> None:
+        """Return *port* to the pool so it can be reused."""
+        self._port_pool.add(port)
 
     def _run_script(
         self,
@@ -195,6 +230,13 @@ class VLLMManager:
         cmd = [script, mig_uuid, model_id, str(port), action]
         logger.info("vllm: %s  (cmd=%s)", action.upper(), " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # Log output for visibility as requested by user
+        if result.stdout.strip():
+            logger.info("vllm %s stdout:\n%s", action, result.stdout.strip())
+        if result.stderr.strip():
+            logger.info("vllm %s stderr:\n%s", action, result.stderr.strip())
+
         if result.returncode != 0:
             raise RuntimeError(
                 f"launch_vllm.sh {action} failed (exit {result.returncode}):\n"
@@ -205,7 +247,9 @@ class VLLMManager:
     def _project_name(model_id: str, mig_uuid: str) -> str:
         """Docker compose project name derived from the model ID and MIG UUID."""
         short = (mig_uuid or "unknown")[4:8]
-        model = (model_id or "none").replace(".", "_")
+        # Use only the base name if it's a path, and replace dots with underscores
+        model_base = (model_id or "none").split("/")[-1]
+        model = model_base.replace(".", "_")
         return f"vllm-{model}-{short}"
 
     def start(self, slot: MIGSlotState) -> None:
@@ -235,10 +279,13 @@ class VLLMManager:
             )
 
         model_id = self.model_for_slot(slot)
-        port = self._alloc_port()
-        container_name = self._project_name(model_id, slot.mig_uuid)
+        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
 
-        self._run_script(slot.mig_uuid, model_id, port, "up")
+        port = self._alloc_port()
+        container_name = None
+        if not is_simulated:
+            container_name = self._project_name(model_id, slot.mig_uuid)
+            self._run_script(slot.mig_uuid, model_id, port, "up")
 
         agent_id = slot.agent_id or AgentId(self._cfg.gpu_assignment[slot.gpu_idx])
 
@@ -251,12 +298,12 @@ class VLLMManager:
             agent_id=agent_id,
         )
         logger.info(
-            "vllm: GPU %d [%s] → model=%s  port=%d  container=%s",
+            "vllm: GPU %d [%s] → model=%s%s%s",
             slot.gpu_idx,
             slot.profile_placement.profile.string,
             model_id,
-            port,
-            container_name,
+            f"  port={port}" if port else " (simulated)",
+            f"  container={container_name}" if container_name else "",
         )
 
     def _wait_for_drain(self, slot: MIGSlotState, poll_interval_s: float = 2.0) -> None:
@@ -311,7 +358,7 @@ class VLLMManager:
                 return
             time.sleep(poll_interval_s)
 
-    def stop(self, slot: MIGSlotState) -> None:
+    def stop(self, slot: MIGSlotState, graceful: bool = True) -> None:
         """Gracefully stop the vLLM container for *slot*.
 
         Waits for all in-flight requests to finish (by polling ``/metrics``)
@@ -322,6 +369,8 @@ class VLLMManager:
         slot:
             The slot to stop.  ``model_id``, ``port``, and ``mig_uuid`` must
             all be set (i.e. :meth:`start` must have been called first).
+        graceful:
+            If False, skip the drain phase and stop immediately.
         """
         if not slot.mig_uuid or slot.model_id is None or slot.port is None:
             logger.warning(
@@ -331,8 +380,24 @@ class VLLMManager:
             )
             return
 
-        self._wait_for_drain(slot)
-        self._run_script(slot.mig_uuid, slot.model_id, slot.port, "down")
+        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+        if not is_simulated:
+            if graceful:
+                self._wait_for_drain(slot)
+            self._run_script(slot.mig_uuid, slot.model_id, slot.port, "down")
+            # Give the driver a moment to release the device after container shutdown
+            time.sleep(2.5)
+
+        # Capture before update_slot clears the field.
+        released_port = slot.port
+
+        # Return the port to the free pool so it can be reused.
+        if released_port is not None:
+            self._release_port(released_port)
+
+        # Drop the UUID's request-tracking state so a future slot starting on
+        # the same MIG position begins with a completely clean slate.
+        self._active_reqs.pop(slot.mig_uuid, None)
 
         system.update_slot(
             slot.gpu_idx,
@@ -343,9 +408,10 @@ class VLLMManager:
             agent_id=None,
         )
         logger.info(
-            "vllm: GPU %d [%s] stopped.",
+            "vllm: GPU %d [%s] stopped%s.",
             slot.gpu_idx,
             slot.profile_placement.profile.string,
+            f" (port {released_port} released)" if released_port is not None else "",
         )
 
     def start_all(self, gpu_state: GPUState) -> None:
@@ -360,16 +426,22 @@ class VLLMManager:
         for slot in gpu_state.slots:
             self.start(slot)
 
-    def stop_all(self, gpu_state: GPUState) -> None:
+    def stop_all(self, gpu_state: GPUState, graceful: bool = True) -> None:
         """Stop vLLM containers for every slot on *gpu_state*.
 
         Parameters
         ----------
         gpu_state:
             Target :class:`~src.deploy.models.GPUState`.
+        graceful:
+            If False, skip the drain phase for all slots.
         """
-        for slot in gpu_state.slots:
-            self.stop(slot)
+        # We use a thread pool to stop slots concurrently, which is critical
+        # for fast teardown when multiple slots are in a "stuck" or slow-to-poll state.
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            list(
+                executor.map(lambda s: self.stop(s, graceful=graceful), gpu_state.slots)
+            )
 
     # ------------------------------------------------------------------
     # Readiness probing
@@ -381,6 +453,9 @@ class VLLMManager:
         poll_interval_s: float = 1.0,
     ) -> None:
         """Block until the vLLM server on *slot* passes its ``/health`` check.
+
+        Once healthy, this method also queries ``/v1/models`` to detect the
+        actual model ID being served and updates the system state accordingly.
 
         Parameters
         ----------
@@ -394,6 +469,10 @@ class VLLMManager:
         TimeoutError
             If the server does not become ready within the configured timeout.
         """
+        if slot.mig_uuid.startswith("SIM-MIG-"):
+            logger.info("vllm: GPU %d is simulated — assuming ready.", slot.gpu_idx)
+            return
+
         if slot.port is None:
             raise RuntimeError(
                 f"GPU {slot.gpu_idx} start_slice={slot.profile_placement.start_slice}: "
@@ -401,25 +480,47 @@ class VLLMManager:
             )
 
         deadline = time.monotonic() + self._cfg.vllm.health_timeout_s
-        url = f"http://localhost:{slot.port}/health"
-        logger.info("vllm: waiting for %s …", url)
+        health_url = f"http://localhost:{slot.port}/health"
+        models_url = f"http://localhost:{slot.port}/v1/models"
+        logger.info("vllm: waiting for %s …", health_url)
 
         while time.monotonic() < deadline:
             try:
-                r = requests.get(url, timeout=5)
+                r = requests.get(health_url, timeout=5)
                 if r.status_code == 200:
                     logger.info(
                         "vllm: GPU %d port %d is ready.", slot.gpu_idx, slot.port
                     )
-                    return
+                    break
             except requests.exceptions.RequestException:
                 pass
             time.sleep(poll_interval_s)
+        else:
+            raise TimeoutError(
+                f"vLLM on GPU {slot.gpu_idx} port {slot.port} did not become ready "
+                f"within {self._cfg.vllm.health_timeout_s:.0f}s."
+            )
 
-        raise TimeoutError(
-            f"vLLM on GPU {slot.gpu_idx} port {slot.port} did not become ready "
-            f"within {self._cfg.vllm.health_timeout_s:.0f}s."
-        )
+        # Robust model name detection - Runs only AFTER the server is healthy.
+        logger.info("vllm: Querying model name from port %d...", slot.port)
+        mr = requests.get(models_url, timeout=5)
+        mr.raise_for_status()
+        data = mr.json()
+        if "data" not in data or len(data["data"]) == 0:
+            raise RuntimeError(f"vllm: No models found at {models_url}")
+
+        actual_model_id = data["data"][0]["id"]
+        if actual_model_id != slot.model_id:
+            logger.info(
+                "vllm: detected server model ID '%s' (requested '%s'). Updating state.",
+                actual_model_id,
+                slot.model_id,
+            )
+            system.update_slot(
+                slot.gpu_idx,
+                slot.profile_placement.start_slice,
+                model_id=actual_model_id,
+            )
 
     # ------------------------------------------------------------------
     # Inference
@@ -431,6 +532,7 @@ class VLLMManager:
         messages: List[Dict[str, str]],
         *,
         max_tokens: int = 2048,
+        data_id: str,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         """Send a chat-completion request to the vLLM server on *slot*.
@@ -438,14 +540,14 @@ class VLLMManager:
         Parameters
         ----------
         slot:
-            Target slot (must have ``port`` and ``model_id`` set).
+            Target slot (must have ``port`` and ``model_id`` set, unless simulated).
         messages:
             OpenAI-style message list, e.g.
             ``[{"role": "user", "content": "Hello"}]``.
         max_tokens:
             Maximum tokens to generate.
-        temperature:
-            Sampling temperature.
+        data_id:
+            Lookup ID for TOKENS_MAP (usually original_id from dataset).
         **kwargs:
             Extra fields forwarded to the request body.
 
@@ -455,12 +557,21 @@ class VLLMManager:
             Raw JSON response from the ``/v1/chat/completions`` endpoint,
             augmented with ``ttft`` and ``total_time`` metrics.
         """
-        if slot.port is None or slot.model_id is None:
+        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+
+        if not is_simulated and (slot.port is None or slot.model_id is None):
             raise RuntimeError(
                 "Slot is not running — call start() and wait_until_ready() first."
             )
 
-        client = AsyncOpenAI(base_url=f"http://localhost:{slot.port}/v1")
+        if is_simulated:
+            return await self._handle_simulated_request(
+                slot, messages, max_tokens, data_id=data_id
+            )
+
+        client = AsyncOpenAI(
+            base_url=f"http://localhost:{slot.port}/v1", api_key="EMPTY"
+        )
 
         start_time = time.time()
         ttft = None
@@ -478,12 +589,16 @@ class VLLMManager:
 
         full_content = ""
         usage = None
+        chunk_id = None
 
-        if slot.port not in self._active_reqs:
-            self._active_reqs[slot.port] = {}
+        if slot.mig_uuid not in self._active_reqs:
+            self._active_reqs[slot.mig_uuid] = {}
 
         try:
             async for chunk in response_stream:
+                if chunk.id is not None:
+                    chunk_id = chunk.id
+
                 if ttft is None:
                     ttft = time.time() - start_time
 
@@ -497,14 +612,15 @@ class VLLMManager:
                 if chunk.usage is not None:
                     usage = chunk.usage.model_dump()
                     # Track current progress
-                    self._active_reqs[slot.port][chunk.id] = usage.get(
+                    self._active_reqs[slot.mig_uuid][chunk.id] = usage.get(
                         "completion_tokens", 0
                     )
 
             total_time = time.time() - start_time
         finally:
             # Always clean up tracking even on failure/cancellation
-            self._active_reqs[slot.port].pop(chunk.id, None)
+            if chunk_id is not None:
+                self._active_reqs[slot.mig_uuid].pop(chunk_id, None)
 
         return {
             "choices": [{"message": {"role": "assistant", "content": full_content}}],
@@ -514,8 +630,84 @@ class VLLMManager:
             "total_time": total_time,
         }
 
-    def get_running_requests_tokens(self, port: int) -> List[int]:
-        """Return the current token counts for all active requests on a port."""
-        if port not in self._active_reqs:
-            return []
-        return list(self._active_reqs[port].values())
+    async def _handle_simulated_request(
+        self,
+        slot: MIGSlotState,
+        messages: List[Dict[str, str]],
+        max_tokens: int,
+        data_id: str,
+    ) -> Dict[str, Any]:
+        """Mock request handler for simulated permanent engines.
+
+        It simulates the time taken by a request based on the simulation parameters
+        (TTFT and TPOT) and the predefined response length from TOKENS_MAP.
+        """
+        agent_id = slot.agent_id
+        if agent_id is None:
+            # Fallback to the static assignment if slot ownership isn't explicitly set
+            agent_id = AgentId(self._cfg.gpu_assignment[slot.gpu_idx])
+
+        # Find the model being used for this agent on this simulated hardware
+        hw_prof = slot.profile_placement.profile
+        model_name = sim_utils.SIM_CONFIG.get_model(
+            agent_id, hw_prof, gpu_id=slot.gpu_idx
+        )
+
+        # Strict lookup in TOKENS_MAP - Will raise KeyError if data_id is missing
+        token_info = sim_utils.TOKENS_MAP[agent_id][model_name][data_id]
+        prompt_tokens, completion_tokens = token_info
+
+        # Get performance params
+        prefill_params = sim_utils.SIM_CONFIG.get_prefill_params(
+            agent_id, hw_prof, gpu_id=slot.gpu_idx
+        )
+        tpot_params = sim_utils.SIM_CONFIG.get_tpot_params(
+            agent_id, hw_prof, gpu_id=slot.gpu_idx
+        )
+
+        # Concurrency tracking — keyed by MIG UUID so a reconfigured slot
+        # never inherits stale counters from a previous layout.
+        if slot.mig_uuid not in self._active_reqs:
+            self._active_reqs[slot.mig_uuid] = {}
+        self._active_reqs[slot.mig_uuid][data_id] = 0
+
+        try:
+            concurrency = len(self._active_reqs[slot.mig_uuid])
+
+            # Calculate TTFT and TPOT (correctly matching engine.py simulation logic)
+            ttft = prefill_params["alpha"] + prefill_params["beta"] * prompt_tokens
+            tpot = tpot_params["alpha"] + tpot_params["beta"] * concurrency
+
+            # Add some noise
+            ttft = max(0.01, random.normalvariate(ttft, prefill_params["sigma"]))
+            tpot = max(0.01, random.normalvariate(tpot, tpot_params["sigma"]))
+
+            total_gen_time = tpot * completion_tokens
+            total_time = ttft + total_gen_time
+
+            start_time = time.time()
+            await asyncio.sleep(total_time)
+        finally:
+            self._active_reqs[slot.mig_uuid].pop(data_id, None)
+
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Simulated response content.",
+                    }
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            "ttft": ttft,
+            "total_time": time.time() - start_time,
+        }
+
+    def get_running_requests_tokens(self, mig_uuid: str) -> List[int]:
+        """Return the current token counts for all active requests on *mig_uuid*."""
+        return list(self._active_reqs.get(mig_uuid, {}).values())

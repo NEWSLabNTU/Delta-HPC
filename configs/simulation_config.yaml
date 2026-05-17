@@ -352,13 +352,13 @@ simulation:
   initial_state:
     gpu_initial_agents:
       0:
-      - CodingAgent
+        - CodingAgent
       1:
-      - RAGAgent
+        - RAGAgent
     permanent_engines:
-    - agent: CodingAgent
-      gpu: 2
-      mig: 2g.10gb
-    - agent: RAGAgent
-      gpu: 2
-      mig: 2g.10gb
+      - agent: CodingAgent
+        gpu: 2
+        mig: 2g.10gb
+      - agent: RAGAgent
+        gpu: 2
+        mig: 2g.10gb
