@@ -30,7 +30,7 @@ def main():
     sim = SimulatorImpl(
         agents=agents,
         engines=engines,
-        no_log=True,
+        no_log=False,
     )
 
     # For a quicker test we limit requests

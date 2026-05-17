@@ -2,7 +2,7 @@ cluster:
   0: B200
   1: B200
   2: A100_40GB
-seed: 32
+seed: 23
 benchmark-length: 1024
 workloads:
   idle:

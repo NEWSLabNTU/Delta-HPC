@@ -24,7 +24,7 @@ vllm:
   health_timeout_s: 600
 
   # HTTP request timeout in seconds when calling vLLM inference or metrics endpoints.
-  request_timeout_s: 120
+  request_timeout_s: 300
 
 # Simulated GPUs (e.g. for permanent engines when extra hardware is missing).
 # Maps GPU index to its simulated hardware model and permanent engine list.
@@ -37,3 +37,8 @@ simulated_gpus:
         mig: 2g.10gb
       - agent: RAGAgent
         mig: 2g.10gb
+
+# Configuration for the real-time plain-text monitor server
+dashboard:
+  host: "localhost"
+  port: 9000

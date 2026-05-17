@@ -5,10 +5,13 @@ import random
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
+import logging
 
 import importlib.util
 import src.share.models as m
 from src.share.mig_matrix import STATE_DEFINITIONS
+
+logger = logging.getLogger(__name__)
 
 # Hardware Constants
 NUM_MIG_SLICES = 7
@@ -49,21 +52,38 @@ class SimulationConfig:
         return len(total_gpus - permanent_gpus)
 
     @classmethod
-    def load(cls, config_path: Path) -> SimulationConfig:
+    def load(
+        cls, config_path: Path, use_hardware_detection: bool = False
+    ) -> SimulationConfig:
 
         with open(config_path, "r") as f:
             data = yaml.safe_load(f)
 
         sim_data = data["simulation"]
-        gpu_to_model = sim_data["cluster"]
+
+        # Convert string keys to int from YAML
+        gpu_to_model = {int(k): v for k, v in sim_data["cluster"].items()}
+
+        if use_hardware_detection:
+            from src.share.hardware import detect_mig_gpus
+
+            try:
+                detected = detect_mig_gpus()
+                for d in detected:
+                    gpu_to_model[d.gpu_idx] = d.model_name
+                logger.info(
+                    "SimulationConfig loaded with hardware override: %s", gpu_to_model
+                )
+            except Exception as e:
+                logger.error("Hardware detection failed: %s", e)
+                raise RuntimeError(f"Hardware detection failed: {e}") from e
+
         agent_defs = sim_data["agents"]
 
         loaded_modules = {}
 
         # Load GPU Registries
-        for gpu_id_str, model_name in gpu_to_model.items():
-            gpu_id = int(gpu_id_str)
-
+        for gpu_id, model_name in gpu_to_model.items():
             if model_name not in loaded_modules:
                 module_path = Path(f"configs/gpus/{model_name}.py")
                 spec = importlib.util.spec_from_file_location(

@@ -36,81 +36,23 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 import random
 import logging
-import importlib.util
 from pathlib import Path
-
-import pynvml
 
 import src.deploy.system as system
 from src.deploy.mig_controller import MIGController
 from src.deploy.config import DEPLOY_CONFIG
 from src.deploy.models import (
     AllGpuMIGConfigs,
-    DetectedGPU,
     GPUState,
     MIGSlotState,
     ProfilePlacement,
 )
+from src.share.hardware import DetectedGPU, detect_mig_gpus, load_mig_profile_class
 from src.share.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
 from src.share.models import MIGProfile, MIGProfileBase
 import src.share.models as m
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helper: load hardware MIG profile class from configs/gpus/<model>.py
-# ---------------------------------------------------------------------------
-
-
-def _load_mig_profile_class(gpu_model: str) -> MIGProfileBase:
-    """Import and return the ``MIG_PROFILE`` enum class for *gpu_model*.
-
-    Parameters
-    ----------
-    gpu_model:
-        GPU model name matching a file in ``configs/gpus/``, e.g. ``"A100_40GB"``.
-
-    Returns
-    -------
-    type
-        The ``MIGProfileBase`` subclass (enum) defined in that file.
-    """
-    module_path = Path(f"configs/gpus/{gpu_model}.py")
-    if not module_path.exists():
-        raise FileNotFoundError(
-            f"GPU config file not found: {module_path}.  "
-            f"Available: {list(Path('configs/gpus').glob('*.py'))}"
-        )
-    spec = importlib.util.spec_from_file_location(f"gpu_mod_{gpu_model}", module_path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.MIG_PROFILE  # type: ignore[return-value]
-
-
-# ---------------------------------------------------------------------------
-# Helper: derive valid combinations (mirrors logic in SimulationConfig.load)
-# ---------------------------------------------------------------------------
-
-
-def _derive_valid_combinations(
-    mig_profile_cls: MIGProfileBase,
-) -> List[Tuple[MIGProfile, ...]]:
-    """Return valid logical profile tuples supported by *mig_profile_cls*.
-
-    Mirrors ``GPU_VALID_COMBINATIONS`` construction in
-    ``src/simulation/config.py``.
-    """
-    unsupported = mig_profile_cls.unsupported_profiles()
-    supported = {
-        p.profile_type for p in mig_profile_cls if p.profile_type not in unsupported
-    }
-    result = []
-    for profiles in STATE_DEFINITIONS.values():
-        if all(p in supported for p in profiles):
-            result.append(profiles)
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -157,160 +99,6 @@ def _combo_to_placement(
         placements.append(ProfilePlacement(hw_prof, slice_group[0]))
 
     return placements
-
-
-# ---------------------------------------------------------------------------
-# Helper: match an NVML device name to a configs/gpus/<model>.py file
-# ---------------------------------------------------------------------------
-
-
-def _match_gpu_model(nvml_name: str, config_dir: Path) -> Optional[str]:
-    """Find the best-matching config filename stem for *nvml_name*.
-
-    The matching strategy normalises both strings to uppercase alphanumeric
-    tokens and selects the config file whose tokens are all present in the
-    NVML name tokens.  When multiple files match, the one with more matching
-    tokens wins.
-
-    Parameters
-    ----------
-    nvml_name:
-        Raw string returned by ``nvmlDeviceGetName``,
-        e.g. ``"NVIDIA A100-SXM4-40GB"``.
-    config_dir:
-        Directory containing ``*.py`` GPU config files.
-
-    Returns
-    -------
-    str or None
-        The matched filename stem (e.g. ``"A100_40GB"``), or ``None`` if no
-        config file matches.
-    """
-    import re
-
-    def tokenise(s: str) -> List[str]:
-        return re.findall(r"[A-Z0-9]+", s.upper())
-
-    nvml_tokens = set(tokenise(nvml_name))
-
-    best_match: Optional[str] = None
-    best_score = -1
-
-    for cfg_file in config_dir.glob("*.py"):
-        if cfg_file.stem.startswith("__"):
-            continue
-        cfg_tokens = tokenise(cfg_file.stem)
-        # All tokens from the config name must be present in the NVML name.
-        if all(t in nvml_tokens for t in cfg_tokens):
-            score = len(cfg_tokens)
-            if score > best_score:
-                best_score = score
-                best_match = cfg_file.stem
-
-    return best_match
-
-
-# ---------------------------------------------------------------------------
-# Hardware detection
-# ---------------------------------------------------------------------------
-
-
-def detect_mig_gpus(config_dir: Path = Path("configs/gpus")) -> List[DetectedGPU]:
-    """Detect all GPUs with MIG mode currently enabled on this machine.
-
-    Uses pynvml to enumerate GPUs, checks MIG mode, maps NVML device names to
-    hardware config files, and builds :class:`DetectedGPU` records.
-
-    Parameters
-    ----------
-    config_dir:
-        Directory containing ``*.py`` GPU config files.
-        Defaults to ``configs/gpus`` relative to the working directory.
-
-    Returns
-    -------
-    list of :class:`DetectedGPU`
-        One entry per MIG-enabled GPU, sorted by physical index.
-
-    Raises
-    ------
-    RuntimeError
-        If no MIG-enabled GPU is found on the machine.
-    """
-    pynvml.nvmlInit()
-    try:
-        count = pynvml.nvmlDeviceGetCount()
-        detected: List[DetectedGPU] = []
-
-        for idx in range(count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-
-            # Check MIG mode
-            try:
-                current_mode, _ = pynvml.nvmlDeviceGetMigMode(handle)
-            except pynvml.NVMLError:
-                # GPU does not support MIG at all
-                continue
-
-            if current_mode != pynvml.NVML_DEVICE_MIG_ENABLE:
-                logger.debug("GPU %d: MIG mode not enabled — skipping.", idx)
-                continue
-
-            nvml_name = pynvml.nvmlDeviceGetName(handle)
-            logger.info("GPU %d: MIG enabled  name=%r", idx, nvml_name)
-
-            model_name = _match_gpu_model(nvml_name, config_dir)
-            if model_name is None:
-                logger.warning(
-                    "GPU %d (%r): no matching config file in %s — skipping.",
-                    idx,
-                    nvml_name,
-                    config_dir,
-                )
-                continue
-
-            mig_profile_cls = _load_mig_profile_class(model_name)
-            valid_combos = _derive_valid_combinations(mig_profile_cls)
-            if not valid_combos:
-                logger.warning(
-                    "GPU %d (%s): no valid MIG combinations found — skipping.",
-                    idx,
-                    model_name,
-                )
-                continue
-
-            combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = {
-                profiles: sid
-                for sid, profiles in STATE_DEFINITIONS.items()
-                if profiles in valid_combos
-            }
-
-            detected.append(
-                DetectedGPU(
-                    gpu_idx=idx,
-                    model_name=model_name,
-                    nvml_name=nvml_name,
-                    mig_profile_cls=mig_profile_cls,
-                    valid_combos=valid_combos,
-                    combo_to_state_id=combo_to_state_id,
-                )
-            )
-            logger.info(
-                "GPU %d: matched model=%s  valid_combos=%d",
-                idx,
-                model_name,
-                len(valid_combos),
-            )
-    finally:
-        pynvml.nvmlShutdown()
-
-    if not detected:
-        raise RuntimeError(
-            "No MIG-enabled GPUs found on this machine.  "
-            "Enable MIG mode with: nvidia-smi -i <gpu_idx> -mig 1"
-        )
-
-    return sorted(detected, key=lambda d: d.gpu_idx)
 
 
 # ---------------------------------------------------------------------------
@@ -516,7 +304,7 @@ class DeployGPUSetup:
 
             model_name = cfg["model"]
             state_id = cfg.get("state_id")
-            mig_profile_cls = _load_mig_profile_class(model_name)
+            mig_profile_cls = load_mig_profile_class(model_name)
 
             slots = []
             target_slices = SLICE_MAPPING[state_id]
@@ -567,6 +355,7 @@ class DeployGPUSetup:
                 model_name=model_name,
                 mig_profile_cls=mig_profile_cls,
                 slots=slots,
+                is_simulated=True,
             )
             system.register_gpu(gpu_state)
             logger.info(

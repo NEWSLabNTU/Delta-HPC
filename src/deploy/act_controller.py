@@ -20,7 +20,7 @@ from src.simulation.config import (
     GPU_MIG_PROFILE,
     GPU_VALID_COMBINATIONS,
 )
-from src.deploy.models import GPUState, MIGSlotState, ProfilePlacement
+from src.deploy.models import MIGSlotState, ProfilePlacement
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,8 @@ class ActionController:
     and budget tracking to maintain parity with the simulation environment.
     """
 
-    def __init__(self, vllm_mgr: VLLMManager, mig_ctrl: MIGController):
+    def __init__(self, vllm_mgr: VLLMManager):
         self.vllm_mgr = vllm_mgr
-        self.mig_ctrl = mig_ctrl
 
     def get_action_mask(self) -> List[bool]:
         """Generate a boolean mask for all possible ResourceManagerActions.
@@ -60,7 +59,8 @@ class ActionController:
 
         current_states = {
             gpu_idx: self._identify_gpu_state(gpu_idx)
-            for gpu_idx in SYSTEM_STATE.gpus.keys()
+            for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items()
+            if not gpu_state.is_simulated
         }
 
         for act_id, action in enumerate(m.ResourceManagerAction):
@@ -214,10 +214,31 @@ class ActionController:
         """Execute the action on physical hardware and update system state."""
         gpu_id = action.gpu_id
         gpu_state = SYSTEM_STATE.gpus[gpu_id]
+        assert not gpu_state.is_simulated, (
+            f"GPU {gpu_id} is simulated and cannot be reconfigured."
+        )
 
         # 1. Update Telemetry & Budget
         cost = self.predict_action_cost(action)
         OBS_COLLECTOR.consume_budget(cost)
+
+        # Record to reconfiguration history
+        src_profiles = [
+            gpu_state.slots[idx].profile_placement.profile.profile_type.name
+            for idx in action.mig_src
+        ]
+        target_profiles = [
+            STATE_DEFINITIONS[action.target_state_id][idx].name
+            for idx in action.mig_target
+        ]
+        details = (
+            f"GPU {gpu_id} | Src: {', '.join(src_profiles)} (slots {action.mig_src}) "
+            f"-> Tgt: {', '.join(target_profiles)} (slots {action.mig_target})"
+        )
+        if action.receiver:
+            details += f" | Receiver: {action.receiver.receiver_id.name}"
+
+        OBS_COLLECTOR.record_reconfig(action.action.name, cost, details)
 
         src_indices = action.mig_src
         triggering_agent = gpu_state.slots[src_indices[0]].agent_id
@@ -239,109 +260,117 @@ class ActionController:
                 )
 
         # 2. Teardown affected slots only
+        stop_tasks = []
         for idx in src_indices:
             slot = gpu_state.slots[idx]
             slot.is_draining = True
             logger.info(
                 f"Draining and stopping vLLM container: GPU {gpu_id} start_slice={slot.profile_placement.start_slice}"
             )
-            await asyncio.to_thread(self.vllm_mgr.stop, slot)
+            stop_tasks.append(asyncio.to_thread(self.vllm_mgr.stop, slot))
+
+        if stop_tasks:
+            await asyncio.gather(*stop_tasks)
 
         # 3. MIG Reconfiguration (Partial)
         if action.action != m.ActionType.TRANSFER:
-            # Destroy affected instances
-            start_slices = [
-                gpu_state.slots[i].profile_placement.start_slice for i in src_indices
-            ]
-            await asyncio.to_thread(
-                self.mig_ctrl.destroy_gis_at_slices, gpu_id, start_slices
-            )
-
-            # Create new instances
-            target_sid = action.target_state_id
-            target_profiles = STATE_DEFINITIONS[target_sid]
-            target_slices = SLICE_MAPPING[target_sid]
-
-            for target_idx in action.mig_target:
-                profile_type = target_profiles[target_idx]
-                start_slice = target_slices[target_idx][0]
-                hw_prof = self._get_hardware_profile(gpu_id, profile_type)
-                logger.info(
-                    f"GPU {gpu_id}: creating instance profile={profile_type.name} start_slice={start_slice}"
-                )
+            gpu_indices = list(SYSTEM_STATE.gpus.keys())
+            with MIGController(gpu_indices=gpu_indices) as mig_ctrl:
+                # Destroy affected instances
+                start_slices = [
+                    gpu_state.slots[i].profile_placement.start_slice
+                    for i in src_indices
+                ]
                 await asyncio.to_thread(
-                    self.mig_ctrl.create_gi, gpu_id, hw_prof, start_slice
+                    mig_ctrl.destroy_gis_at_slices, gpu_id, start_slices
                 )
 
-        # 4. State Reconstruction
-        uuids = await asyncio.to_thread(self.mig_ctrl.list_mig_device_uuids, gpu_id)
+                # Create new instances
+                target_sid = action.target_state_id
+                target_profiles = STATE_DEFINITIONS[target_sid]
+                target_slices = SLICE_MAPPING[target_sid]
 
-        target_sid = action.target_state_id
-        if target_sid is None:
-            target_sid = self._identify_gpu_state(gpu_id)
-
-        target_profiles = STATE_DEFINITIONS[target_sid]
-
-        new_slots = []
-        for (start_slice, uuid), profile_type in zip(uuids, target_profiles):
-            idx = len(new_slots)
-            owner = None
-
-            if action.action == m.ActionType.TRANSFER:
-                owner = gpu_state.slots[idx].agent_id
-                if idx == action.receiver.mig_idx:
-                    owner = action.receiver.receiver_id
-            else:
-                if idx in action.mig_target:
-                    owner = triggering_agent
-                    if action.receiver and idx == action.receiver.mig_idx:
-                        owner = action.receiver.receiver_id
-                else:
-                    # Unaffected slot: match by start_slice to preserve owner
-                    old_slot = next(
-                        (
-                            s
-                            for s in gpu_state.slots
-                            if s.profile_placement.start_slice == start_slice
-                        ),
-                        None,
+                for target_idx in action.mig_target:
+                    profile_type = target_profiles[target_idx]
+                    start_slice = target_slices[target_idx][0]
+                    hw_prof = self._get_hardware_profile(gpu_id, profile_type)
+                    logger.info(
+                        f"GPU {gpu_id}: creating instance profile={profile_type.name} start_slice={start_slice}"
                     )
-                    owner = old_slot.agent_id if old_slot else triggering_agent
+                    await asyncio.to_thread(
+                        mig_ctrl.create_gi, gpu_id, hw_prof, start_slice
+                    )
 
-            hw_prof = self._get_hardware_profile(gpu_id, profile_type)
-            new_slots.append(
-                MIGSlotState(
-                    gpu_idx=gpu_id,
-                    profile_placement=ProfilePlacement(hw_prof, start_slice),
-                    mig_uuid=uuid,
-                    agent_id=owner,
-                )
-            )
+                # 4. State Reconstruction — done while still inside the context
+                uuids = await asyncio.to_thread(mig_ctrl.list_mig_device_uuids, gpu_id)
+        # 4. State Update and Booting
+        match action.action:
+            case m.ActionType.TRANSFER:
+                idx = action.mig_src[0]
+                slot = gpu_state.slots[idx]
 
-        new_gpu_state = GPUState(
-            gpu_idx=gpu_id,
-            model_name=gpu_state.model_name,
-            mig_profile_cls=gpu_state.mig_profile_cls,
-            slots=new_slots,
-        )
-        register_gpu(new_gpu_state)
+                # Update ownership
+                slot.agent_id = action.receiver.receiver_id
+                register_gpu(gpu_state)
 
-        # 5. Boot newly created/affected servers
-        for idx, slot in enumerate(new_slots):
-            should_start = False
-            if action.action == m.ActionType.TRANSFER:
-                if idx == action.mig_src[0]:
-                    should_start = True
-            else:
-                if idx in action.mig_target:
-                    should_start = True
-
-            if should_start:
                 logger.info(
                     f"Starting vLLM: GPU {gpu_id} slice={slot.profile_placement.start_slice} agent={slot.agent_id}"
                 )
                 await asyncio.to_thread(self.vllm_mgr.start, slot)
                 await asyncio.to_thread(self.vllm_mgr.wait_until_ready, slot)
+
+            case m.ActionType.SPLIT | m.ActionType.MERGE:
+                # Remove old destroyed slots (reverse order to preserve indices during pop)
+                for idx in sorted(src_indices, reverse=True):
+                    gpu_state.slots.pop(idx)
+
+                target_sid = action.target_state_id
+                target_profiles = STATE_DEFINITIONS[target_sid]
+                target_slices = SLICE_MAPPING[target_sid]
+
+                new_slots_to_start = []
+                for target_idx in action.mig_target:
+                    profile_type = target_profiles[target_idx]
+                    start_slice = target_slices[target_idx][0]
+                    uuid = next((u for s, u in uuids if s == start_slice), None)
+                    hw_prof = self._get_hardware_profile(gpu_id, profile_type)
+
+                    owner = triggering_agent
+                    if action.receiver and target_idx == action.receiver.mig_idx:
+                        owner = action.receiver.receiver_id
+
+                    new_slot = MIGSlotState(
+                        gpu_idx=gpu_id,
+                        profile_placement=ProfilePlacement(hw_prof, start_slice),
+                        mig_uuid=uuid,
+                        agent_id=owner,
+                        is_ready=False,
+                    )
+                    gpu_state.slots.append(new_slot)
+                    new_slots_to_start.append(new_slot)
+
+                # Re-sort to maintain physical layout order
+                gpu_state.slots.sort(key=lambda s: s.profile_placement.start_slice)
+                register_gpu(gpu_state)
+
+                # Boot new containers concurrently
+                start_tasks = []
+                for slot in new_slots_to_start:
+                    logger.info(
+                        f"Starting vLLM: GPU {gpu_id} slice={slot.profile_placement.start_slice} agent={slot.agent_id}"
+                    )
+                    start_tasks.append(asyncio.to_thread(self.vllm_mgr.start, slot))
+                if start_tasks:
+                    await asyncio.gather(*start_tasks)
+
+                # Wait for readiness concurrently
+                ready_tasks = []
+                for slot in new_slots_to_start:
+                    ready_tasks.append(
+                        asyncio.to_thread(self.vllm_mgr.wait_until_ready, slot)
+                    )
+                if ready_tasks:
+                    await asyncio.gather(*ready_tasks)
 
         OBS_COLLECTOR.mark_reconfig_complete()
         logger.info(f"Action {action.action.name} complete on GPU {gpu_id}")

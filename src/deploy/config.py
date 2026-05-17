@@ -57,6 +57,22 @@ class VLLMDeployConfig:
     request_timeout_s: float
 
 
+@dataclass
+class DashboardDeployConfig:
+    """Dashboard-related deployment parameters.
+
+    Attributes
+    ----------
+    host:
+        The host to bind the web server to (e.g. "0.0.0.0").
+    port:
+        The port to run the web server on (e.g. 9000).
+    """
+
+    host: str
+    port: int
+
+
 # ---------------------------------------------------------------------------
 # Top-level config
 # ---------------------------------------------------------------------------
@@ -72,6 +88,8 @@ class DeploymentConfig:
         initially occupies it (e.g. ``{0: "CodingAgent", 1: "RAGAgent"}``).
     vllm : VLLMDeployConfig
         vLLM-specific parameters.
+    dashboard : DashboardDeployConfig
+        Dashboard web server parameters.
     """
 
     def __init__(self, config_path: Path) -> None:
@@ -89,6 +107,12 @@ class DeploymentConfig:
             compose_file=Path(v["compose_file"]),
             health_timeout_s=float(v.get("health_timeout_s", 300)),
             request_timeout_s=float(v.get("request_timeout_s", 60)),
+        )
+
+        d = data.get("dashboard", {})
+        self.dashboard = DashboardDeployConfig(
+            host=str(d.get("host", "0.0.0.0")),
+            port=int(d.get("port", 9000)),
         )
 
         self.simulated_gpus: Dict[int, SimulatedGPUConfig] = {

@@ -126,11 +126,12 @@ class ReqPublisher:
         active_slots = []
         for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
             for slot in gpu_state.slots:
-                is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+                is_simulated = gpu_state.is_simulated
                 if (
                     slot.agent_id == agent_id
                     and (slot.port is not None or is_simulated)
                     and not slot.is_draining
+                    and slot.is_ready
                 ):
                     active_slots.append(slot)
         return active_slots
@@ -153,16 +154,9 @@ class ReqPublisher:
         for req in sorted(requests, key=lambda x: x.arrival_time):
             now = time.time()
             elapsed = now - start_time
-            if elapsed > duration_s:
-                break
-
             wait_time = req.arrival_time - elapsed
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
-
-            now = time.time()
-            if now - start_time > duration_s:
-                break
 
             active_slots = self._get_active_slots(agent_id)
             assert active_slots, f"No active slots for agent {agent_id}"
@@ -188,6 +182,9 @@ class ReqPublisher:
             task.add_done_callback(self._request_tasks.discard)
             dispatch_tasks.append(task)
 
+        if dispatch_tasks:
+            await asyncio.gather(*dispatch_tasks, return_exceptions=True)
+
     async def _handle_request(
         self, agent_id: m.AgentId, req: m.Request, slot: MIGSlotState
     ):
@@ -198,7 +195,7 @@ class ReqPublisher:
         try:
             lookup_id = req.original_id if req.original_id else req.id
             timeout = DEPLOY_CONFIG.vllm.request_timeout_s
-            is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+            is_simulated = SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated
 
             if is_simulated:
                 response = await self.vllm_manager.send_request(
@@ -231,19 +228,19 @@ class ReqPublisher:
                 metrics.ttfts.append(response["ttft"])
                 metrics.completion_times.append(response["total_time"])
 
-                # Record completion to OBS_COLLECTOR for physical slots
-                ttft = response["ttft"]
-                total_time = response["total_time"]
-                tpot = (
-                    (total_time - ttft) / tokens_generated
-                    if tokens_generated > 0
-                    else 0.0
-                )
-                is_permanent = False
-                mig_idx = slot.profile_placement.profile.profile_type.value
-                OBS_COLLECTOR.record_completion(
-                    agent_id, ttft, tpot, is_permanent, mig_idx, tokens_generated
-                )
+            # Record completion to OBS_COLLECTOR (for both physical and simulated/permanent slots)
+            ttft = response["ttft"]
+            total_time = response["total_time"]
+            tpot = (
+                (total_time - ttft) / tokens_generated if tokens_generated > 0 else 0.0
+            )
+            is_permanent = is_simulated
+            mig_idx = (
+                6 if is_permanent else slot.profile_placement.profile.profile_type.value
+            )
+            OBS_COLLECTOR.record_completion(
+                agent_id, ttft, tpot, is_permanent, mig_idx, tokens_generated
+            )
 
         except asyncio.TimeoutError:
             logger.warning(
@@ -272,12 +269,14 @@ class ReqPublisher:
                 total_q = 0.0
                 n_phy_slot = 0
                 for s in all_slots:
-                    if s.port is not None:
+                    is_simulated = SYSTEM_STATE.gpus[s.gpu_idx].is_simulated
+                    if not is_simulated:
                         try:
                             client = VLLMMetricsClient(s.port, timeout=1.0)
                             data = await asyncio.to_thread(client.collect)
+                            waiting = data["queue_length"]
                             running = data["running_requests"]
-                            total_q += running
+                            total_q += waiting
                             n_phy_slot += 1
 
                             idx = s.profile_placement.profile.profile_type.value
@@ -289,6 +288,26 @@ class ReqPublisher:
                             }
                         except Exception as e:
                             logger.debug(f"Metrics fetch failed for port {s.port}: {e}")
+                    else:
+                        # Simulated/Permanent backup engine slot — use real
+                        # KV-cache accounting from VLLMManager instead of estimates.
+                        running = float(
+                            len(self.vllm_manager._active_reqs.get(s.mig_uuid, {}))
+                        )
+                        waiting = float(self.vllm_manager.get_sim_waiting(s.mig_uuid))
+                        kv_util = self.vllm_manager.get_sim_kv_util(s.mig_uuid)
+                        tpot = OBS_COLLECTOR.get_current_tpot(agent_id)
+
+                        total_q += waiting
+                        n_phy_slot += 1
+
+                        idx = 6
+                        slot_samples[idx] = {
+                            "running": running,
+                            "waiting": waiting,
+                            "kv_util": kv_util,
+                            "tpot": tpot,
+                        }
 
                 metrics.queue_length_samples.append(
                     total_q / n_phy_slot if n_phy_slot != 0 else 0.0
@@ -299,6 +318,8 @@ class ReqPublisher:
                 metrics.queue_length_samples.append(0.0)
 
             for slot in all_slots:
+                if not slot.is_ready:
+                    continue
                 profile_key = self._get_profile_key(slot.profile_placement.profile)
                 if profile_key not in metrics.profile_existence_time:
                     metrics.profile_existence_time[profile_key] = 0.0
@@ -326,7 +347,13 @@ class ReqPublisher:
 
             if metrics.completion_times:
                 p99_ct = np.percentile(metrics.completion_times, 99)
-                print(f"  Total Time: p99={p99_ct:.3f}")
+                p50_ct = np.percentile(metrics.completion_times, 50)
+                p25_ct = np.percentile(metrics.completion_times, 25)
+                print(
+                    f"  Total Time: p25={p25_ct:.3f}, p50={p50_ct:.3f}, p99={p99_ct:.3f}"
+                )
+            else:
+                print("  Total Time: N/A")
 
             if metrics.queue_length_samples:
                 avg_q = sum(metrics.queue_length_samples) / len(

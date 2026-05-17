@@ -70,6 +70,34 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Simulated-slot state
+# ---------------------------------------------------------------------------
+
+
+class SimSlotState:
+    """Per-MIG-UUID state for simulated permanent engine slots.
+
+    Bundles the three counters previously stored in separate dicts:
+
+    * ``kv_limit``   — KV-cache capacity ceiling in tokens (from SIM_CONFIG).
+    * ``kv_tokens``  — KV tokens currently reserved by admitted requests.
+    * ``waiting``    — Number of requests in the admission queue.
+    """
+
+    __slots__ = ("kv_limit", "kv_tokens", "waiting")
+
+    def __init__(self, kv_limit: int) -> None:
+        self.kv_limit: int = kv_limit
+        self.kv_tokens: int = 0
+        self.waiting: int = 0
+
+    @property
+    def kv_util(self) -> float:
+        """KV-cache utilisation fraction in [0, 1]."""
+        return min(1.0, self.kv_tokens / self.kv_limit) if self.kv_limit else 0.0
+
+
+# ---------------------------------------------------------------------------
 # VLLMManager
 # ---------------------------------------------------------------------------
 
@@ -113,6 +141,10 @@ class VLLMManager:
         # Keyed by MIG UUID so that state is always tied to a specific hardware
         # instance.  Stopping a slot removes its entry; a new slot starts clean.
         self._active_reqs: Dict[str, Dict[str, int]] = {}
+
+        # Simulated-engine KV-cache accounting, one entry per active mig_uuid.
+        # Initialised lazily on the first request to a given simulated slot.
+        self._sim_slots: Dict[str, SimSlotState] = {}
 
     # ------------------------------------------------------------------
     # Model-to-MIG mapping
@@ -279,11 +311,12 @@ class VLLMManager:
             )
 
         model_id = self.model_for_slot(slot)
-        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+        is_simulated = system.SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated
 
-        port = self._alloc_port()
+        port = None
         container_name = None
         if not is_simulated:
+            port = self._alloc_port()
             container_name = self._project_name(model_id, slot.mig_uuid)
             self._run_script(slot.mig_uuid, model_id, port, "up")
 
@@ -296,6 +329,7 @@ class VLLMManager:
             port=port,
             container_name=container_name,
             agent_id=agent_id,
+            is_ready=False,
         )
         logger.info(
             "vllm: GPU %d [%s] → model=%s%s%s",
@@ -380,7 +414,7 @@ class VLLMManager:
             )
             return
 
-        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+        is_simulated = system.SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated
         if not is_simulated:
             if graceful:
                 self._wait_for_drain(slot)
@@ -398,6 +432,7 @@ class VLLMManager:
         # Drop the UUID's request-tracking state so a future slot starting on
         # the same MIG position begins with a completely clean slate.
         self._active_reqs.pop(slot.mig_uuid, None)
+        self._sim_slots.pop(slot.mig_uuid, None)
 
         system.update_slot(
             slot.gpu_idx,
@@ -406,6 +441,8 @@ class VLLMManager:
             port=None,
             container_name=None,
             agent_id=None,
+            is_ready=False,
+            is_draining=False,
         )
         logger.info(
             "vllm: GPU %d [%s] stopped%s.",
@@ -469,8 +506,13 @@ class VLLMManager:
         TimeoutError
             If the server does not become ready within the configured timeout.
         """
-        if slot.mig_uuid.startswith("SIM-MIG-"):
+        if system.SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated:
             logger.info("vllm: GPU %d is simulated — assuming ready.", slot.gpu_idx)
+            system.update_slot(
+                slot.gpu_idx,
+                slot.profile_placement.start_slice,
+                is_ready=True,
+            )
             return
 
         if slot.port is None:
@@ -490,6 +532,11 @@ class VLLMManager:
                 if r.status_code == 200:
                     logger.info(
                         "vllm: GPU %d port %d is ready.", slot.gpu_idx, slot.port
+                    )
+                    system.update_slot(
+                        slot.gpu_idx,
+                        slot.profile_placement.start_slice,
+                        is_ready=True,
                     )
                     break
             except requests.exceptions.RequestException:
@@ -557,7 +604,7 @@ class VLLMManager:
             Raw JSON response from the ``/v1/chat/completions`` endpoint,
             augmented with ``ttft`` and ``total_time`` metrics.
         """
-        is_simulated = slot.mig_uuid.startswith("SIM-MIG-")
+        is_simulated = system.SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated
 
         if not is_simulated and (slot.port is None or slot.model_id is None):
             raise RuntimeError(
@@ -639,8 +686,10 @@ class VLLMManager:
     ) -> Dict[str, Any]:
         """Mock request handler for simulated permanent engines.
 
-        It simulates the time taken by a request based on the simulation parameters
-        (TTFT and TPOT) and the predefined response length from TOKENS_MAP.
+        Mirrors the KV-cache admission gate from ``engine.py``:
+        a request waits in a polling loop until the current KV token
+        occupancy plus its own token demand fits within the slot's capacity.
+        Once admitted it runs for the simulated TTFT + generation time.
         """
         agent_id = slot.agent_id
         if agent_id is None:
@@ -665,14 +714,41 @@ class VLLMManager:
             agent_id, hw_prof, gpu_id=slot.gpu_idx
         )
 
+        # ----------------------------------------------------------------
+        # KV-cache admission gate  (mirrors engine.py lines 308-315)
+        # ----------------------------------------------------------------
+        mig_uuid = slot.mig_uuid
+
+        # Initialise per-slot accounting on first request
+        if mig_uuid not in self._sim_slots:
+            self._sim_slots[mig_uuid] = SimSlotState(
+                kv_limit=sim_utils.SIM_CONFIG.get_max_kv_cache_tokens(
+                    agent_id, hw_prof, gpu_id=slot.gpu_idx
+                )
+            )
+        sim = self._sim_slots[mig_uuid]
+
+        req_tokens = prompt_tokens + completion_tokens
+
+        # Spin until there is room in the KV cache
+        sim.waiting += 1
+        try:
+            while sim.kv_tokens + req_tokens > sim.kv_limit:
+                await asyncio.sleep(0.5)
+        finally:
+            sim.waiting = max(0, sim.waiting - 1)
+
+        # Admitted — reserve KV tokens
+        sim.kv_tokens += req_tokens
+
         # Concurrency tracking — keyed by MIG UUID so a reconfigured slot
         # never inherits stale counters from a previous layout.
-        if slot.mig_uuid not in self._active_reqs:
-            self._active_reqs[slot.mig_uuid] = {}
-        self._active_reqs[slot.mig_uuid][data_id] = 0
+        if mig_uuid not in self._active_reqs:
+            self._active_reqs[mig_uuid] = {}
+        self._active_reqs[mig_uuid][data_id] = 0
 
         try:
-            concurrency = len(self._active_reqs[slot.mig_uuid])
+            concurrency = len(self._active_reqs[mig_uuid])
 
             # Calculate TTFT and TPOT (correctly matching engine.py simulation logic)
             ttft = prefill_params["alpha"] + prefill_params["beta"] * prompt_tokens
@@ -688,7 +764,9 @@ class VLLMManager:
             start_time = time.time()
             await asyncio.sleep(total_time)
         finally:
-            self._active_reqs[slot.mig_uuid].pop(data_id, None)
+            self._active_reqs[mig_uuid].pop(data_id, None)
+            # Release KV tokens so waiting requests can be admitted
+            sim.kv_tokens = max(0, sim.kv_tokens - req_tokens)
 
         return {
             "choices": [
@@ -711,3 +789,20 @@ class VLLMManager:
     def get_running_requests_tokens(self, mig_uuid: str) -> List[int]:
         """Return the current token counts for all active requests on *mig_uuid*."""
         return list(self._active_reqs.get(mig_uuid, {}).values())
+
+    def get_sim_waiting(self, mig_uuid: str) -> int:
+        """Return the number of requests currently waiting for KV-cache admission
+        on the simulated slot identified by *mig_uuid*.
+
+        Returns 0 for unknown / not-yet-initialised slots.
+        """
+        sim = self._sim_slots.get(mig_uuid)
+        return sim.waiting if sim is not None else 0
+
+    def get_sim_kv_util(self, mig_uuid: str) -> float:
+        """Return the current KV-cache utilisation fraction [0, 1] for *mig_uuid*.
+
+        Returns 0.0 if the slot has not been initialised yet.
+        """
+        sim = self._sim_slots.get(mig_uuid)
+        return sim.kv_util if sim is not None else 0.0

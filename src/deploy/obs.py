@@ -86,6 +86,8 @@ class ObservationCollector:
         self._reconfig_flag = False
         self._last_action_downtime = 0.0
         self._refresh_task: Optional[asyncio.Task] = None
+        self.reconfig_history: List[Dict[str, Any]] = []
+        self._last_observation: Optional[m.EnvironmentStateData] = None
         self._load_cache()
 
     def _load_cache(self):
@@ -167,7 +169,7 @@ class ObservationCollector:
     ):
         """
         samples_dict: {slot_idx: {"running": int, "waiting": int, "kv_util": float, "tpot": float}}
-        slot_idx: 0-5 for MIG (index 6 for permanent engines is currently ignored in deployment)
+        slot_idx: 0-5 for MIG physical slots, index 6 for permanent engine slots.
         """
         stats = self._agent_stats[agent_id]
         for slot_idx, metrics in samples_dict.items():
@@ -227,6 +229,19 @@ class ObservationCollector:
     # Budget & Reconfig Management
     # -----------------------------------------------------------------------
 
+    def record_reconfig(self, action_name: str, cost: float, details: str):
+        """Record a reconfiguration action in the history."""
+        self.reconfig_history.append(
+            {
+                "timestamp": time.time(),
+                "action": action_name,
+                "cost": cost,
+                "details": details,
+            }
+        )
+        if len(self.reconfig_history) > 10:
+            self.reconfig_history.pop(0)
+
     def consume_budget(self, cost: float):
         """Deduct reconfiguration cost from the current budget."""
         self._current_budget = max(0.0, self._current_budget - cost)
@@ -275,11 +290,11 @@ class ObservationCollector:
             return 0.0
 
         stats = self._agent_stats[slot.agent_id]
-        # Slot indices in OBS_COLLECTOR are typically sorted by start_slice
-        # but here we can just use the samples recorded by record_samples
+        is_permanent = SYSTEM_STATE.gpus[gpu_idx].is_simulated
+        idx = 6 if is_permanent else slot.profile_placement.profile.profile_type.value
         return (
-            stats.queue_length_samples[start_slice][-1]
-            if stats.queue_length_samples[start_slice]
+            stats.queue_length_samples[idx][-1]
+            if stats.queue_length_samples[idx]
             else 0.0
         )
 
@@ -428,6 +443,7 @@ class ObservationCollector:
             "agent_vram_ratio": ratios["agent_vram_ratio"],
             "agent_sm_ratio": ratios["agent_sm_ratio"],
         }
+        self._last_observation = state_data
         return state_data
 
     # -----------------------------------------------------------------------
@@ -482,6 +498,12 @@ class ObservationCollector:
 
         onehot = {}
         for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
+            if gpu_state.is_simulated:
+                # Simulated GPUs are not RL-managed; the observation consumer
+                # only reads physical GPU indices so a zero vector is correct.
+                onehot[gpu_idx] = [0.0] * 15
+                continue
+
             # Reconstruction of state_id:
             # Current profiles as a sorted list of MIGProfile enum members
             current_profiles = sorted(
@@ -531,7 +553,8 @@ class ObservationCollector:
             counts = [0] * len(m.MIGProfile)
             for gpu in SYSTEM_STATE.gpus.values():
                 for slot in gpu.slots:
-                    if slot.agent_id == aid:
+                    is_permanent = gpu.is_simulated
+                    if slot.agent_id == aid and not is_permanent:
                         counts[slot.profile_placement.profile.profile_type.value] += 1
             res[aid] = tuple(c / divisor for c in counts)
         return res
@@ -543,7 +566,8 @@ class ObservationCollector:
         for gpu_idx, gpu in SYSTEM_STATE.gpus.items():
             sizes = [0.0] * len(agents)
             for slot in gpu.slots:
-                if slot.agent_id in agents:
+                is_permanent = gpu.is_simulated
+                if slot.agent_id in agents and not is_permanent:
                     idx = agents.index(slot.agent_id)
                     sizes[idx] += slot.profile_placement.profile.size
             res[gpu_idx] = [s / divisor for s in sizes]

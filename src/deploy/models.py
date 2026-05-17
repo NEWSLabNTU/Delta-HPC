@@ -11,9 +11,9 @@ a single, stable location without creating circular dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import Dict, List, Optional, TypedDict
 
-from src.share.models import AgentId, MIGProfile, MIGProfileBase
+from src.share.models import AgentId, MIGProfileBase
 
 
 class SimulatedEngineConfig(TypedDict):
@@ -91,37 +91,6 @@ class GpuInstanceInfo:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class DetectedGPU:
-    """All information about a single detected MIG-capable GPU.
-
-    Attributes
-    ----------
-    gpu_idx:
-        Physical GPU index (matches ``nvidia-smi`` index).
-    model_name:
-        Config-file model name, e.g. ``"A100_40GB"``.
-    nvml_name:
-        Raw NVML device name, e.g. ``"NVIDIA A100-SXM4-40GB"``.
-    mig_profile_cls:
-        Hardware-specific :class:`~src.share.models.MIGProfileBase`
-        enum class loaded from ``configs/gpus/<model_name>.py``.
-    valid_combos:
-        All valid logical MIG profile tuples for this GPU (mirrors
-        ``GPU_VALID_COMBINATIONS`` in the simulation config).
-    combo_to_state_id:
-        Reverse map from each valid combo tuple to its ``STATE_DEFINITIONS``
-        key (state ID), used to look up the corresponding ``SLICE_MAPPING``.
-    """
-
-    gpu_idx: int
-    model_name: str
-    nvml_name: str
-    mig_profile_cls: MIGProfileBase
-    valid_combos: List[Tuple[MIGProfile, ...]] = field(default_factory=list)
-    combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = field(default_factory=dict)
-
-
 # ---------------------------------------------------------------------------
 # Live system state
 # ---------------------------------------------------------------------------
@@ -160,6 +129,7 @@ class MIGSlotState:
     container_name: Optional[str] = None
     agent_id: Optional[AgentId] = None
     is_draining: bool = False
+    is_ready: bool = False
 
 
 @dataclass
@@ -177,12 +147,16 @@ class GPUState:
     slots:
         Ordered list of :class:`MIGSlotState` objects, one per active MIG slot,
         sorted by :attr:`ProfilePlacement.start_slice`.
+    is_simulated:
+        ``True`` for GPUs that are emulated in software (permanent-engine only)
+        and therefore not subject to MIG reconfiguration by the RL agent.
     """
 
     gpu_idx: int
     model_name: str
     mig_profile_cls: type[MIGProfileBase]
     slots: List[MIGSlotState] = field(default_factory=list)
+    is_simulated: bool = False
 
 
 @dataclass

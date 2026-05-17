@@ -35,6 +35,15 @@ class ColoredFormatter(logging.Formatter):
         return formatter.format(record)
 
 
+class SuppressHTTPFilter(logging.Filter):
+    """Filter that selectively suppresses verbose telemetry and HTTP requests from libraries."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.startswith(("aiohttp.access", "httpx", "httpcore", "openai")):
+            return record.levelno >= logging.WARNING
+        return True
+
+
 def setup_logging(level: int = logging.INFO):
     """Set up colored logging to the console.
 
@@ -45,12 +54,8 @@ def setup_logging(level: int = logging.INFO):
     """
     handler = logging.StreamHandler()
     handler.setFormatter(ColoredFormatter())
+    handler.addFilter(SuppressHTTPFilter())
     logging.root.setLevel(level)
     # Clear existing handlers to avoid duplicate logs if setup_logging is called multiple times
     logging.root.handlers = []
     logging.root.addHandler(handler)
-
-    # Suppress verbose HTTP request logs from openai and httpx
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
