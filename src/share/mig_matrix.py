@@ -375,7 +375,7 @@ TRANSITION_MATRIX = {
     (8, 9): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
-        mig_src=[0],
+        mig_src=[1],
         mig_target=[1, 2],
         target_state_id=9,
     ),
@@ -390,7 +390,7 @@ TRANSITION_MATRIX = {
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[2],
-        mig_target=[0, 3],
+        mig_target=[2, 3],
         target_state_id=12,
     ),
     (9, 1): m.Action(
@@ -411,7 +411,7 @@ TRANSITION_MATRIX = {
         action=m.ActionType.MERGE,
         gpu_id=-1,
         mig_src=[1, 2],
-        mig_target=[0],
+        mig_target=[1],
         target_state_id=8,
     ),
     (9, 11): m.Action(
@@ -425,14 +425,14 @@ TRANSITION_MATRIX = {
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[3],
-        mig_target=[0, 4],
+        mig_target=[3, 4],
         target_state_id=13,
     ),
     (9, 15): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[3],
-        mig_target=[1, 2, 5],
+        mig_target=[3, 4, 5],
         target_state_id=15,
     ),
     (10, 1): m.Action(
@@ -460,21 +460,21 @@ TRANSITION_MATRIX = {
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[2],
-        mig_target=[0, 1],
+        mig_target=[2, 3],
         target_state_id=11,
     ),
     (10, 14): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[3],
-        mig_target=[2, 4],
+        mig_target=[3, 4],
         target_state_id=14,
     ),
     (10, 16): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[3],
-        mig_target=[0, 1, 5],
+        mig_target=[3, 4, 5],
         target_state_id=16,
     ),
     (11, 1): m.Action(
@@ -501,7 +501,7 @@ TRANSITION_MATRIX = {
     (11, 10): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1],
+        mig_src=[2, 3],
         mig_target=[2],
         target_state_id=10,
     ),
@@ -516,7 +516,7 @@ TRANSITION_MATRIX = {
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[4],
-        mig_target=[0, 1, 6],
+        mig_target=[4, 5, 6],
         target_state_id=19,
     ),
     (12, 1): m.Action(
@@ -536,14 +536,14 @@ TRANSITION_MATRIX = {
     (12, 8): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 3],
+        mig_src=[2, 3],
         mig_target=[2],
         target_state_id=8,
     ),
     (12, 13): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
-        mig_src=[0],
+        mig_src=[1],
         mig_target=[1, 2],
         target_state_id=13,
     ),
@@ -571,7 +571,7 @@ TRANSITION_MATRIX = {
     (13, 9): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 4],
+        mig_src=[3, 4],
         mig_target=[3],
         target_state_id=9,
     ),
@@ -579,14 +579,14 @@ TRANSITION_MATRIX = {
         action=m.ActionType.MERGE,
         gpu_id=-1,
         mig_src=[1, 2],
-        mig_target=[0],
+        mig_target=[1],
         target_state_id=12,
     ),
     (13, 15): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
-        mig_src=[0],
-        mig_target=[1, 2],
+        mig_src=[3],
+        mig_target=[3, 4],
         target_state_id=15,
     ),
     (13, 17): m.Action(
@@ -613,7 +613,7 @@ TRANSITION_MATRIX = {
     (14, 10): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[2, 4],
+        mig_src=[3, 4],
         mig_target=[3],
         target_state_id=10,
     ),
@@ -627,15 +627,15 @@ TRANSITION_MATRIX = {
     (14, 16): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
-        mig_src=[2],
-        mig_target=[0, 1],
+        mig_src=[3],
+        mig_target=[3, 4],
         target_state_id=16,
     ),
     (14, 17): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[2],
-        mig_target=[0, 1],
+        mig_target=[2, 3],
         target_state_id=17,
     ),
     (15, 1): m.Action(
@@ -655,15 +655,15 @@ TRANSITION_MATRIX = {
     (15, 9): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[1, 2, 5],
+        mig_src=[3, 4, 5],
         mig_target=[3],
         target_state_id=9,
     ),
     (15, 13): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[1, 2],
-        mig_target=[0],
+        mig_src=[3, 4],
+        mig_target=[3],
         target_state_id=13,
     ),
     (15, 19): m.Action(
@@ -690,22 +690,22 @@ TRANSITION_MATRIX = {
     (16, 10): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1, 5],
+        mig_src=[3, 4, 5],
         mig_target=[3],
         target_state_id=10,
     ),
     (16, 14): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1],
-        mig_target=[2],
+        mig_src=[3, 4],
+        mig_target=[3],
         target_state_id=14,
     ),
     (16, 19): m.Action(
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[2],
-        mig_target=[0, 1],
+        mig_target=[2, 3],
         target_state_id=19,
     ),
     (17, 1): m.Action(
@@ -739,7 +739,7 @@ TRANSITION_MATRIX = {
     (17, 14): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1],
+        mig_src=[2, 3],
         mig_target=[2],
         target_state_id=14,
     ),
@@ -747,7 +747,7 @@ TRANSITION_MATRIX = {
         action=m.ActionType.SPLIT,
         gpu_id=-1,
         mig_src=[4],
-        mig_target=[0, 1],
+        mig_target=[4, 5],
         target_state_id=19,
     ),
     (19, 1): m.Action(
@@ -767,7 +767,7 @@ TRANSITION_MATRIX = {
     (19, 11): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1, 6],
+        mig_src=[4, 5, 6],
         mig_target=[4],
         target_state_id=11,
     ),
@@ -781,14 +781,14 @@ TRANSITION_MATRIX = {
     (19, 16): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1],
+        mig_src=[2, 3],
         mig_target=[2],
         target_state_id=16,
     ),
     (19, 17): m.Action(
         action=m.ActionType.MERGE,
         gpu_id=-1,
-        mig_src=[0, 1],
+        mig_src=[4, 5],
         mig_target=[4],
         target_state_id=17,
     ),
