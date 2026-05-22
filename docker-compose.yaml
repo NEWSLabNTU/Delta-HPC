@@ -3,7 +3,7 @@ services:
     image: vllm/vllm-openai:v0.17.0.custom
     tty: true
     runtime: nvidia
-    ipc: host
+    shm_size: "10gb"
     ports:
       - "${HOST_PORT}:8000"
     environment:

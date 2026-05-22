@@ -39,6 +39,7 @@ import logging
 from pathlib import Path
 
 import src.deploy.system as system
+from src.share.hardware import DetectedGPU, load_mig_profile_class
 from src.deploy.mig_controller import MIGController
 from src.deploy.config import DEPLOY_CONFIG
 from src.deploy.models import (
@@ -47,7 +48,6 @@ from src.deploy.models import (
     MIGSlotState,
     ProfilePlacement,
 )
-from src.share.hardware import DetectedGPU, detect_mig_gpus, load_mig_profile_class
 from src.share.mig_matrix import SLICE_MAPPING, STATE_DEFINITIONS
 from src.share.models import MIGProfile, MIGProfileBase
 import src.share.models as m
@@ -145,8 +145,9 @@ class DeployGPUSetup:
         if seed is not None:
             random.seed(seed)
 
-        detected = detect_mig_gpus(config_dir)
+        detected = MIGController.detect_mig_gpus(config_dir)
         self.gpu_info: Dict[int, DetectedGPU] = {d.gpu_idx: d for d in detected}
+        self.mig_ctrl = MIGController(gpu_indices=self.gpu_indices)
 
         logger.info(
             "DeployGPUSetup: detected %d MIG GPU(s): %s",
@@ -244,47 +245,46 @@ class DeployGPUSetup:
                 logger.info("  GPU %d: %s", gpu_idx, placements)
             return
 
-        with MIGController(gpu_indices=self.gpu_indices) as ctrl:
-            # 1. Apply hardware MIG configurations.
-            for gpu_idx, placements in configs.items():
-                ctrl.apply_full_configuration(gpu_idx, placements)
+        # 1. Apply hardware MIG configurations.
+        for gpu_idx, placements in configs.items():
+            self.mig_ctrl.apply_full_configuration(gpu_idx, placements)
 
-            # 2. Resolve MIG UUIDs while NVML is still active, then register
-            #    the resulting GPUState into the global SYSTEM_STATE.
-            for gpu_idx, placements in configs.items():
-                info = self.gpu_info[gpu_idx]
+        # 2. Resolve MIG UUIDs, then register
+        #    the resulting GPUState into the global SYSTEM_STATE.
+        for gpu_idx, placements in configs.items():
+            info = self.gpu_info[gpu_idx]
 
-                # Register the GPU first so MIGController can look up the profile class
-                system.register_gpu(
-                    GPUState(gpu_idx, info.model_name, info.mig_profile_cls)
-                )
+            # Register the GPU first so MIGController can look up the profile class
+            system.register_gpu(
+                GPUState(gpu_idx, info.model_name, info.mig_profile_cls)
+            )
 
-                uuid_map = dict(ctrl.list_mig_device_uuids(gpu_idx))
+            uuid_map = dict(self.mig_ctrl.list_mig_device_uuids(gpu_idx))
 
-                slots = [
-                    MIGSlotState(
-                        gpu_idx=gpu_idx,
-                        profile_placement=p,
-                        mig_uuid=uuid_map[p.start_slice],
-                    )
-                    for p in placements
-                ]
-                gpu_state = GPUState(
+            slots = [
+                MIGSlotState(
                     gpu_idx=gpu_idx,
-                    model_name=info.model_name,
-                    mig_profile_cls=info.mig_profile_cls,
-                    slots=sorted(slots, key=lambda s: s.profile_placement.start_slice),
+                    profile_placement=p,
+                    mig_uuid=uuid_map[p.start_slice],
+                    agent_id=m.AgentId(DEPLOY_CONFIG.gpu_assignment[gpu_idx]),
                 )
-                system.register_gpu(gpu_state)
+                for p in placements
+            ]
+            gpu_state = GPUState(
+                gpu_idx=gpu_idx,
+                model_name=info.model_name,
+                mig_profile_cls=info.mig_profile_cls,
+                slots=sorted(slots, key=lambda s: s.profile_placement.start_slice),
+            )
+            system.register_gpu(gpu_state)
 
         logger.info("All GPU MIG configurations applied and SYSTEM_STATE updated.")
 
     def cleanup(self) -> None:
         """Destroy all MIG instances on all managed GPUs."""
         logger.info("Cleaning up all MIG instances on managed GPUs...")
-        with MIGController(gpu_indices=self.gpu_indices) as ctrl:
-            for gpu_idx in self.gpu_indices:
-                ctrl.disable_all_instances(gpu_idx)
+        for gpu_idx in self.gpu_indices:
+            self.mig_ctrl.disable_all_instances(gpu_idx)
 
     def register_simulated_gpus(self) -> None:
         """Register simulated GPUs and permanent engines into SYSTEM_STATE.

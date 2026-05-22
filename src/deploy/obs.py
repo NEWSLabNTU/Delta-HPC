@@ -16,52 +16,43 @@ from src.simulation.config import NUM_MIG_SLICES
 logger = logging.getLogger(__name__)
 
 
+NUM_LOGICAL_SLOTS = len(m.MIGProfile) + 1
 CACHE_DIR = Path(".cache")
 CACHE_FILE = CACHE_DIR / "avg_response_len.json"
 
 
 @dataclass
 class AgentStats:
-    # Historical data for trends and history observation fields
-    arrival_rate_history: deque[float] = field(
-        default_factory=lambda: deque(
-            [0.0] * TRAINING_CONFIG.arrival_rate_history_length,
-            maxlen=TRAINING_CONFIG.arrival_rate_history_length,
-        )
-    )
-    # We store the last 2 interval averages to compute trends
-    avg_queue_length_history: deque[Tuple[float, ...]] = field(
-        default_factory=lambda: deque(maxlen=2)
-    )
-    avg_running_requests_history: deque[Tuple[float, ...]] = field(
-        default_factory=lambda: deque(maxlen=2)
+    history: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "arrival_rate": deque(
+                [0.0] * TRAINING_CONFIG.arrival_rate_history_length,
+                maxlen=TRAINING_CONFIG.arrival_rate_history_length,
+            ),
+            "queue_length": deque(maxlen=2),
+            "running_requests": deque(maxlen=2),
+            "kv_utilization": (0.0,) * NUM_LOGICAL_SLOTS,
+        }
     )
 
     # Accumulators for the CURRENT interval (reset every action_interval)
     interval_requests_count: int = 0
-    # Latency samples (weighted by TRAINING_CONFIG)
-    composite_latencies: Dict[int, deque[float]] = field(
-        default_factory=lambda: {mig.value: deque(maxlen=100) for mig in m.MIGProfile}
-    )
-    perm_composite_latencies: deque[float] = field(
-        default_factory=lambda: deque(maxlen=100)
-    )
-
-    tpot_samples: deque[float] = field(default_factory=lambda: deque(maxlen=100))
-
     # Average response length tracking
     avg_response_len: float = 256.0  # Default initial guess
     total_completed_reqs: int = 0
 
     # Metric samples for averaging (collected at ~1Hz)
-    queue_length_samples: List[List[int]] = field(
-        default_factory=lambda: [[] for _ in range(7)]
-    )
-    running_req_samples: List[List[int]] = field(
-        default_factory=lambda: [[] for _ in range(7)]
-    )
-    kv_util_samples: List[List[float]] = field(
-        default_factory=lambda: [[] for _ in range(7)]
+    metric_samples: List[Dict[str, Any]] = field(
+        default_factory=lambda: [
+            {
+                "queue": [],
+                "running": [],
+                "kv": [],
+                "latency": deque(maxlen=100),
+                "tpot": deque(maxlen=100),
+            }
+            for _ in range(NUM_LOGICAL_SLOTS)
+        ]
     )
 
     # Action history (cooldown tracking in terms of intervals)
@@ -71,6 +62,14 @@ class AgentStats:
             "merge": {"intervals": TRAINING_CONFIG.action_cooldown},
             "give": {"intervals": TRAINING_CONFIG.action_cooldown, "amount": 0},
             "receive": {"intervals": TRAINING_CONFIG.action_cooldown, "amount": 0},
+        }
+    )
+
+    reconfig_counts: Dict[str, int] = field(
+        default_factory=lambda: {
+            "split": 0,
+            "merge": 0,
+            "transfer": 0,
         }
     )
 
@@ -152,10 +151,8 @@ class ObservationCollector:
         composite = w_t * ttft + w_p * tpot
 
         stats = self._agent_stats[agent_id]
-        if is_permanent:
-            stats.perm_composite_latencies.append(composite)
-        else:
-            stats.composite_latencies[mig_idx].append(composite)
+        idx = 6 if is_permanent else mig_idx
+        stats.metric_samples[idx]["latency"].append(composite)
 
         if tokens > 0:
             n = stats.total_completed_reqs
@@ -173,11 +170,12 @@ class ObservationCollector:
         """
         stats = self._agent_stats[agent_id]
         for slot_idx, metrics in samples_dict.items():
-            stats.queue_length_samples[slot_idx].append(int(metrics["waiting"]))
-            stats.running_req_samples[slot_idx].append(int(metrics["running"]))
-            stats.kv_util_samples[slot_idx].append(metrics["kv_util"])
+            entry = stats.metric_samples[slot_idx]
+            entry["queue"].append(int(metrics["waiting"]))
+            entry["running"].append(int(metrics["running"]))
+            entry["kv"].append(metrics["kv_util"])
             if metrics.get("tpot", 0.0) > 0:
-                stats.tpot_samples.append(metrics["tpot"])
+                entry["tpot"].append(metrics["tpot"])
 
     # -----------------------------------------------------------------------
     # Interval Management
@@ -191,25 +189,28 @@ class ObservationCollector:
         for agent_id, stats in self._agent_stats.items():
             # 1. Arrival Rate
             rate = stats.interval_requests_count / duration
-            stats.arrival_rate_history.appendleft(rate)
+            stats.history["arrival_rate"].appendleft(rate)
             stats.interval_requests_count = 0
 
-            # 2. Avg Queue Lengths & Running Requests
+            # 2. Avg Queue Lengths & Running Requests & KV Cache
             avg_qs = []
             avg_runs = []
-            for i in range(7):
-                qs = stats.queue_length_samples[i]
-                rs = stats.running_req_samples[i]
+            avg_kvs = []
+            for i in range(NUM_LOGICAL_SLOTS):
+                entry = stats.metric_samples[i]
+                qs = entry["queue"]
+                rs = entry["running"]
+                kvs = entry["kv"]
                 avg_qs.append(sum(qs) / len(qs) if qs else 0.0)
                 avg_runs.append(sum(rs) / len(rs) if rs else 0.0)
-                stats.queue_length_samples[i].clear()
-                stats.running_req_samples[i].clear()
-                # KV util samples are handled in get_state directly if needed,
-                # but let's clear them here too.
-                stats.kv_util_samples[i].clear()
+                avg_kvs.append(sum(kvs) / len(kvs) if kvs else 0.0)
+                qs.clear()
+                rs.clear()
+                kvs.clear()
 
-            stats.avg_queue_length_history.appendleft(tuple(avg_qs))
-            stats.avg_running_requests_history.appendleft(tuple(avg_runs))
+            stats.history["queue_length"].appendleft(tuple(avg_qs))
+            stats.history["running_requests"].appendleft(tuple(avg_runs))
+            stats.history["kv_utilization"] = tuple(avg_kvs)
 
             # 3. Action Cooldowns
             for entry in stats.action_history.values():
@@ -224,6 +225,19 @@ class ObservationCollector:
         entry["intervals"] = 0
         if "amount" in entry:
             entry["amount"] = amount
+
+    def increment_reconfig_count(self, agent_id: m.AgentId, action_type: str):
+        """Increment the split, merge, or transfer count for a given agent."""
+        if agent_id in self._agent_stats:
+            stats = self._agent_stats[agent_id]
+            if action_type in stats.reconfig_counts:
+                stats.reconfig_counts[action_type] += 1
+
+    def get_reconfig_counts(self, agent_id: m.AgentId) -> Dict[str, int]:
+        """Get the reconfiguration counts dictionary for a given agent."""
+        if agent_id in self._agent_stats:
+            return self._agent_stats[agent_id].reconfig_counts
+        return {"split": 0, "merge": 0, "transfer": 0}
 
     # -----------------------------------------------------------------------
     # Budget & Reconfig Management
@@ -292,11 +306,8 @@ class ObservationCollector:
         stats = self._agent_stats[slot.agent_id]
         is_permanent = SYSTEM_STATE.gpus[gpu_idx].is_simulated
         idx = 6 if is_permanent else slot.profile_placement.profile.profile_type.value
-        return (
-            stats.queue_length_samples[idx][-1]
-            if stats.queue_length_samples[idx]
-            else 0.0
-        )
+        q_samples = stats.metric_samples[idx]["queue"]
+        return q_samples[-1] if q_samples else 0.0
 
     def get_observation(self) -> m.EnvironmentStateData:
         """Construct the full normalized observation dictionary."""
@@ -308,10 +319,10 @@ class ObservationCollector:
         arrival_rate_history = {}
         for aid in agents:
             stats = self._agent_stats[aid]
-            curr = stats.arrival_rate_history[0]
+            curr = stats.history["arrival_rate"][0]
             prev = (
-                stats.arrival_rate_history[1]
-                if len(stats.arrival_rate_history) > 1
+                stats.history["arrival_rate"][1]
+                if len(stats.history["arrival_rate"]) > 1
                 else 0.0
             )
 
@@ -323,7 +334,7 @@ class ObservationCollector:
 
             arrival_rate_history[aid] = tuple(
                 r / TRAINING_CONFIG.norm_arrival_rate
-                for r in stats.arrival_rate_history
+                for r in stats.history["arrival_rate"]
             )
 
         predicted_arrival_rate = {
@@ -341,19 +352,19 @@ class ObservationCollector:
         for aid in agents:
             stats = self._agent_stats[aid]
             curr_qs = (
-                stats.avg_queue_length_history[0]
-                if stats.avg_queue_length_history
-                else [0.0] * 7
+                stats.history["queue_length"][0]
+                if stats.history["queue_length"]
+                else [0.0] * NUM_LOGICAL_SLOTS
             )
             prev_qs = (
-                stats.avg_queue_length_history[1]
-                if len(stats.avg_queue_length_history) > 1
-                else [0.0] * 7
+                stats.history["queue_length"][1]
+                if len(stats.history["queue_length"]) > 1
+                else [0.0] * NUM_LOGICAL_SLOTS
             )
             curr_runs = (
-                stats.avg_running_requests_history[0]
-                if stats.avg_running_requests_history
-                else [0.0] * 7
+                stats.history["running_requests"][0]
+                if stats.history["running_requests"]
+                else [0.0] * NUM_LOGICAL_SLOTS
             )
 
             # Normalized logs
@@ -454,11 +465,7 @@ class ObservationCollector:
         res = {}
         for aid in list(m.AgentId):
             stats = self._agent_stats[aid]
-            utils = []
-            for i in range(7):
-                samples = stats.kv_util_samples[i]
-                utils.append(sum(samples) / len(samples) if samples else 0.0)
-            res[aid] = tuple(utils)
+            res[aid] = stats.history["kv_utilization"]
         return res
 
     def _get_avg_composite_latency(
@@ -469,12 +476,9 @@ class ObservationCollector:
         for aid in list(m.AgentId):
             stats = self._agent_stats[aid]
             raw_avgs = []
-            for i in range(6):
-                q = stats.composite_latencies[i]
+            for i in range(NUM_LOGICAL_SLOTS):
+                q = stats.metric_samples[i]["latency"]
                 raw_avgs.append(sum(q) / len(q) if q else 0.0)
-
-            pq = stats.perm_composite_latencies
-            raw_avgs.append(sum(pq) / len(pq) if pq else 0.0)
 
             total = sum(raw_avgs)
             raw_totals[aid] = total
@@ -488,10 +492,13 @@ class ObservationCollector:
         return self._agent_stats[agent_id].avg_response_len
 
     def get_current_tpot(self, agent_id: m.AgentId) -> float:
-        samples = self._agent_stats[agent_id].tpot_samples
-        if not samples:
+        stats = self._agent_stats[agent_id]
+        all_samples = []
+        for i in range(NUM_LOGICAL_SLOTS):
+            all_samples.extend(stats.metric_samples[i]["tpot"])
+        if not all_samples:
             return 0.05  # Default fallback
-        return sum(samples) / len(samples)
+        return sum(all_samples) / len(all_samples)
 
     def _get_mig_profile_id_onehot(self) -> Dict[int, List[float]]:
         from src.share.mig_matrix import STATE_DEFINITIONS, STATE_ID_MAP

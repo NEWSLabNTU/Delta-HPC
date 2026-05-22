@@ -1,11 +1,11 @@
 """
 src/deploy/mig_controller.py
 
-Low-level MIG management via pynvml.
+MIG management via nvidia-smi CLI.
 
 This module exposes a ``MIGController`` class that wraps every nvidia-smi
 MIG operation (enable/disable MIG mode, destroy instances, create instances
-with explicit placement) through the pynvml Python bindings.
+with explicit placement) cleanly using standard python subprocess execution.
 
 Usage example
 -------------
@@ -26,90 +26,27 @@ Usage example
 
 from __future__ import annotations
 
+import re
 import logging
+import subprocess
 import time
-from typing import Dict, List, Tuple
-import ctypes
-import pynvml
+import glob
+from pathlib import Path
+import xml.etree.ElementTree as ET
+from typing import Dict, List, Tuple, Any
 
-from src.deploy.models import GpuInstanceInfo, ProfilePlacement  # noqa: F401
-from src.share.models import MIGProfileBase
 from src.deploy.system import SYSTEM_STATE
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+from src.deploy.models import GpuInstanceInfo, ProfilePlacement
+from src.share.models import MIGProfile, MIGProfileBase
+from src.share.hardware import (
+    DetectedGPU,
+    match_gpu_model,
+    load_mig_profile_class,
+    derive_valid_combinations,
+)
+from src.share.mig_matrix import STATE_DEFINITIONS
 
 logger = logging.getLogger(__name__)
-
-# Upper bound for MIG GPU-instance profile IDs as defined by the NVML enum
-# ``nvmlGpuInstanceProfile_t``.  Older pynvml builds may not expose the
-# constant, so we fall back to 16 which exceeds the current maximum (0xC = 12).
-_MAX_PROFILE_ID: int = getattr(pynvml, "NVML_GPU_INSTANCE_PROFILE_COUNT", 16)
-
-
-def _profile_string(size: int, vram: int) -> str:
-    """Construct the canonical ``"{size}g.{vram}gb"`` key used across the repo."""
-    return f"{size}g.{vram}gb"
-
-
-def _safe_nvml_device_get_gpu_instances(handle, profile_id):
-    """Retrieve GPU instances while handling raw ctypes signatures."""
-    # Some pynvml/driver versions return InvalidArgument if instances is None.
-    # We use a fixed-size array (32 is plenty for any current GPU) to get instances.
-    count = ctypes.c_uint(32)
-    array_type = pynvml.c_nvmlGpuInstance_t * 32
-    instances = array_type()
-    try:
-        pynvml.nvmlDeviceGetGpuInstances(
-            handle, profile_id, instances, ctypes.byref(count)
-        )
-    except pynvml.NVMLError:
-        return []
-    return [instances[i] for i in range(count.value)]
-
-
-def _safe_nvml_gpu_instance_get_compute_instances(handle, profile_id):
-    """Retrieve compute instances while handling raw ctypes signatures."""
-    count = ctypes.c_uint(32)
-    array_type = pynvml.c_nvmlComputeInstance_t * 32
-    instances = array_type()
-    try:
-        pynvml.nvmlGpuInstanceGetComputeInstances(
-            handle, profile_id, instances, ctypes.byref(count)
-        )
-    except pynvml.NVMLError:
-        return []
-    return [instances[i] for i in range(count.value)]
-
-
-def _build_profile_lookup(
-    handle: pynvml.c_nvmlDevice_t,  # type: ignore[valid-type]
-) -> Dict[str, Tuple[pynvml.c_nvmlGpuInstanceProfileInfo_t, int]]:  # type: ignore[valid-type]
-    """Return a mapping ``profile_string → (ProfileInfo, profile_id)``.
-
-    Iterates over all NVML-defined profile IDs (``0 … NVML_GPU_INSTANCE_PROFILE_COUNT-1``)
-    and collects the ones that are actually supported by *handle*.
-    """
-    lookup: Dict[str, Tuple[pynvml.c_nvmlGpuInstanceProfileInfo_t, int]] = {}  # type: ignore[valid-type]
-    for profile_id in range(_MAX_PROFILE_ID):
-        try:
-            info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, profile_id)
-        except pynvml.NVMLError:
-            continue  # profile_id not supported on this GPU
-        # Ceiling division for VRAM to match config naming (e.g. 40320 MiB -> 40 GB)
-        vram_gb = (info.memorySizeMB + 1023) // 1024
-        key = _profile_string(info.sliceCount, vram_gb)  # type: ignore[arg-type]
-        lookup[key] = (info, profile_id)  # type: ignore
-        logger.debug(
-            "GPU profile discovered: index=%d  id=%d  key=%s  multiprocessorCount=%d",
-            profile_id,
-            info.id,
-            key,
-            info.multiprocessorCount,
-        )
-    return lookup
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +55,7 @@ def _build_profile_lookup(
 
 
 class MIGController:
-    """Wrapper around pynvml MIG management functions.
+    """Wrapper around nvidia-smi MIG management functions.
 
     Parameters
     ----------
@@ -127,99 +64,147 @@ class MIGController:
 
     Examples
     --------
-    Use as a context manager so that NVML is always properly shut down::
+    Instantiate and call directly::
 
-        with MIGController(gpu_indices=[0, 1]) as ctrl:
-            ctrl.create_gi_with_placement(
-                gpu_idx=0,
-                profile_placements=[ProfilePlacement("4g.20gb", 0), ProfilePlacement("3g.20gb", 4)],
-            )
+        ctrl = MIGController(gpu_indices=[0, 1])
+        ctrl.create_gi_with_placement(
+            gpu_idx=0,
+            profile_placements=[ProfilePlacement("4g.20gb", 0), ProfilePlacement("3g.20gb", 4)],
+        )
     """
 
     def __init__(self, gpu_indices: List[int]) -> None:
         self._gpu_indices = list(gpu_indices)
-        self._initialized = False
 
-    # ------------------------------------------------------------------
-    # Context manager / lifecycle
-    # ------------------------------------------------------------------
+    @classmethod
+    def _run_nvidia_smi(cls, args: List[str]) -> subprocess.CompletedProcess:
+        """Run nvidia-smi command with specified arguments using sudo, ignoring infoROM exit code 127."""
+        cmd = ["sudo", "nvidia-smi"] + args
+        logger.info("Executing: %s", " ".join(cmd))
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    def __enter__(self) -> "MIGController":
-        self.init()
-        return self
+        stderr_str = res.stderr.decode().strip()
+        stdout_str = res.stdout.decode().strip()
 
-    def __exit__(self, *_) -> None:
-        self.shutdown()
+        if stderr_str:
+            logger.warning("nvidia-smi stderr: %s", stderr_str)
 
-    def init(self) -> None:
-        """Initialize the NVML library.  Must be called before any other method
-        (unless using the context manager interface)."""
-        if not self._initialized:
-            pynvml.nvmlInit()
-            self._initialized = True
-            logger.info("NVML initialized.")
-
-    def shutdown(self) -> None:
-        """Release the NVML library handle."""
-        if self._initialized:
-            pynvml.nvmlShutdown()
-            self._initialized = False
-            logger.info("NVML shut down.")
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _require_init(self) -> None:
-        if not self._initialized:
-            raise RuntimeError(
-                "MIGController has not been initialized.  "
-                "Call .init() or use it as a context manager."
+        if res.returncode not in (0, 127):
+            logger.error(
+                "nvidia-smi command failed with exit code %d.\nCommand: %s\nstdout: %s\nstderr: %s",
+                res.returncode,
+                " ".join(cmd),
+                stdout_str,
+                stderr_str,
             )
+            raise subprocess.CalledProcessError(
+                returncode=res.returncode, cmd=cmd, output=res.stdout, stderr=res.stderr
+            )
+        return res
 
-    def _handle(self, gpu_idx: int) -> pynvml.c_nvmlDevice_t:  # type: ignore[valid-type]
-        return pynvml.nvmlDeviceGetHandleByIndex(gpu_idx)
+    @classmethod
+    def get_active_gpu_processes(cls) -> List[Dict[str, Any]]:
+        """Query nvidia-smi for all active compute processes across all GPUs and MIGs."""
+        try:
+            res = cls._run_nvidia_smi(
+                [
+                    "--query-compute-apps=pid,process_name,gpu_uuid",
+                    "--format=csv,noheader",
+                ]
+            )
+            out = res.stdout.decode().strip()
+            processes = []
+            for line in out.split("\n"):
+                if not line.strip():
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 3:
+                    processes.append(
+                        {
+                            "pid": int(parts[0]),
+                            "name": parts[1],
+                            "gpu_uuid": parts[2],
+                        }
+                    )
+            return processes
+        except Exception as e:
+            logger.warning(f"Failed to query active GPU processes: {e}")
+            return []
 
-    def _profile_lookup(
-        self, gpu_idx: int
-    ) -> Dict[str, Tuple[pynvml.c_nvmlGpuInstanceProfileInfo_t, int]]:  # type: ignore[valid-type]
-        return _build_profile_lookup(self._handle(gpu_idx))
+    @classmethod
+    def get_nvidia_smi_overall_status(cls) -> str:
+        """Run standalone 'nvidia-smi' and return its stdout."""
+        try:
+            res = cls._run_nvidia_smi([])
+            return res.stdout.decode().strip()
+        except Exception as e:
+            return f"Failed to run nvidia-smi: {e}"
 
-    # ------------------------------------------------------------------
-    # MIG mode
-    # ------------------------------------------------------------------
+    @classmethod
+    def get_nvidia_smi_lgi_status(cls, gpu_idx: int) -> str:
+        """Run 'nvidia-smi mig -lgi -i {gpu_idx}' and return its stdout."""
+        try:
+            res = cls._run_nvidia_smi(["mig", "-lgi", "-i", str(gpu_idx)])
+            return res.stdout.decode().strip()
+        except Exception as e:
+            return f"Failed to run nvidia-smi mig -lgi: {e}"
 
-    def get_mig_mode(self, gpu_idx: int) -> bool:
-        """Return ``True`` if MIG mode is currently *enabled* on *gpu_idx*."""
-        self._require_init()
-        handle = self._handle(gpu_idx)
-        current_mode, _ = pynvml.nvmlDeviceGetMigMode(handle)
-        return current_mode == pynvml.NVML_DEVICE_MIG_ENABLE
+    @classmethod
+    def get_nvidia_fuser_output(cls) -> str:
+        """Run 'sudo fuser -v /dev/nvidia*' and return its stdout/stderr."""
+        try:
+            device_paths = glob.glob("/dev/nvidia*")
+            if not device_paths:
+                return "No /dev/nvidia* device files found."
+            cmd = ["sudo", "fuser", "-v"] + device_paths
+            res = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            return res.stdout.strip()
+        except Exception as e:
+            return f"Failed to run fuser: {e}"
 
-    def set_mig_mode(self, gpu_idx: int, *, enable: bool) -> None:
-        """Enable or disable MIG mode on *gpu_idx*.
+    @classmethod
+    def get_nvidia_lsof_output(cls) -> str:
+        """Run 'sudo lsof /dev/nvidia*' and return its stdout/stderr."""
+        try:
+            device_paths = glob.glob("/dev/nvidia*")
+            if not device_paths:
+                return "No /dev/nvidia* device files found."
+            cmd = ["sudo", "lsof"] + device_paths
+            res = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            return res.stdout.strip()
+        except Exception as e:
+            return f"Failed to run lsof: {e}"
 
-        .. warning::
-            Changing MIG mode requires a GPU reset / reboot to take effect on
-            some driver versions.  This method calls the NVML setter but does
-            **not** trigger a reset.
-
-        Parameters
-        ----------
-        gpu_idx:
-            Physical GPU index.
-        enable:
-            ``True`` to enable MIG mode, ``False`` to disable.
-        """
-        self._require_init()
-        handle = self._handle(gpu_idx)
-        mode = (
-            pynvml.NVML_DEVICE_MIG_ENABLE if enable else pynvml.NVML_DEVICE_MIG_DISABLE
-        )
-        pynvml.nvmlDeviceSetMigMode(handle, mode)
-        logger.info(
-            "GPU %d: MIG mode set to %s.", gpu_idx, "ENABLED" if enable else "DISABLED"
-        )
+    def query_gpu_instances(self, gpu_idx: int) -> List[Dict[str, Any]]:
+        """Use nvidia-smi to query active GPU instances on gpu_idx."""
+        try:
+            res = self.__class__._run_nvidia_smi(["mig", "-lgi", "-i", str(gpu_idx)])
+        except subprocess.CalledProcessError as exc:
+            if exc.returncode == 6:
+                return []
+            raise exc
+        lines = res.stdout.decode().splitlines()
+        gpu_instances = []
+        pattern = r"^\|\s*(\d+)\s+MIG\s+([^\s|]+)\s+(\d+)\s+(\d+)\s+[^|]*?\s+(\d+):(\d+)\s*\|$"
+        for line in lines:
+            m = re.match(pattern, line.strip())
+            if m:
+                gi_id = int(m.group(4))
+                profile_str = m.group(2)
+                start_slice = int(m.group(5))
+                gpu_instances.append(
+                    {
+                        "gpu_idx": gpu_idx,
+                        "id": gi_id,
+                        "profile_str": profile_str,
+                        "start_slice": start_slice,
+                    }
+                )
+        return gpu_instances
 
     # ------------------------------------------------------------------
     # Querying existing instances
@@ -238,90 +223,30 @@ class MIGController:
         list of :class:`GpuInstanceInfo`
             One entry per existing GPU instance, sorted by starting slice.
         """
-        self._require_init()
-        handle = self._handle(gpu_idx)
-
         gpu = SYSTEM_STATE.gpus.get(gpu_idx)
         if gpu is None:
             raise ValueError(f"GPU {gpu_idx} not found in SYSTEM_STATE")
         mig_profile_cls = gpu.mig_profile_cls
 
+        g_insts = self.query_gpu_instances(gpu_idx)
         infos: List[GpuInstanceInfo] = []
-        # Get all possible profiles to ensure we find all instances
-        seen_ids = set()
-        for i in range(32):
-            try:
-                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
-                if prof_info.id in seen_ids:
-                    continue
-                seen_ids.add(prof_info.id)
-
-                instances = _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
-                for inst in instances:
-                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)
-                    placement = inst_info.placement
-
-                    # Heuristic to find a matching profile name
-                    vram_gb = (prof_info.memorySizeMB + 1023) // 1024
-                    prof_str = _profile_string(prof_info.sliceCount, vram_gb)
-
-                    infos.append(
-                        GpuInstanceInfo(
-                            instance_id=inst_info.id,
-                            profile=mig_profile_cls.from_string(prof_str),
-                            start_slice=placement.start,
-                            slice_count=placement.size,
-                        )
-                    )
-            except (pynvml.NVMLError, ValueError) as exc:
-                if isinstance(exc, pynvml.NVMLError_NoPermission):
-                    logger.error(
-                        "GPU %d: Insufficient permissions to list GPU instances. Try running with sudo.",
-                        gpu_idx,
-                    )
-                    raise
-                continue
+        for gi in g_insts:
+            prof_str = gi["profile_str"]
+            prof_enum = next((p for p in mig_profile_cls if p.string == prof_str), None)
+            assert prof_enum is not None, (
+                f"Profile {prof_str} not found in mig_profile_cls"
+            )
+            infos.append(
+                GpuInstanceInfo(
+                    instance_id=gi["id"],
+                    profile=prof_enum,
+                    start_slice=gi["start_slice"],
+                    slice_count=prof_enum.size,
+                )
+            )
 
         infos.sort(key=lambda x: x.start_slice)
         return infos
-
-    def get_gi_handles(self, gpu_idx: int) -> List[pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
-        """Return raw pynvml GPU-instance handles for *gpu_idx* (all profiles)."""
-        self._require_init()
-        handle = self._handle(gpu_idx)
-
-        handles: List[pynvml.c_nvmlGpuInstance_t] = []  # type: ignore[valid-type]
-        seen_ids = set()
-        for i in range(32):
-            try:
-                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
-                if prof_info.id not in seen_ids:
-                    handles.extend(
-                        _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
-                    )
-                    seen_ids.add(prof_info.id)
-            except pynvml.NVMLError as exc:
-                if isinstance(exc, pynvml.NVMLError_NoPermission):
-                    raise
-                continue
-        return handles
-
-    def get_gi_handles_map(self, gpu_idx: int) -> Dict[int, pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
-        """Return a map of {start_slice: handle} for all existing GPU instances on *gpu_idx*."""
-        self._require_init()
-        handle = self._handle(gpu_idx)
-
-        res: Dict[int, pynvml.c_nvmlGpuInstance_t] = {}
-        for i in range(32):
-            try:
-                prof_info = pynvml.nvmlDeviceGetGpuInstanceProfileInfo(handle, i)
-                instances = _safe_nvml_device_get_gpu_instances(handle, prof_info.id)
-                for inst in instances:
-                    inst_info = pynvml.nvmlGpuInstanceGetInfo(inst)
-                    res[inst_info.placement.start] = inst
-            except pynvml.NVMLError:
-                continue
-        return res
 
     # ------------------------------------------------------------------
     # Destroying instances
@@ -329,85 +254,129 @@ class MIGController:
 
     def destroy_gis_at_slices(self, gpu_idx: int, start_slices: List[int]) -> None:
         """Destroy specific GPU instances on *gpu_idx* identified by their starting slices."""
-        self._require_init()
-        gi_map = self.get_gi_handles_map(gpu_idx)
+        g_insts = self.query_gpu_instances(gpu_idx)
         for s in start_slices:
-            if s in gi_map:
+            # Find the instance at start_slice s
+            gi = next((g for g in g_insts if g["start_slice"] == s), None)
+            if gi is not None:
                 logger.info(f"GPU {gpu_idx}: destroying instance at slice {s}")
-                self.destroy_gi(gpu_idx, gi_map[s])
+                self.destroy_gi_by_id(gpu_idx, gi["id"])
             else:
                 logger.warning(
                     f"GPU {gpu_idx}: no instance found at slice {s} to destroy"
                 )
 
-    def destroy_gi(
-        self,
-        gpu_idx: int,
-        instance_handle: pynvml.c_nvmlGpuInstance_t,  # type: ignore[valid-type]
-    ) -> None:
-        """Destroy a single GPU instance identified by its NVML handle.
+    def destroy_gi_by_id(self, gpu_idx: int, gi_id: int) -> None:
+        """Destroy a single GPU instance identified by its ID.
 
         All compute instances inside the GPU instance must be destroyed first.
-        This method destroys them automatically before destroying the GPU
-        instance itself.
-
-        Parameters
-        ----------
-        gpu_idx:
-            Physical GPU index (used only for logging).
-        instance_handle:
-            Raw pynvml GPU-instance handle, as returned by
-            :meth:`get_gi_handles`.
+        This method destroys them automatically using the nvidia-smi CLI.
         """
-        self._require_init()
-        inst_info = pynvml.nvmlGpuInstanceGetInfo(instance_handle)
-
-        # Some driver/OS versions take a moment to release the device after the
-        # container stops. We retry the entire GI teardown (both CI and GI).
-        for attempt in range(5):
-            try:
-                # 1. Destroy compute instances (CI)
-                try:
-                    ci_profiles = pynvml.nvmlGpuInstanceGetComputeInstanceProfileInfo(  # type: ignore
-                        instance_handle,
-                        0,
-                        pynvml.NVML_COMPUTE_INSTANCE_ENGINE_PROFILE_SHARED,
-                    )
-                    compute_instances = _safe_nvml_gpu_instance_get_compute_instances(
-                        instance_handle, ci_profiles.id
-                    )
-                    for ci in compute_instances:
-                        pynvml.nvmlComputeInstanceDestroy(ci)
-                        logger.debug("GPU %d: destroyed compute instance.", gpu_idx)
-                except pynvml.NVMLError as exc:
-                    logger.debug(
-                        "GPU %d: compute instance teardown skipped/failed (%s).",
-                        gpu_idx,
-                        exc,
-                    )
-
-                # 2. Destroy GPU instance (GI)
-                pynvml.nvmlGpuInstanceDestroy(instance_handle)
-                break
-
-            except pynvml.NVMLError as exc:
-                if isinstance(exc, pynvml.NVMLError_InUse) and attempt < 4:
-                    logger.debug(
-                        "GPU %d: instance id=%d still in use, retrying in 1.5s...",
-                        gpu_idx,
-                        inst_info.id,
-                    )
-                    time.sleep(1.5)
-                    continue
-                raise
-
         logger.info(
-            "GPU %d: destroyed GPU instance id=%d profile=%s start=%d.",
+            "GPU %d: destroying GPU instance id=%d using nvidia-smi CLI",
             gpu_idx,
-            inst_info.id,
-            inst_info.profileId,
-            inst_info.placement.start,
+            gi_id,
         )
+
+        # 1. Destroy compute instance ID 0 (ignore if already gone)
+        cmd_dci = [
+            "mig",
+            "-dci",
+            "-ci",
+            "0",
+            "-gi",
+            str(gi_id),
+            "-i",
+            str(gpu_idx),
+        ]
+        try:
+            self.__class__._run_nvidia_smi(cmd_dci)
+            logger.info("GPU %d: successfully destroyed compute instance.", gpu_idx)
+            time.sleep(3.0)  # give a brief pause before tearing down GI
+        except subprocess.CalledProcessError as ci_exc:
+            # Ignore "Not Found" error if it was already destroyed
+            ci_err_msg = ci_exc.stderr.decode().strip() if ci_exc.stderr else ""
+            if "Not Found" in ci_err_msg or "not found" in ci_err_msg.lower():
+                logger.info(
+                    "GPU %d: Compute instance on GI %d already gone (continuing to destroy GI)",
+                    gpu_idx,
+                    gi_id,
+                )
+            else:
+                logger.warning(
+                    "GPU %d: CI deletion on GI %d failed: %s (continuing to destroy GI)",
+                    gpu_idx,
+                    gi_id,
+                    ci_err_msg,
+                )
+
+        # 2. Destroy GPU instance (GI)
+        cmd_dgi = ["mig", "-dgi", "-gi", str(gi_id), "-i", str(gpu_idx)]
+
+        max_attempts = 3
+        attempt_delay = 5.0  # seconds
+        for attempt in range(max_attempts):
+            try:
+                self.__class__._run_nvidia_smi(cmd_dgi)
+                logger.info(
+                    "GPU %d: destroyed GPU instance id=%d.",
+                    gpu_idx,
+                    gi_id,
+                )
+                break
+            except subprocess.CalledProcessError as dgi_exc:
+                dgi_err_msg = dgi_exc.stderr.decode().strip() if dgi_exc.stderr else ""
+                # Check for "In use by another client"
+                if (
+                    "In use by another client" in dgi_err_msg
+                    or dgi_exc.returncode == 19
+                ):
+                    if attempt < max_attempts - 1:
+                        # Standalone overall nvidia-smi status
+                        smi_overall = self.__class__.get_nvidia_smi_overall_status()
+                        smi_overall_info = (
+                            f"\n  nvidia-smi overall status:\n{smi_overall}"
+                        )
+
+                        # Standalone nvidia-smi mig -lgip status
+                        smi_lgi = self.__class__.get_nvidia_smi_lgi_status(gpu_idx)
+                        smi_lgi_info = f"\n  nvidia-smi mig -lgi status:\n{smi_lgi}"
+
+                        # Query active processes to see who is using the GPU
+                        active_procs = self.__class__.get_active_gpu_processes()
+                        proc_info = ""
+                        if active_procs:
+                            proc_info = " Active processes: " + ", ".join(
+                                f"{p['name']} (PID {p['pid']} on UUID {p['gpu_uuid']})"
+                                for p in active_procs
+                            )
+                        else:
+                            proc_info = (
+                                " No active compute processes listed by nvidia-smi."
+                            )
+
+                        # Run fuser and lsof to get raw device usage
+                        fuser_output = self.__class__.get_nvidia_fuser_output()
+                        fuser_info = (
+                            f"\n  fuser output:\n{fuser_output}"
+                            if fuser_output
+                            else "\n  fuser output: None"
+                        )
+
+                        lsof_output = self.__class__.get_nvidia_lsof_output()
+                        lsof_info = (
+                            f"\n  lsof output:\n{lsof_output}"
+                            if lsof_output
+                            else "\n  lsof output: None"
+                        )
+
+                        logger.warning(
+                            f"GPU {gpu_idx}: GI id={gi_id} deletion failed because device is still in use by another client.{smi_overall_info}{smi_lgi_info}{proc_info}{fuser_info}{lsof_info}\n"
+                            f"Retrying in {attempt_delay}s (attempt {attempt + 1}/{max_attempts})..."
+                        )
+                        time.sleep(attempt_delay)
+                        continue
+                raise dgi_exc
 
     def disable_all_instances(self, gpu_idx: int) -> None:
         """Destroy **all** GPU instances on *gpu_idx* (full reset of MIG state).
@@ -417,19 +386,13 @@ class MIGController:
         gpu_idx:
             Physical GPU index.
         """
-        self._require_init()
-        handles = self.get_gi_handles(gpu_idx)
-        if not handles:
+        g_insts = self.query_gpu_instances(gpu_idx)
+        if not g_insts:
             logger.info("GPU %d: no existing GPU instances to destroy.", gpu_idx)
             return
-        for inst_handle in handles:
-            self.destroy_gi(gpu_idx, inst_handle)
+        for gi in g_insts:
+            self.destroy_gi_by_id(gpu_idx, gi["id"])
         logger.info("GPU %d: all GPU instances destroyed.", gpu_idx)
-
-    def disable_all_instances_all_gpus(self) -> None:
-        """Destroy all GPU instances on every GPU in :attr:`gpu_indices`."""
-        for gpu_idx in self._gpu_indices:
-            self.disable_all_instances(gpu_idx)
 
     # ------------------------------------------------------------------
     # Creating instances with explicit placement
@@ -440,135 +403,45 @@ class MIGController:
         gpu_idx: int,
         profile: MIGProfileBase,
         start_slice: int,
-    ) -> pynvml.c_nvmlGpuInstance_t:  # type: ignore[valid-type]
+    ) -> int:
         """Create a single GPU instance at an explicit slice placement.
 
-        Parameters
-        ----------
-        gpu_idx:
-            Physical GPU index.
-        profile:
-            Hardware profile enum member (e.g. from ``MIGProfileA100``).
-        start_slice:
-            The memory-slice index at which the instance should begin.
-
-        Returns
-        -------
-        pynvml.c_nvmlGpuInstance_t
-            Handle to the newly created GPU instance.
-
-        Raises
-        ------
-        ValueError
-            If *profile_string* is not supported on *gpu_idx*.
-        pynvml.NVMLError
-            If NVML rejects the placement (e.g. overlap, insufficient room).
+        This method uses the nvidia-smi CLI to execute the reconfiguration
+        reliably, verifies creation, and returns the newly formed GPU Instance ID.
         """
-        self._require_init()
-        handle = self._handle(gpu_idx)
-        profile_lookup = self._profile_lookup(gpu_idx)
-
-        if profile.string not in profile_lookup:
-            available = sorted(profile_lookup.keys())
-            raise ValueError(
-                f"Profile '{profile.string}' not supported on GPU {gpu_idx}.  "
-                f"Available profiles: {available}"
-            )
-
-        prof_info, _ = profile_lookup[profile.string]
-
-        # Determine correct physical placement size from hardware.
-        # Profiles like 7G and 3G on A100 have physical footprints (8 and 4)
-        # larger than their logical slice count (7 and 3).
-        placement_size = self._get_placement_size(handle, prof_info.id, start_slice)
-        if placement_size != prof_info.sliceCount:
-            logger.debug(
-                "GPU %d: profile %s at slice %d requires physical size %d (logical slices %d)",
-                gpu_idx,
-                profile.string,
-                start_slice,
-                placement_size,
-                prof_info.sliceCount,
-            )
-
-        # Build the placement struct.
-        placement = pynvml.c_nvmlGpuInstancePlacement_t()
-        placement.start = start_slice
-        placement.size = placement_size
-
-        logger.debug(
-            "GPU %d: calling nvmlDeviceCreateGpuInstanceWithPlacement(profile_id=%d, start=%d, size=%d)",
-            gpu_idx,
-            prof_info.id,
-            placement.start,
-            placement.size,
-        )
-
-        instance = pynvml.nvmlDeviceCreateGpuInstanceWithPlacement(  # type: ignore
-            handle, prof_info.id, ctypes.byref(placement)
-        )
         logger.info(
-            "GPU %d: created GPU instance  profile=%s  start_slice=%d  phys_size=%d  log_slices=%d.",
+            "GPU %d: creating GPU instance profile=%s start_slice=%d using nvidia-smi CLI",
             gpu_idx,
             profile.string,
             start_slice,
-            placement_size,
-            prof_info.sliceCount,
         )
 
-        # Create a default compute instance for this GPU instance.
-        # This is required for the OS to expose a MIG device handle/UUID.
-        try:
-            # profileId 0 is the default "full" compute profile for the GI
-            ci_prof = pynvml.nvmlGpuInstanceGetComputeInstanceProfileInfo(
-                instance, 0, pynvml.NVML_COMPUTE_INSTANCE_ENGINE_PROFILE_SHARED
-            )
-            pynvml.nvmlGpuInstanceCreateComputeInstance(instance, ci_prof.id)
-            logger.info("GPU %d: created default compute instance.", gpu_idx)
-        except pynvml.NVMLError as exc:
-            logger.warning(
-                "GPU %d: failed to create compute instance: %s", gpu_idx, exc
-            )
+        # Call nvidia-smi mig -cgi to create the GPU instance and -C for default compute instance
+        cmd = [
+            "mig",
+            "-cgi",
+            f"{profile.string}:{start_slice}",
+            "-C",
+            "-i",
+            str(gpu_idx),
+        ]
+        self.__class__._run_nvidia_smi(cmd)
 
-        return instance
-
-    def _get_placement_size(
-        self, handle: pynvml.c_nvmlDevice_t, profile_id: int, start_slice: int
-    ) -> int:  # type: ignore[valid-type]
-        """Query NVML for the valid physical placement size at the given start slice."""
-        try:
-            count = ctypes.c_uint(32)
-            placements = (pynvml.c_nvmlGpuInstancePlacement_t * 32)()
-            pynvml.nvmlDeviceGetGpuInstancePossiblePlacements(
-                handle, profile_id, placements, ctypes.byref(count)
+        # Verify creation via nvidia-smi query and find GI ID
+        gi_infos = self.query_gpu_instances(gpu_idx)
+        new_gi = next((gi for gi in gi_infos if gi["start_slice"] == start_slice), None)
+        if new_gi is None:
+            raise RuntimeError(
+                f"GPU {gpu_idx}: failed to find newly created GPU instance at slice {start_slice}."
             )
-            for i in range(count.value):
-                p = placements[i]
-                if p.start == start_slice:
-                    return p.size
-        except pynvml.NVMLError:
-            pass
-
-        # Fallback to logical slice count if query fails
-        # We need the profile info to get the slice count.
-        # Since we have the hardware ID, we should use nvmlDeviceGetGpuInstanceProfileInfoById.
-        try:
-            info = pynvml.nvmlDeviceGetGpuInstanceProfileInfoById(handle, profile_id)
-            return info.sliceCount
-        except pynvml.NVMLError:
-            return 1  # absolute fallback
+        return new_gi["id"]
 
     def create_gi_with_placement(
         self,
         gpu_idx: int,
         profile_placements: List[ProfilePlacement],
-    ) -> List[pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
+    ) -> List[int]:
         """Create multiple GPU instances on *gpu_idx* at the given placements.
-
-        The instances are created in the order supplied.  If any creation
-        fails the error propagates immediately (already-created instances
-        are **not** automatically cleaned up — call
-        :meth:`disable_all_instances` if you need a clean state).
 
         Parameters
         ----------
@@ -576,28 +449,24 @@ class MIGController:
             Physical GPU index.
         profile_placements:
             Ordered sequence of :class:`~src.deploy.models.ProfilePlacement`
-            objects.  Example::
-
-                [ProfilePlacement("4g.20gb", 0), ProfilePlacement("3g.20gb", 4)]
+            objects.
 
         Returns
         -------
-        list of pynvml.c_nvmlGpuInstance_t
-            One handle per created instance, in the same order as
-            *profile_placements*.
+        list of int
+            Newly created GPU instance IDs.
         """
-        self._require_init()
-        handles: List[pynvml.c_nvmlGpuInstance_t] = []  # type: ignore[valid-type]
+        ids: List[int] = []
         for p in profile_placements:
             h = self.create_gi(gpu_idx, p.profile, p.start_slice)
-            handles.append(h)
-        return handles
+            ids.append(h)
+        return ids
 
     def apply_full_configuration(
         self,
         gpu_idx: int,
         profile_placements: List[ProfilePlacement],
-    ) -> List[pynvml.c_nvmlGpuInstance_t]:  # type: ignore[valid-type]
+    ) -> List[int]:
         """Wipe all existing instances on *gpu_idx* then apply *profile_placements*.
 
         This is the primary high-level API for switching a GPU to a completely
@@ -613,10 +482,9 @@ class MIGController:
 
         Returns
         -------
-        list of pynvml.c_nvmlGpuInstance_t
-            Handles for the newly created instances.
+        list of int
+            IDs of the newly created instances.
         """
-        self._require_init()
         logger.info(
             "GPU %d: applying new MIG configuration: %s", gpu_idx, profile_placements
         )
@@ -643,10 +511,6 @@ class MIGController:
         docker-compose's ``device_ids`` field to pin a container to a specific
         MIG compute instance.
 
-        This method uses explicit hardware mapping via ``nvmlDeviceGetGpuInstanceId``
-        to ensure that each UUID is matched to the correct physical placement
-        (start_slice), avoiding errors caused by non-deterministic discovery order.
-
         Parameters
         ----------
         gpu_idx:
@@ -657,45 +521,146 @@ class MIGController:
         list of (int, str)
             ``(start_slice, uuid)`` pairs, sorted by *start_slice*.
         """
-        self._require_init()
-        handle = self._handle(gpu_idx)
+        # 1. Parse MIG device index to UUID from nvidia-smi -L
+        res_l = self.__class__._run_nvidia_smi(["-L"])
+        gpu_migs: Dict[int, Dict[int, str]] = {}
+        current_gpu = None
+        for line in res_l.stdout.decode().splitlines():
+            line_str = line.strip()
+            if line_str.startswith("GPU"):
+                match = re.search(r"GPU (\d+):", line_str)
+                if match:
+                    current_gpu = int(match.group(1))
+                    gpu_migs[current_gpu] = {}
+            elif "MIG" in line_str and current_gpu is not None:
+                match = re.search(
+                    r"Device\s+(\d+):\s+\(UUID:\s+(MIG-[^)]+)\)", line_str
+                )
+                if match:
+                    dev_idx = int(match.group(1))
+                    mig_uuid = match.group(2)
+                    gpu_migs[current_gpu][dev_idx] = mig_uuid
 
-        # 1. Get current GPU instances and their IDs
-        gi_infos = self.list_gis(gpu_idx)
-        gi_id_to_slice = {info.instance_id: info.start_slice for info in gi_infos}
+        dev_to_uuid = gpu_migs.get(gpu_idx, {})
 
-        if not gi_infos:
-            return []
+        # 2. Parse device index to gpu_instance_id from nvidia-smi -q -x
+        res_q = self.__class__._run_nvidia_smi(["-q", "-x"])
 
-        try:
-            max_count = pynvml.nvmlDeviceGetMaxMigDeviceCount(handle)  # type: ignore
-        except pynvml.NVMLError as exc:
-            logger.warning("GPU %d: cannot query MIG device count: %s", gpu_idx, exc)
-            return []
-
-        # 2. Resolve MIG UUIDs with explicit GI mapping.
-        res: List[Tuple[int, str]] = []
-        res = []
-        for i in range(max_count):
+        root = ET.fromstring(res_q.stdout)
+        dev_to_gi: Dict[int, int] = {}
+        for gpu in root.findall("gpu"):
             try:
-                mig_handle = pynvml.nvmlDeviceGetMigDeviceHandleByIndex(handle, i)  # type: ignore
-                uuid: str = pynvml.nvmlDeviceGetUUID(mig_handle)  # type: ignore
+                g_idx = int(gpu.find("minor_number").text)  # type: ignore
+            except (ValueError, AttributeError):
+                continue
+            if g_idx == gpu_idx:
+                mig_devices = gpu.find("mig_devices")
+                if mig_devices is not None:
+                    for dev in mig_devices.findall("mig_device"):
+                        try:
+                            idx = int(dev.find("index").text)  # type: ignore
+                            gi_id = int(dev.find("gpu_instance_id").text)  # type: ignore
+                            dev_to_gi[idx] = gi_id
+                        except (ValueError, AttributeError):
+                            continue
+                break
 
-                # Explicitly get the GPU Instance ID for this MIG device handle
-                gi_id = pynvml.nvmlDeviceGetGpuInstanceId(mig_handle)  # type: ignore
+        # 3. Query start slices of GI IDs on gpu_idx
+        gi_infos = self.query_gpu_instances(gpu_idx)
+        gi_id_to_slice = {gi["id"]: gi["start_slice"] for gi in gi_infos}
 
+        # 4. Map everything together: start_slice -> UUID
+        res: List[Tuple[int, str]] = []
+        for dev_idx, uuid in dev_to_uuid.items():
+            if dev_idx in dev_to_gi:
+                gi_id = dev_to_gi[dev_idx]
                 if gi_id in gi_id_to_slice:
                     res.append((gi_id_to_slice[gi_id], uuid))
-            except pynvml.NVMLError:
-                continue
-
-        if len(res) != len(gi_infos):
-            logger.warning(
-                "GPU %d: Expected %d MIG UUIDs but only resolved %d. "
-                "The system state may be inconsistent.",
-                gpu_idx,
-                len(gi_infos),
-                len(res),
-            )
 
         return sorted(res, key=lambda x: x[0])
+
+    @classmethod
+    def detect_mig_gpus(
+        cls, config_dir: Path = Path("configs/gpus")
+    ) -> List[DetectedGPU]:
+        """Detect all GPUs with MIG mode currently enabled on this machine."""
+        try:
+            res = cls._run_nvidia_smi(["-q", "-x"])
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"Failed to query GPUs via nvidia-smi: {exc}")
+
+        root = ET.fromstring(res.stdout)
+        detected: List[DetectedGPU] = []
+
+        for gpu in root.findall("gpu"):
+            try:
+                idx = int(gpu.find("minor_number").text.strip())
+            except (ValueError, AttributeError):
+                continue
+
+            nvml_name = gpu.find("product_name").text.strip()
+
+            # Check MIG mode
+            mig_mode_el = gpu.find("mig_mode")
+            if mig_mode_el is None:
+                logger.debug("GPU %d: no mig_mode element — skipping.", idx)
+                continue
+
+            current_mig_el = mig_mode_el.find("current_mig")
+            if current_mig_el is None or "Enabled" not in current_mig_el.text:
+                logger.debug("GPU %d: MIG mode not enabled — skipping.", idx)
+                continue
+
+            logger.info("GPU %d: MIG enabled  name=%r", idx, nvml_name)
+
+            model_name = match_gpu_model(nvml_name, config_dir)
+            if model_name is None:
+                logger.warning(
+                    "GPU %d (%r): no matching config file in %s — skipping.",
+                    idx,
+                    nvml_name,
+                    config_dir,
+                )
+                continue
+
+            mig_profile_cls = load_mig_profile_class(model_name)
+            valid_combos = derive_valid_combinations(mig_profile_cls)
+            if not valid_combos:
+                logger.warning(
+                    "GPU %d (%s): no valid MIG combinations found — skipping.",
+                    idx,
+                    model_name,
+                    config_dir,
+                )
+                continue
+
+            combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = {
+                profiles: sid
+                for sid, profiles in STATE_DEFINITIONS.items()
+                if profiles in valid_combos
+            }
+
+            detected.append(
+                DetectedGPU(
+                    gpu_idx=idx,
+                    model_name=model_name,
+                    nvml_name=nvml_name,
+                    mig_profile_cls=mig_profile_cls,
+                    valid_combos=valid_combos,
+                    combo_to_state_id=combo_to_state_id,
+                )
+            )
+            logger.info(
+                "GPU %d: matched model=%s  valid_combos=%d",
+                idx,
+                model_name,
+                len(valid_combos),
+            )
+
+        if not detected:
+            raise RuntimeError(
+                "No MIG-enabled GPUs found on this machine.  "
+                "Enable MIG mode with: nvidia-smi -i <gpu_idx> -mig 1"
+            )
+
+        return sorted(detected, key=lambda d: d.gpu_idx)

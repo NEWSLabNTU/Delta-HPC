@@ -65,10 +65,10 @@ class SimulationConfig:
         gpu_to_model = {int(k): v for k, v in sim_data["cluster"].items()}
 
         if use_hardware_detection:
-            from src.share.hardware import detect_mig_gpus
+            from src.deploy.mig_controller import MIGController
 
             try:
-                detected = detect_mig_gpus()
+                detected = MIGController.detect_mig_gpus()
                 for d in detected:
                     gpu_to_model[d.gpu_idx] = d.model_name
                 logger.info(

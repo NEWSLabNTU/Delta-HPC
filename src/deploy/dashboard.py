@@ -1,7 +1,7 @@
 import logging
 import time
 from aiohttp import web
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import src.share.models as m
 from src.deploy.system import SYSTEM_STATE
@@ -31,6 +31,13 @@ class DashboardServer:
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.start_time = time.time()
+        self.live_slot_metrics: Dict[str, Dict[str, float]] = {}
+
+    def record_live_slot_metrics(self, mig_uuid: str, metrics: Dict[str, float]):
+        self.live_slot_metrics[mig_uuid] = metrics
+
+    def get_live_slot_metrics(self, mig_uuid: str) -> Optional[Dict[str, float]]:
+        return self.live_slot_metrics.get(mig_uuid)
 
     async def start(self):
         app = web.Application()
@@ -89,17 +96,27 @@ class DashboardServer:
                         running = 0
                         waiting = 0
                         if not gpu_state.is_simulated:
-                            q_samples = stats.queue_length_samples[slot_idx]
-                            r_samples = stats.running_req_samples[slot_idx]
-                            waiting = q_samples[-1] if q_samples else 0
-                            running = r_samples[-1] if r_samples else 0
+                            # Attempt to use live per-slot metrics cache for accurate dashboard representation
+                            live = self.get_live_slot_metrics(slot.mig_uuid)
+                            if live is not None:
+                                running = live["running"]
+                                waiting = live["waiting"]
+                            else:
+                                entry = stats.metric_samples[slot_idx]
+                                q_samples = entry["queue"]
+                                r_samples = entry["running"]
+                                waiting = q_samples[-1] if q_samples else 0
+                                running = r_samples[-1] if r_samples else 0
                         else:
-                            slot_key = (
-                                slot.gpu_idx,
-                                slot.profile_placement.start_slice,
+                            mig_uuid = slot.mig_uuid
+                            running = len(
+                                self.publisher.vllm_manager._active_reqs.get(
+                                    mig_uuid, {}
+                                )
                             )
-                            running = self.publisher.slot_queues.get(slot_key, 0)
-                            waiting = 0
+                            waiting = self.publisher.vllm_manager.get_sim_waiting(
+                                mig_uuid
+                            )
 
                         engines_list.append(
                             {
@@ -121,6 +138,8 @@ class DashboardServer:
             "gpus": gpus_data,
             "agents": agents_data,
             "system_time": time.time(),
+            "completed_requests": getattr(self.publisher, "completed_requests", 0),
+            "total_requests": getattr(self.publisher, "total_requests", 0),
         }
         return web.json_response(data)
 
@@ -161,8 +180,11 @@ class DashboardServer:
         budget = float(OBS_COLLECTOR._current_budget)
         max_budget = TRAINING_CONFIG.reconfig_budget
         budget_color = C_RED if budget < (max_budget * 0.3) else C_GREEN
+        completed = getattr(self.publisher, "completed_requests", 0)
+        total = getattr(self.publisher, "total_requests", 0)
+        pct = (completed / total * 100) if total > 0 else 0.0
         lines.append(
-            f"[Elapsed Time]: {elapsed_str} | [RL Action Budget]: {budget_color}{budget:.1f}s{C_RESET} / {max_budget:.1f}s"
+            f"[Elapsed Time]: {elapsed_str} | [RL Action Budget]: {budget_color}{budget:.1f}s{C_RESET} / {max_budget:.1f}s | [Progress]: {completed}/{total} req ({pct:.1f}%)"
         )
         lines.append("")
 
@@ -228,10 +250,17 @@ class DashboardServer:
                         running = 0
                         waiting = 0
                         if not gpu_state.is_simulated:
-                            q_samples = stats.queue_length_samples[slot_idx]
-                            r_samples = stats.running_req_samples[slot_idx]
-                            waiting = q_samples[-1] if q_samples else 0
-                            running = r_samples[-1] if r_samples else 0
+                            # Attempt to use live per-slot metrics cache for accurate dashboard representation
+                            live = self.get_live_slot_metrics(slot.mig_uuid)
+                            if live is not None:
+                                running = live["running"]
+                                waiting = live["waiting"]
+                            else:
+                                entry = stats.metric_samples[slot_idx]
+                                q_samples = entry["queue"]
+                                r_samples = entry["running"]
+                                waiting = q_samples[-1] if q_samples else 0
+                                running = r_samples[-1] if r_samples else 0
                         else:
                             mig_uuid = slot.mig_uuid
                             running = len(

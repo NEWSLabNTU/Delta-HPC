@@ -1,3 +1,12 @@
+import os
+
+# =========================================================================
+# PREVENT PYTORCH CUDA CONTEXT INITIALIZATION IN PARENT PROCESS
+# Hides all GPUs from the python process so PyTorch/SB3 doesn't open driver file nodes
+# =========================================================================
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# =========================================================================
+
 import asyncio
 import argparse
 import logging
@@ -87,7 +96,7 @@ async def main() -> None:
             get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
             get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
             seed=BENCH_CONFIG.seed,
-            track_history=False,
+            track_history=True,
             load_actual_prompt=True,
         )
 
@@ -99,13 +108,14 @@ async def main() -> None:
             host=DEPLOY_CONFIG.dashboard.host,
             port=DEPLOY_CONFIG.dashboard.port,
         )
+        publisher.dashboard = dashboard
         await dashboard.start()
 
         # 6. Run request dispatch and RL control loop concurrently
         sending_future = publisher.start_sending(args.duration)
         rl_task = asyncio.create_task(rl_agent.run_loop(act_ctrl, args.duration))
 
-        await asyncio.gather(sending_future, rl_task, return_exceptions=True)
+        await asyncio.gather(sending_future, rl_task, return_exceptions=False)
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Benchmark interrupted.")

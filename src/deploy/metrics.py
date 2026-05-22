@@ -23,20 +23,25 @@ import requests
 # ---------------------------------------------------------------------------
 
 _TTFT_SUM = re.compile(
-    r"^vllm:time_to_first_token_seconds_sum\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+    r"^vllm:(?:request_)?time_to_first_token_seconds_sum\{[^}]*\}\s+([\d.eE+\-]+)", re.M
 )
 _TTFT_COUNT = re.compile(
-    r"^vllm:time_to_first_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+    r"^vllm:(?:request_)?time_to_first_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)",
+    re.M,
 )
 _TPOT_SUM = re.compile(
-    r"^vllm:time_per_output_token_seconds_sum\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+    r"^vllm:(?:request_)?time_per_output_token_seconds_sum\{[^}]*\}\s+([\d.eE+\-]+)",
+    re.M,
 )
 _TPOT_COUNT = re.compile(
-    r"^vllm:time_per_output_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+    r"^vllm:(?:request_)?time_per_output_token_seconds_count\{[^}]*\}\s+([\d.eE+\-]+)",
+    re.M,
 )
 _WAITING = re.compile(r"^vllm:num_requests_waiting\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
 _RUNNING = re.compile(r"^vllm:num_requests_running\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
-_KV_UTIL = re.compile(r"^vllm:gpu_cache_usage_perc\{[^}]*\}\s+([\d.eE+\-]+)", re.M)
+_KV_UTIL = re.compile(
+    r"^vllm:(?:gpu|kv)_cache_usage_perc\{[^}]*\}\s+([\d.eE+\-]+)", re.M
+)
 
 
 def _first(pattern: re.Pattern[str], text: str, default: float = 0.0) -> float:

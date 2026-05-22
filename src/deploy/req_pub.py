@@ -1,10 +1,7 @@
 import asyncio
 import time
 import logging
-from typing import Dict, List, Tuple, Set, Optional
-
-import numpy as np
-from tqdm import tqdm
+from typing import Dict, List, Set
 
 import src.share.models as m
 from src.deploy.vllm import VLLMManager
@@ -14,22 +11,10 @@ from src.deploy.metrics import VLLMMetricsClient
 from src.share.request_loader import RequestLoader
 from src.deploy.obs import OBS_COLLECTOR
 from src.deploy.config import DEPLOY_CONFIG
+from src.bench.models import Workload
+from src.deploy.report import AgentMetrics, print_benchmark_report, MetricsCollector
 
 logger = logging.getLogger(__name__)
-
-
-class AgentMetrics:
-    def __init__(self):
-        self.ttfts: List[float] = []
-        self.completion_times: List[float] = []
-        self.queue_length_samples: List[float] = []
-
-        self.profile_existence_time: Dict[str, float] = {
-            p.short_name: 0.0 for p in m.MIGProfile
-        }
-        self.total_observation_time: float = 0.0
-
-        self.tokens_by_profile: Dict[str, int] = {p.short_name: 0 for p in m.MIGProfile}
 
 
 class ReqPublisher:
@@ -37,13 +22,19 @@ class ReqPublisher:
         self.vllm_manager = vllm_manager
         self.request_loader = request_loader
         self.agent_metrics: Dict[m.AgentId, AgentMetrics] = {}
-        self.slot_queues: Dict[Tuple[int, int], int] = {}
+        self.metrics_collector = MetricsCollector(self.agent_metrics, self.vllm_manager)
         self._request_tasks: Set[asyncio.Task] = set()
         self._loop_tasks: List[asyncio.Task] = []
-        self.pbar: Optional[tqdm] = None
+        self.completed_requests: int = 0
+        self.total_requests: int = 0
 
-    def _get_profile_key(self, profile: m.MIGProfileBase) -> str:
-        return profile.profile_type.short_name
+    @property
+    def dashboard(self):
+        return self.metrics_collector.dashboard
+
+    @dashboard.setter
+    def dashboard(self, value):
+        self.metrics_collector.dashboard = value
 
     def start_sending(self, duration_s: float) -> asyncio.Future:
         """Set up and launch all dispatch/metric tasks, returning a Future that
@@ -51,11 +42,10 @@ class ReqPublisher:
         Future and then call :meth:`cleanup` in its own ``finally`` block."""
         logger.info(f"Starting dispatcher for {duration_s} seconds")
 
-        # Initialize metrics and slot queues based on initial SYSTEM_STATE
+        # Initialize metrics based on initial SYSTEM_STATE
         for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
             for slot in gpu_state.slots:
                 if slot.agent_id:
-                    self.slot_queues[(gpu_idx, slot.profile_placement.start_slice)] = 0
                     if slot.agent_id not in self.agent_metrics:
                         self.agent_metrics[slot.agent_id] = AgentMetrics()
 
@@ -69,7 +59,8 @@ class ReqPublisher:
             agent_to_requests[agent_id] = filtered
             total_requests += len(filtered)
 
-        self.pbar = tqdm(total=total_requests, desc="Benchmark", unit="req", leave=True)
+        self.completed_requests = 0
+        self.total_requests = total_requests
 
         self._loop_tasks = []
         for agent_id, requests in agent_to_requests.items():
@@ -77,10 +68,10 @@ class ReqPublisher:
                 asyncio.create_task(self._dispatch_loop(agent_id, requests, duration_s))
             )
             self._loop_tasks.append(
-                asyncio.create_task(self._metric_loop(agent_id, duration_s))
+                self.metrics_collector.start_collection(agent_id, duration_s)
             )
 
-        return asyncio.gather(*self._loop_tasks, return_exceptions=True)
+        return asyncio.gather(*self._loop_tasks, return_exceptions=False)
 
     async def cleanup(self):
         """Cancel any still-running loop tasks, drain all in-flight requests,
@@ -114,12 +105,8 @@ class ReqPublisher:
                 await asyncio.gather(*self._request_tasks, return_exceptions=True)
             self._request_tasks.clear()
 
-        if self.pbar:
-            self.pbar.close()
-            self.pbar = None
-
         # 3. Print final benchmark summary
-        self.report_metrics()
+        print_benchmark_report(self.agent_metrics)
 
     def _get_active_slots(self, agent_id: m.AgentId) -> List[MIGSlotState]:
         """Return slots ready to receive NEW requests."""
@@ -136,14 +123,26 @@ class ReqPublisher:
                     active_slots.append(slot)
         return active_slots
 
-    def _get_all_slots(self, agent_id: m.AgentId) -> List[MIGSlotState]:
-        """Return all slots currently owned by the agent, including draining ones."""
-        slots = []
-        for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
-            for slot in gpu_state.slots:
-                if slot.agent_id == agent_id:
-                    slots.append(slot)
-        return slots
+    def _get_active_pattern(self, agent_id: m.AgentId, t: float) -> str:
+        assert (
+            self.request_loader.phase_history
+            and agent_id in self.request_loader.phase_history
+        ), f"Phase history not initialized or missing for agent {agent_id.value}!"
+        for ph in self.request_loader.phase_history[agent_id]:
+            if ph["start_time"] <= t <= ph["start_time"] + ph["duration"] + 1e-5:
+                return ph["pattern"]
+        last_ph = self.request_loader.phase_history[agent_id][-1]
+        if t > last_ph["start_time"] + last_ph["duration"]:
+            return last_ph["pattern"]
+        raise AssertionError(f"No pattern found for {agent_id} at t={t:.2f}s")
+
+    async def _get_slot_waiting(self, slot: MIGSlotState) -> float:
+        """Query the waiting queue length of slot directly from metrics.py or VLLMManager."""
+        if SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated:
+            return float(self.vllm_manager.get_sim_waiting(slot.mig_uuid))
+        assert slot.port is not None
+        client = VLLMMetricsClient(slot.port, timeout=1)
+        return await asyncio.to_thread(client.waiting_requests)
 
     async def _dispatch_loop(
         self, agent_id: m.AgentId, requests: List[m.Request], duration_s: float
@@ -159,23 +158,37 @@ class ReqPublisher:
                 await asyncio.sleep(wait_time)
 
             active_slots = self._get_active_slots(agent_id)
+            if not active_slots:
+                for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
+                    for slot in gpu_state.slots:
+                        logger.error(
+                            f"  GPU {gpu_idx} start_slice={slot.profile_placement.start_slice} "
+                            f"agent_id={slot.agent_id} port={slot.port} is_draining={slot.is_draining} is_ready={slot.is_ready}"
+                        )
             assert active_slots, f"No active slots for agent {agent_id}"
 
-            def selection_key(slot: MIGSlotState):
-                q_len = self.slot_queues.get(
-                    (slot.gpu_idx, slot.profile_placement.start_slice), 0
+            # Query waiting queue size for all active slots concurrently
+            slot_waitings = {}
+            if len(active_slots) == 1:
+                # Bypass gather if there is only one slot
+                best_slot = active_slots[0]
+            else:
+                waiting_results = await asyncio.gather(
+                    *(self._get_slot_waiting(slot) for slot in active_slots),
+                    return_exceptions=False,
                 )
-                has_waiting = q_len > 0
-                try:
+                for slot, res in zip(active_slots, waiting_results):
+                    slot_waitings[slot.mig_uuid] = (
+                        float(res) if isinstance(res, (int, float)) else 0.0
+                    )
+
+                def selection_key(slot: MIGSlotState):
+                    waiting = slot_waitings[slot.mig_uuid]
+                    has_waiting = waiting > 0
                     size = slot.profile_placement.profile.size
-                except ValueError:
-                    size = 1
-                return (has_waiting, q_len, -size)
+                    return (has_waiting, waiting, -size)
 
-            best_slot = min(active_slots, key=selection_key)
-            slot_key = (best_slot.gpu_idx, best_slot.profile_placement.start_slice)
-
-            self.slot_queues[slot_key] = self.slot_queues.get(slot_key, 0) + 1
+                best_slot = min(active_slots, key=selection_key)
 
             task = asyncio.create_task(self._handle_request(agent_id, req, best_slot))
             self._request_tasks.add(task)
@@ -218,11 +231,14 @@ class ReqPublisher:
             metrics = self.agent_metrics[agent_id]
             tokens_generated = response["usage"]["completion_tokens"]
 
-            # Update tokens processed - we count these even for simulated engines
-            profile_key = self._get_profile_key(slot.profile_placement.profile)
-            if profile_key not in metrics.tokens_by_profile:
-                metrics.tokens_by_profile[profile_key] = 0
-            metrics.tokens_by_profile[profile_key] += tokens_generated
+            # Track token migration attribution by active workload patterns
+            r_pat_c = self._get_active_pattern(m.AgentId.CODING, req.arrival_time)
+            r_pat_r = self._get_active_pattern(m.AgentId.RAG, req.arrival_time)
+            mig_profile = slot.profile_placement.profile
+            if mig_profile.profile_type in metrics.tokens_by_mig[r_pat_c][r_pat_r]:
+                metrics.tokens_by_mig[r_pat_c][r_pat_r][mig_profile.profile_type] += (
+                    tokens_generated
+                )
 
             if not is_simulated:
                 metrics.ttfts.append(response["ttft"])
@@ -249,135 +265,5 @@ class ReqPublisher:
         except Exception as e:
             logger.error(f"Request {req.id} failed on slot {slot_key}: {e}")
         finally:
-            self.slot_queues[slot_key] = max(0, self.slot_queues.get(slot_key, 0) - 1)
-            if self.pbar:
-                self.pbar.update(1)
+            self.completed_requests += 1
 
-    async def _metric_loop(self, agent_id: m.AgentId, duration_s: float):
-        start_time = time.time()
-        metrics = self.agent_metrics[agent_id]
-
-        while True:
-            now = time.time()
-            if now - start_time >= duration_s:
-                break
-
-            all_slots = self._get_all_slots(agent_id)
-            slot_samples: Dict[int, Dict[str, float]] = {}
-
-            if all_slots:
-                total_q = 0.0
-                n_phy_slot = 0
-                for s in all_slots:
-                    is_simulated = SYSTEM_STATE.gpus[s.gpu_idx].is_simulated
-                    if not is_simulated:
-                        try:
-                            client = VLLMMetricsClient(s.port, timeout=1.0)
-                            data = await asyncio.to_thread(client.collect)
-                            waiting = data["queue_length"]
-                            running = data["running_requests"]
-                            total_q += waiting
-                            n_phy_slot += 1
-
-                            idx = s.profile_placement.profile.profile_type.value
-                            slot_samples[idx] = {
-                                "running": running,
-                                "waiting": data["queue_length"],
-                                "kv_util": data["kv_cache_util"],
-                                "tpot": data["tpot_mean_s"],
-                            }
-                        except Exception as e:
-                            logger.debug(f"Metrics fetch failed for port {s.port}: {e}")
-                    else:
-                        # Simulated/Permanent backup engine slot — use real
-                        # KV-cache accounting from VLLMManager instead of estimates.
-                        running = float(
-                            len(self.vllm_manager._active_reqs.get(s.mig_uuid, {}))
-                        )
-                        waiting = float(self.vllm_manager.get_sim_waiting(s.mig_uuid))
-                        kv_util = self.vllm_manager.get_sim_kv_util(s.mig_uuid)
-                        tpot = OBS_COLLECTOR.get_current_tpot(agent_id)
-
-                        total_q += waiting
-                        n_phy_slot += 1
-
-                        idx = 6
-                        slot_samples[idx] = {
-                            "running": running,
-                            "waiting": waiting,
-                            "kv_util": kv_util,
-                            "tpot": tpot,
-                        }
-
-                metrics.queue_length_samples.append(
-                    total_q / n_phy_slot if n_phy_slot != 0 else 0.0
-                )
-                if slot_samples:
-                    OBS_COLLECTOR.record_samples(agent_id, slot_samples)
-            else:
-                metrics.queue_length_samples.append(0.0)
-
-            for slot in all_slots:
-                if not slot.is_ready:
-                    continue
-                profile_key = self._get_profile_key(slot.profile_placement.profile)
-                if profile_key not in metrics.profile_existence_time:
-                    metrics.profile_existence_time[profile_key] = 0.0
-                metrics.profile_existence_time[profile_key] += 1.0
-
-            metrics.total_observation_time += 1.0
-
-            await asyncio.sleep(1.0)
-
-    def report_metrics(self):
-        print("\n--- Dispatcher Benchmark Results ---")
-        for agent_id, metrics in self.agent_metrics.items():
-            print(f"Agent: {agent_id.value}")
-
-            if metrics.ttfts:
-                p25 = np.percentile(metrics.ttfts, 25)
-                p50 = np.percentile(metrics.ttfts, 50)
-                p75 = np.percentile(metrics.ttfts, 75)
-                p99 = np.percentile(metrics.ttfts, 99)
-                print(
-                    f"  TTFT (s)  : p25={p25:.3f}, median={p50:.3f}, p75={p75:.3f}, p99={p99:.3f}"
-                )
-            else:
-                print("  TTFT (s)  : N/A")
-
-            if metrics.completion_times:
-                p99_ct = np.percentile(metrics.completion_times, 99)
-                p50_ct = np.percentile(metrics.completion_times, 50)
-                p25_ct = np.percentile(metrics.completion_times, 25)
-                print(
-                    f"  Total Time: p25={p25_ct:.3f}, p50={p50_ct:.3f}, p99={p99_ct:.3f}"
-                )
-            else:
-                print("  Total Time: N/A")
-
-            if metrics.queue_length_samples:
-                avg_q = sum(metrics.queue_length_samples) / len(
-                    metrics.queue_length_samples
-                )
-                print(f"  Avg Queue Length: {avg_q:.2f}")
-
-            print("  MIG Existence Percentages (over benchmark period):")
-            for p in m.MIGProfile:
-                p_key = p.short_name
-                t = metrics.profile_existence_time.get(p_key, 0.0)
-                pct = (
-                    (t / metrics.total_observation_time * 100)
-                    if metrics.total_observation_time > 0
-                    else 0
-                )
-                print(f"    {p_key}: {pct:.1f}%")
-
-            total_tokens = sum(metrics.tokens_by_profile.values())
-            print("  Token Generation by MIGs:")
-            for p in m.MIGProfile:
-                p_key = p.short_name
-                count = metrics.tokens_by_profile.get(p_key, 0)
-                pct = (count / total_tokens * 100) if total_tokens > 0 else 0
-                print(f"    {p_key}: {pct:.1f}% ({count} tokens)")
-
-        print("------------------------------------\n")

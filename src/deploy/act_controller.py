@@ -1,26 +1,28 @@
+import time
 import logging
 import asyncio
+import subprocess
 from typing import List, Optional
 
 import src.share.models as m
-from src.deploy.system import SYSTEM_STATE, register_gpu
-from src.deploy.vllm import VLLMManager
-from src.deploy.mig_controller import MIGController
-from src.deploy.obs import OBS_COLLECTOR
-from src.training.config import TRAINING_CONFIG
-from src.deploy.metrics import VLLMMetricsClient
-from src.simulation.utils import SIM_CONFIG
 from src.share.mig_matrix import (
     STATE_DEFINITIONS,
     TRANSITION_MATRIX,
     SLICE_MAPPING,
     map_res_action_to_action,
 )
+from src.deploy.system import SYSTEM_STATE, register_gpu
+from src.deploy.vllm import VLLMManager
+from src.deploy.mig_controller import MIGController
+from src.deploy.obs import OBS_COLLECTOR
+from src.deploy.metrics import VLLMMetricsClient
+from src.deploy.models import MIGSlotState, ProfilePlacement
+from src.training.config import TRAINING_CONFIG
+from src.simulation.utils import SIM_CONFIG
 from src.simulation.config import (
     GPU_MIG_PROFILE,
     GPU_VALID_COMBINATIONS,
 )
-from src.deploy.models import MIGSlotState, ProfilePlacement
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,8 @@ class ActionController:
 
     def __init__(self, vllm_mgr: VLLMManager):
         self.vllm_mgr = vllm_mgr
+        gpu_indices = list(SYSTEM_STATE.gpus.keys())
+        self.mig_ctrl = MIGController(gpu_indices=gpu_indices)
 
     def get_action_mask(self) -> List[bool]:
         """Generate a boolean mask for all possible ResourceManagerActions.
@@ -243,6 +247,14 @@ class ActionController:
         src_indices = action.mig_src
         triggering_agent = gpu_state.slots[src_indices[0]].agent_id
 
+        # Increment split/merge/transfer counts
+        if action.action == m.ActionType.SPLIT:
+            OBS_COLLECTOR.increment_reconfig_count(triggering_agent, "split")
+        elif action.action == m.ActionType.MERGE:
+            OBS_COLLECTOR.increment_reconfig_count(triggering_agent, "merge")
+        if action.receiver is not None:
+            OBS_COLLECTOR.increment_reconfig_count(triggering_agent, "transfer")
+
         if action.action == m.ActionType.TRANSFER:
             vram = gpu_state.slots[src_indices[0]].profile_placement.profile.vram
             OBS_COLLECTOR.set_last_action(triggering_agent, "give", vram)
@@ -271,38 +283,84 @@ class ActionController:
 
         if stop_tasks:
             await asyncio.gather(*stop_tasks)
+            time.sleep(2.0)
 
         # 3. MIG Reconfiguration (Partial)
+        fallback_triggered = False
+        original_owners = {}
         if action.action != m.ActionType.TRANSFER:
-            gpu_indices = list(SYSTEM_STATE.gpus.keys())
-            with MIGController(gpu_indices=gpu_indices) as mig_ctrl:
-                # Destroy affected instances
-                start_slices = [
-                    gpu_state.slots[i].profile_placement.start_slice
-                    for i in src_indices
-                ]
+            # Capture original ownership of all slots on this physical GPU in case fallback is triggered
+            original_owners = {
+                s.profile_placement.start_slice: s.agent_id for s in gpu_state.slots
+            }
+
+            # Destroy affected instances
+            start_slices = [
+                gpu_state.slots[i].profile_placement.start_slice for i in src_indices
+            ]
+            try:
                 await asyncio.to_thread(
-                    mig_ctrl.destroy_gis_at_slices, gpu_id, start_slices
+                    self.mig_ctrl.destroy_gis_at_slices, gpu_id, start_slices
+                )
+            except Exception as e:
+                # Check for exit code 19 / "In use by another client"
+                is_in_use_error = False
+                if isinstance(e, subprocess.CalledProcessError):
+                    err_msg = e.stderr.decode().strip() if e.stderr else ""
+                    if e.returncode == 19 or "In use by another client" in err_msg:
+                        is_in_use_error = True
+
+                if not is_in_use_error:
+                    raise e
+
+                logger.warning(
+                    f"GPU {gpu_id}: MIG reconfiguration failed due to active CUDA context ({e}). "
+                    "Initiating fallback: gracefully stopping ALL other containers on this physical GPU..."
+                )
+                fallback_triggered = True
+
+                # Step 1: Drain and stop all other active containers on this physical GPU
+                fallback_stop_tasks = []
+                for slot in gpu_state.slots:
+                    # If it has a mig_uuid and is not already draining/stopped, stop it
+                    if slot.mig_uuid and not slot.is_draining:
+                        slot.is_draining = True
+                        logger.info(
+                            f"Fallback: stopping preserved container on GPU {gpu_id} start_slice={slot.profile_placement.start_slice}"
+                        )
+                        fallback_stop_tasks.append(
+                            asyncio.to_thread(self.vllm_mgr.stop, slot)
+                        )
+
+                if fallback_stop_tasks:
+                    await asyncio.gather(*fallback_stop_tasks)
+
+                # Step 2: Retry destroy_gis_at_slices (which should now succeed perfectly!)
+                logger.info(
+                    f"GPU {gpu_id}: retrying MIG reconfiguration after clearing all physical GPU contexts..."
+                )
+                await asyncio.to_thread(
+                    self.mig_ctrl.destroy_gis_at_slices, gpu_id, start_slices
                 )
 
-                # Create new instances
-                target_sid = action.target_state_id
-                target_profiles = STATE_DEFINITIONS[target_sid]
-                target_slices = SLICE_MAPPING[target_sid]
+            # Create new instances
+            target_sid = action.target_state_id
+            target_profiles = STATE_DEFINITIONS[target_sid]
+            target_slices = SLICE_MAPPING[target_sid]
 
-                for target_idx in action.mig_target:
-                    profile_type = target_profiles[target_idx]
-                    start_slice = target_slices[target_idx][0]
-                    hw_prof = self._get_hardware_profile(gpu_id, profile_type)
-                    logger.info(
-                        f"GPU {gpu_id}: creating instance profile={profile_type.name} start_slice={start_slice}"
-                    )
-                    await asyncio.to_thread(
-                        mig_ctrl.create_gi, gpu_id, hw_prof, start_slice
-                    )
+            for target_idx in action.mig_target:
+                profile_type = target_profiles[target_idx]
+                start_slice = target_slices[target_idx][0]
+                hw_prof = self._get_hardware_profile(gpu_id, profile_type)
+                logger.info(
+                    f"GPU {gpu_id}: creating instance profile={profile_type.name} start_slice={start_slice}"
+                )
+                await asyncio.to_thread(
+                    self.mig_ctrl.create_gi, gpu_id, hw_prof, start_slice
+                )
 
-                # 4. State Reconstruction — done while still inside the context
-                uuids = await asyncio.to_thread(mig_ctrl.list_mig_device_uuids, gpu_id)
+            # 4. State Reconstruction
+            uuids = await asyncio.to_thread(self.mig_ctrl.list_mig_device_uuids, gpu_id)
         # 4. State Update and Booting
         match action.action:
             case m.ActionType.TRANSFER:
@@ -348,6 +406,17 @@ class ActionController:
                     )
                     gpu_state.slots.append(new_slot)
                     new_slots_to_start.append(new_slot)
+
+                # Restore original ownership and queue preserved slots for boot if fallback was triggered
+                if fallback_triggered:
+                    for slot in gpu_state.slots:
+                        if slot not in new_slots_to_start:
+                            orig_owner = original_owners.get(
+                                slot.profile_placement.start_slice
+                            )
+                            if orig_owner is not None:
+                                slot.agent_id = orig_owner
+                            new_slots_to_start.append(slot)
 
                 # Re-sort to maintain physical layout order
                 gpu_state.slots.sort(key=lambda s: s.profile_placement.start_slice)

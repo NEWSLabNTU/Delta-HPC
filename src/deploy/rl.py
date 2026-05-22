@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pickle
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, List, cast, Dict
 
+import torch
 import numpy as np
 import numpy.typing as npt
 
@@ -47,6 +50,11 @@ class RLAgent:
 
     def __init__(self, ckpt_path: Path, vecnorm_path: Path | None = None) -> None:
         logger.info("Loading RL policy from %s (device=cpu) …", ckpt_path)
+
+        # PyTorch distributions validate_args can cause Simplex constraint failures
+        # due to float32 precision errors during MaskableCategorical softmax normalization
+        torch.distributions.Distribution.set_default_validate_args(False)
+
         # custom_objects keeps the shapes/hypers stable even if the saved
         # config differs from the current training_config.yaml.
         self._model: MaskablePPO = MaskablePPO.load(  # type: ignore[assignment]
@@ -61,8 +69,6 @@ class RLAgent:
             # We only need the normalisation statistics, not a real env.
             # Load with a dummy DummyVecEnv wrapper is avoided; instead we
             # just load the pkl and apply obs normalisation manually.
-            import pickle
-
             with open(vecnorm_path, "rb") as f:
                 self._vec_normalize = pickle.load(f)
             self._vec_normalize.training = False  # inference mode — no stat updates
@@ -224,10 +230,8 @@ class RLAgent:
             Total benchmark duration in seconds; the loop exits when this
             wall-clock time has elapsed.
         """
-        import time as _time
-
         OBS_COLLECTOR.start_budget_refresh_loop()
-        start = _time.time()
+        start = time.time()
         step = 0
 
         logger.info(
@@ -239,61 +243,48 @@ class RLAgent:
         while True:
             # Sleep until the next action trigger point
             next_trigger = start + (step + 1) * TRAINING_CONFIG.action_interval
-            sleep_for = next_trigger - _time.time()
+            sleep_for = next_trigger - time.time()
             if sleep_for > 0:
                 await asyncio.sleep(sleep_for)
 
-            if _time.time() - start >= duration_s:
+            if time.time() - start >= duration_s:
                 logger.info("RL control loop finished after %d steps.", step)
                 break
 
-            try:
-                # Finalise the interval's accumulated metrics
-                OBS_COLLECTOR.start_new_interval()
+            # Finalise the interval's accumulated metrics
+            OBS_COLLECTOR.start_new_interval()
 
-                # Observation and action mask
-                state_data = OBS_COLLECTOR.get_observation()
-                action_mask = act_ctrl.get_action_mask()
+            # Observation and action mask
+            state_data = OBS_COLLECTOR.get_observation()
+            action_mask = act_ctrl.get_action_mask()
 
-                # Log the complete action mask
-                allowed_action_names = [
-                    act.name
-                    for i, act in enumerate(m.ResourceManagerAction)
-                    if action_mask[i]
-                ]
-                logger.info(
-                    "[step %d] Complete Action Mask (1s and 0s): %s",
-                    step,
-                    "".join("1" if x else "0" for x in action_mask),
-                )
-                logger.info(
-                    "[step %d] Allowed actions (%d/%d): %s",
-                    step,
-                    len(allowed_action_names),
-                    len(action_mask),
-                    allowed_action_names,
-                )
+            # Log the complete action mask
+            allowed_action_names = [
+                act.name
+                for i, act in enumerate(m.ResourceManagerAction)
+                if action_mask[i]
+            ]
+            logger.info(
+                "[step %d] Complete Action Mask (1s and 0s): %s",
+                step,
+                "".join("1" if x else "0" for x in action_mask),
+            )
+            logger.info(
+                "[step %d] Allowed actions (%d/%d): %s",
+                step,
+                len(allowed_action_names),
+                len(action_mask),
+                allowed_action_names,
+            )
 
-                # Policy inference
-                chosen_action = self.predict(state_data, action_mask)
-                logger.info("[step %d] RL action: %s", step, chosen_action.name)
+            # Policy inference
+            chosen_action = self.predict(state_data, action_mask)
+            logger.info("[step %d] RL action: %s", step, chosen_action.name)
 
-                # Execute (NO_ACTION is a no-op)
-                if chosen_action != m.ResourceManagerAction.NO_ACTION:
-                    concrete_action = act_ctrl.map_to_action(chosen_action)
-                    if concrete_action is not None:
-                        try:
-                            await act_ctrl.execute_action(concrete_action)
-                        except Exception as exc:
-                            logger.error(
-                                "Action execution failed (%s): %s",
-                                chosen_action.name,
-                                exc,
-                            )
-
-            except Exception as exc:
-                logger.exception(
-                    "RL loop step %d raised an unexpected error: %s", step, exc
-                )
+            # Execute (NO_ACTION is a no-op)
+            if chosen_action != m.ResourceManagerAction.NO_ACTION:
+                concrete_action = act_ctrl.map_to_action(chosen_action)
+                if concrete_action is not None:
+                    await act_ctrl.execute_action(concrete_action)
 
             step += 1

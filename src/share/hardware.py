@@ -6,13 +6,12 @@ Shared hardware detection utilities for the Delta-HPC infrastructure.
 
 from __future__ import annotations
 
+import re
 import logging
 import importlib.util
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
-
-import pynvml
 
 from src.share.mig_matrix import STATE_DEFINITIONS
 from src.share.models import MIGProfile, MIGProfileBase
@@ -98,7 +97,6 @@ def derive_valid_combinations(
 
 def match_gpu_model(nvml_name: str, config_dir: Path) -> Optional[str]:
     """Find the best-matching config filename stem for *nvml_name*."""
-    import re
 
     def tokenise(s: str) -> List[str]:
         return re.findall(r"[A-Z0-9]+", s.upper())
@@ -122,79 +120,4 @@ def match_gpu_model(nvml_name: str, config_dir: Path) -> Optional[str]:
     return best_match
 
 
-def detect_mig_gpus(config_dir: Path = Path("configs/gpus")) -> List[DetectedGPU]:
-    """Detect all GPUs with MIG mode currently enabled on this machine."""
-    pynvml.nvmlInit()
-    try:
-        count = pynvml.nvmlDeviceGetCount()
-        detected: List[DetectedGPU] = []
-
-        for idx in range(count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-
-            # Check MIG mode
-            try:
-                current_mode, _ = pynvml.nvmlDeviceGetMigMode(handle)
-            except pynvml.NVMLError:
-                # GPU does not support MIG at all
-                continue
-
-            if current_mode != pynvml.NVML_DEVICE_MIG_ENABLE:
-                logger.debug("GPU %d: MIG mode not enabled — skipping.", idx)
-                continue
-
-            nvml_name = pynvml.nvmlDeviceGetName(handle)
-            logger.info("GPU %d: MIG enabled  name=%r", idx, nvml_name)
-
-            model_name = match_gpu_model(nvml_name, config_dir)
-            if model_name is None:
-                logger.warning(
-                    "GPU %d (%r): no matching config file in %s — skipping.",
-                    idx,
-                    nvml_name,
-                    config_dir,
-                )
-                continue
-
-            mig_profile_cls = load_mig_profile_class(model_name)
-            valid_combos = derive_valid_combinations(mig_profile_cls)
-            if not valid_combos:
-                logger.warning(
-                    "GPU %d (%s): no valid MIG combinations found — skipping.",
-                    idx,
-                    model_name,
-                )
-                continue
-
-            combo_to_state_id: Dict[Tuple[MIGProfile, ...], int] = {
-                profiles: sid
-                for sid, profiles in STATE_DEFINITIONS.items()
-                if profiles in valid_combos
-            }
-
-            detected.append(
-                DetectedGPU(
-                    gpu_idx=idx,
-                    model_name=model_name,
-                    nvml_name=nvml_name,
-                    mig_profile_cls=mig_profile_cls,
-                    valid_combos=valid_combos,
-                    combo_to_state_id=combo_to_state_id,
-                )
-            )
-            logger.info(
-                "GPU %d: matched model=%s  valid_combos=%d",
-                idx,
-                model_name,
-                len(valid_combos),
-            )
-    finally:
-        pynvml.nvmlShutdown()
-
-    if not detected:
-        raise RuntimeError(
-            "No MIG-enabled GPUs found on this machine.  "
-            "Enable MIG mode with: nvidia-smi -i <gpu_idx> -mig 1"
-        )
-
-    return sorted(detected, key=lambda d: d.gpu_idx)
+# Deleted detect_mig_gpus from here
