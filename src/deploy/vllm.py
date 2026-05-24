@@ -55,7 +55,7 @@ import requests
 import subprocess
 import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
@@ -122,20 +122,17 @@ class VLLMManager:
     ) -> None:
         self._cfg = DEPLOY_CONFIG
 
-        # _model_map[gpu_idx][agent_id][profile_string] = model_id
-        self._model_map: Dict[int, Dict[AgentId, Dict[str, str]]] = (
-            self._build_model_map(sim_config_path)
-        )
+        self._sim_config_path = sim_config_path
+        # _model_map will be built lazily when first accessed
+        self._model_map_cache: Dict[int, Dict[AgentId, Dict[str, str]]] = None
 
         # Pre-allocate the full port pool: 2 × (7 slots/GPU × num_GPUs).
         # Ports are returned to this set when a slot stops so they are reused
         # on the next reconfiguration.  Using a single set avoids maintaining a
         # separate counter and a separate free list.
         _num_gpus = max(len(system.SYSTEM_STATE.gpus), 1)
-        _pool_size = 7 * _num_gpus * 2
-        self._port_pool: set[int] = set(
-            range(self._cfg.vllm.base_port, self._cfg.vllm.base_port + _pool_size)
-        )
+        # Port pool is generated lazily in _alloc_port to ensure SYSTEM_STATE is populated
+        self._port_pool: Optional[set[int]] = None
 
         # {mig_uuid: {request_id: current_tokens}}
         # Keyed by MIG UUID so that state is always tied to a specific hardware
@@ -149,6 +146,12 @@ class VLLMManager:
     # ------------------------------------------------------------------
     # Model-to-MIG mapping
     # ------------------------------------------------------------------
+
+    @property
+    def _model_map(self) -> Dict[int, Dict[AgentId, Dict[str, str]]]:
+        if self._model_map_cache is None:
+            self._model_map_cache = self._build_model_map(self._sim_config_path)
+        return self._model_map_cache
 
     def _build_model_map(
         self, sim_config_path: Path
@@ -240,6 +243,13 @@ class VLLMManager:
 
     def _alloc_port(self) -> int:
         """Remove and return the lowest port number from the pool."""
+        if self._port_pool is None:
+            _num_gpus = max(len(system.SYSTEM_STATE.gpus), 1)
+            _pool_size = 7 * _num_gpus * 2
+            self._port_pool = set(
+                range(self._cfg.vllm.base_port, self._cfg.vllm.base_port + _pool_size)
+            )
+
         if not self._port_pool:
             raise RuntimeError("Port pool exhausted — too many concurrent MIG slots.")
         port = min(self._port_pool)
@@ -248,7 +258,8 @@ class VLLMManager:
 
     def _release_port(self, port: int) -> None:
         """Return *port* to the pool so it can be reused."""
-        self._port_pool.add(port)
+        if self._port_pool is not None:
+            self._port_pool.add(port)
 
     def _run_script(
         self,
@@ -265,9 +276,9 @@ class VLLMManager:
 
         # Log output for visibility as requested by user
         if result.stdout.strip():
-            logger.info("vllm %s stdout:\n%s", action, result.stdout.strip())
+            logger.debug("vllm %s stdout:\n%s", action, result.stdout.strip())
         if result.stderr.strip():
-            logger.info("vllm %s stderr:\n%s", action, result.stderr.strip())
+            logger.debug("vllm %s stderr:\n%s", action, result.stderr.strip())
 
         if result.returncode != 0:
             raise RuntimeError(

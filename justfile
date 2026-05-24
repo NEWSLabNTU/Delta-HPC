@@ -22,8 +22,8 @@ bench-all:
     set -x
     python -m src.bench.main --bl all --ckpt $ckpts
 
-deploy-bench ckpt duration_s:
-    sudo .venv/bin/python3 -m src.deploy.main --ckpt {{ ckpt }} --duration {{ duration_s }}
+deploy-bench policy duration_s log_level="INFO":
+    sudo .venv/bin/python3 -m src.deploy.main --policy {{ policy }} --duration {{ duration_s }} --log-level {{ log_level }}
 
 mock-train:
     python -m src.simulation.main > test.log

@@ -40,8 +40,9 @@ class ActionController:
         gpu_indices = list(SYSTEM_STATE.gpus.keys())
         self.mig_ctrl = MIGController(gpu_indices=gpu_indices)
 
-    def get_action_mask(self) -> List[bool]:
-        """Generate a boolean mask for all possible ResourceManagerActions.
+    def get_action_mask(self, ignore_cooldowns: bool = False) -> List[bool]:
+        """
+        Evaluate and return a boolean mask for all m.ResourceManagerAction enum values.
 
         Logic follows src/simulation/simulator.py:909.
         """
@@ -54,7 +55,7 @@ class ActionController:
             ] = True
             return mask
 
-        cooldown_steps = TRAINING_CONFIG.action_cooldown
+        cooldown_steps = TRAINING_CONFIG.action_cooldown if not ignore_cooldowns else 0
         transfer_blocked = any(
             OBS_COLLECTOR._agent_stats[aid].action_history["give"]["intervals"]
             < cooldown_steps
@@ -155,7 +156,9 @@ class ActionController:
                 if pred_action:
                     # Disable action if any involved slot is restarting / not ready
                     gpu_state = SYSTEM_STATE.gpus[pred_action.gpu_id]
-                    if any(not gpu_state.slots[idx].is_ready for idx in pred_action.mig_src):
+                    if any(
+                        not gpu_state.slots[idx].is_ready for idx in pred_action.mig_src
+                    ):
                         mask[act_id] = False
                         continue
 
@@ -242,8 +245,8 @@ class ActionController:
             for idx in action.mig_target
         ]
         details = (
-            f"GPU {gpu_id} | Src: {', '.join(src_profiles)} (slots {action.mig_src}) "
-            f"-> Tgt: {', '.join(target_profiles)} (slots {action.mig_target})"
+            f"GPU {gpu_id} | Src: {', '.join(src_profiles)} "
+            f"-> Tgt: {', '.join(target_profiles)}"
         )
         if action.receiver:
             details += f" | Receiver: {action.receiver.receiver_id.name}"

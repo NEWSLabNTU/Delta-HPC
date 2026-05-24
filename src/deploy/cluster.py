@@ -204,7 +204,35 @@ class DeployGPUSetup:
             placements = _combo_to_placement(combo, state_id, info.mig_profile_cls)
             result[gpu_idx] = placements
             logger.info(
-                "GPU %d (%s): selected state_id=%d  combo=%s  placements=%s",
+                "GPU %d (%s): selected state_id=%d  placements=%s",
+                gpu_idx,
+                info.model_name,
+                state_id,
+                placements,
+            )
+        return result
+
+    def pick_fixed_combinations(self, state_id: int) -> AllGpuMIGConfigs:
+        """Pick a specific valid configuration for each detected GPU by state_id.
+
+        Parameters
+        ----------
+        state_id:
+            The state_id corresponding to the desired MIG configuration.
+
+        Returns
+        -------
+        dict
+            ``{gpu_idx: [(profile_string, start_slice), ...]}`` for every
+            detected MIG GPU. Suitable for passing directly to :meth:`apply`.
+        """
+        result: AllGpuMIGConfigs = {}
+        for gpu_idx, info in self.gpu_info.items():
+            combo = STATE_DEFINITIONS[state_id]
+            placements = _combo_to_placement(combo, state_id, info.mig_profile_cls)
+            result[gpu_idx] = placements
+            logger.info(
+                "GPU %d (%s): selected fixed state_id=%d  combo=%s  placements=%s",
                 gpu_idx,
                 info.model_name,
                 state_id,
@@ -378,5 +406,24 @@ class DeployGPUSetup:
             The configurations that were (or would be) applied.
         """
         configs = self.pick_random_combinations()
+        self.apply(configs, dry_run=dry_run)
+        return configs
+
+    def apply_fixed(self, state_id: int, *, dry_run: bool = False) -> AllGpuMIGConfigs:
+        """Pick fixed combinations based on state_id and immediately apply them.
+
+        Parameters
+        ----------
+        state_id:
+            The state_id corresponding to the desired MIG configuration.
+        dry_run:
+            Passed through to :meth:`apply`.
+
+        Returns
+        -------
+        AllGpuMIGConfigs
+            The configurations that were (or would be) applied.
+        """
+        configs = self.pick_fixed_combinations(state_id)
         self.apply(configs, dry_run=dry_run)
         return configs

@@ -86,13 +86,10 @@ class DashboardServer:
 
         agents_data = {}
         for agent_id in [m.AgentId.CODING, m.AgentId.RAG]:
-            stats = OBS_COLLECTOR._agent_stats[agent_id]
             engines_list = []
             for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
                 for slot in gpu_state.slots:
                     if slot.agent_id == agent_id:
-                        slot_idx = slot.profile_placement.profile.profile_type.value
-
                         running = 0
                         waiting = 0
                         if not gpu_state.is_simulated:
@@ -102,11 +99,8 @@ class DashboardServer:
                                 running = live["running"]
                                 waiting = live["waiting"]
                             else:
-                                entry = stats.metric_samples[slot_idx]
-                                q_samples = entry["queue"]
-                                r_samples = entry["running"]
-                                waiting = q_samples[-1] if q_samples else 0
-                                running = r_samples[-1] if r_samples else 0
+                                running = 0
+                                waiting = 0
                         else:
                             mig_uuid = slot.mig_uuid
                             running = len(
@@ -224,7 +218,7 @@ class DashboardServer:
 
                 lines.append(
                     f"  Slice {slot.profile_placement.start_slice:<2} "
-                    f"[{C_CYAN}{slot.profile_placement.profile.profile_type.name:<8}{C_RESET}] "
+                    f"[{C_CYAN}{slot.profile_placement.profile.profile_type.name:<12}{C_RESET}] "
                     f"({owner_color}{owner:<6}{C_RESET}) | "
                     f"{C_BOLD}{port_str:<10}{C_RESET} | "
                     f"Status: {status_color}{status:<8}{C_RESET}"
@@ -236,7 +230,6 @@ class DashboardServer:
         lines.append(f"{C_BOLD}{C_WHITE}2. AGENT ENGINE WORKLOADS{C_RESET}")
         lines.append(f"{C_BLUE}{'-' * 80}{C_RESET}")
         for agent_id in [m.AgentId.CODING, m.AgentId.RAG]:
-            stats = OBS_COLLECTOR._agent_stats[agent_id]
             agent_color = C_GREEN if agent_id == m.AgentId.CODING else C_PURPLE
             lines.append(f"{C_BOLD}{agent_color}{agent_id.name} AGENT:{C_RESET}")
 
@@ -245,7 +238,6 @@ class DashboardServer:
                 for slot in gpu_state.slots:
                     if slot.agent_id == agent_id:
                         engines_found = True
-                        slot_idx = slot.profile_placement.profile.profile_type.value
 
                         running = 0
                         waiting = 0
@@ -256,11 +248,8 @@ class DashboardServer:
                                 running = live["running"]
                                 waiting = live["waiting"]
                             else:
-                                entry = stats.metric_samples[slot_idx]
-                                q_samples = entry["queue"]
-                                r_samples = entry["running"]
-                                waiting = q_samples[-1] if q_samples else 0
-                                running = r_samples[-1] if r_samples else 0
+                                running = 0
+                                waiting = 0
                         else:
                             mig_uuid = slot.mig_uuid
                             running = len(
@@ -282,7 +271,7 @@ class DashboardServer:
                         wait_color = C_RED if waiting > 0 else C_RESET
 
                         lines.append(
-                            f"  - {C_CYAN}{slot.profile_placement.profile.profile_type.name:<8}{C_RESET} "
+                            f"  - {C_CYAN}{slot.profile_placement.profile.profile_type.name:<12}{C_RESET} "
                             f"({type_str:<22}) | "
                             f"Concurrency: {run_color}{int(running):>3d}{C_RESET} | "
                             f"Queue: {wait_color}{int(waiting):>3d}{C_RESET}"

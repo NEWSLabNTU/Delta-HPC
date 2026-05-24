@@ -147,11 +147,7 @@ async def _run_benchmark():
         mig_profile_cls = info.mig_profile_cls
 
         for hw_mig in mig_profile_cls:
-            if not (hw_mig.string.startswith("2g") or hw_mig.string.startswith("1g")):
-                continue
-
-            # for agent_id in m.AgentId:
-            for agent_id in [m.AgentId.CODING]:
+            for agent_id in m.AgentId:
                 if agent_id.value not in config.GPU_AGENTS_CONFIG.get(gpu_idx, {}):
                     continue
                 if hw_mig.string not in config.GPU_AGENTS_CONFIG[gpu_idx][

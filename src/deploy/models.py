@@ -56,6 +56,12 @@ class ProfilePlacement:
     profile: MIGProfileBase
     start_slice: int
 
+    def __str__(self) -> str:
+        return f"{self.profile.string} @ slice {self.start_slice}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
 
 @dataclass
 class GpuInstanceInfo:

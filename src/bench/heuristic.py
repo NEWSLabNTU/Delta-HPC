@@ -1,3 +1,5 @@
+import math
+import logging
 from typing import Dict
 
 import src.share.models as m
@@ -6,17 +8,22 @@ from src.bench.config import BENCH_CONFIG
 from src.training.config import TRAINING_CONFIG
 from src.simulation.config import GPU_MIG_PROFILE
 
+logger = logging.getLogger(__name__)
+
 
 class RuleBasedHeuristic:
-    def __init__(self):
-        pass
+    def __init__(self, get_service_rate=None):
+        if get_service_rate is None:
+            self.get_service_rate = BENCH_CONFIG.get_service_rate
+        else:
+            self.get_service_rate = get_service_rate
 
     def _denormalize_arrival_rate(self, val: float) -> float:
         return val * TRAINING_CONFIG.norm_arrival_rate
 
     def decide_action(self, sim: m.Simulator) -> m.ResourceManagerAction:
         state = sim.get_state()
-        mask = sim.get_action_mask()
+        mask = sim.get_action_mask(ignore_cooldowns=True)
         all_actions = list(m.ResourceManagerAction)
         valid_actions = [
             a
@@ -34,11 +41,20 @@ class RuleBasedHeuristic:
 
         for aid in m.AgentId:
             arr_rate = self._denormalize_arrival_rate(state["arrival_rate"][aid])
+
+            agent = sim.agents[aid]
+            total_queue = sum(
+                len(e.waiting_queue)
+                for e in agent.engines
+                if hasattr(e, "waiting_queue")
+            )
+            arr_rate += total_queue / TRAINING_CONFIG.action_interval
+
             arrival_rates[aid] = arr_rate
 
             agent = sim.agents[aid]
             srv_rate = sum(
-                BENCH_CONFIG.get_service_rate(aid, e.mig_profile, gpu_id=e.gpu)
+                self.get_service_rate(aid, e.mig_profile, gpu_id=e.gpu)
                 for e in agent.engines
                 if e.status != m.EngineStatus.BOOTING
             )
@@ -56,6 +72,8 @@ class RuleBasedHeuristic:
         )
 
         if not needs_action or not valid_actions:
+            ratio_str = ", ".join([f"{k.name}: {v:.2f}" for k, v in scaling_ratios.items()])
+            logger.info(f"Heuristic deciding NO_ACTION. Current scaling ratios: {ratio_str}")
             return m.ResourceManagerAction.NO_ACTION
 
         def simulate_service_rates(
@@ -63,7 +81,7 @@ class RuleBasedHeuristic:
         ) -> Dict[m.AgentId, float]:
             new_rates = service_rates.copy()
             sim_action = sim.map_to_action(action)
-            if sim_action is None or sim_action.target_state_id is None:
+            if sim_action is None:
                 return new_rates
 
             gpu_id = sim_action.gpu_id
@@ -71,7 +89,8 @@ class RuleBasedHeuristic:
             # 1. Remove service rates of source engines
             for idx in sim_action.mig_src:
                 eng = sim.gpu_engines[gpu_id][idx]
-                new_rates[eng.owner.agent_id] -= BENCH_CONFIG.get_service_rate(
+                # Decrease capacity for giver
+                new_rates[eng.owner.agent_id] -= self.get_service_rate(
                     eng.owner.agent_id, eng.mig_profile, gpu_id=gpu_id
                 )
 
@@ -79,24 +98,37 @@ class RuleBasedHeuristic:
             # Identify the "giver" (current owner of source engines)
             giver_id = sim.gpu_engines[gpu_id][sim_action.mig_src[0]].owner.agent_id
 
-            target_profiles = STATE_DEFINITIONS[sim_action.target_state_id]
-            for idx in sim_action.mig_target:
-                logical_profile = target_profiles[idx]
-                # Find corresponding hardware profile
-                hardware_profile = None
-                for hp in GPU_MIG_PROFILE[gpu_id]:
-                    if hp.profile_type == logical_profile:
-                        hardware_profile = hp
-                        break
-                assert hardware_profile is not None
+            if sim_action.target_state_id is None:
+                # Pure transfer: no state change
+                for idx in sim_action.mig_src:
+                    eng = sim.gpu_engines[gpu_id][idx]
+                    owner_id = giver_id
+                    if sim_action.receiver and sim_action.receiver.mig_idx == idx:
+                        owner_id = sim_action.receiver.receiver_id
 
-                owner_id = giver_id
-                if sim_action.receiver and sim_action.receiver.mig_idx == idx:
-                    owner_id = sim_action.receiver.receiver_id
+                    new_rates[owner_id] += self.get_service_rate(
+                        owner_id, eng.mig_profile, gpu_id=gpu_id
+                    )
+            else:
+                target_profiles = STATE_DEFINITIONS[sim_action.target_state_id]
+                for idx in sim_action.mig_target:
+                    logical_profile = target_profiles[idx]
+                    # Find corresponding hardware profile
+                    hardware_profile = None
+                    for hp in GPU_MIG_PROFILE[gpu_id]:
+                        if hp.profile_type == logical_profile:
+                            hardware_profile = hp
+                            break
+                    assert hardware_profile is not None
 
-                new_rates[owner_id] += BENCH_CONFIG.get_service_rate(
-                    owner_id, hardware_profile, gpu_id=gpu_id
-                )
+                    owner_id = giver_id
+                    if sim_action.receiver and sim_action.receiver.mig_idx == idx:
+                        owner_id = sim_action.receiver.receiver_id
+
+                    # Add new capacity for whoever owns this new profile
+                    new_rates[owner_id] += self.get_service_rate(
+                        owner_id, hardware_profile, gpu_id=gpu_id
+                    )
 
             for aid in m.AgentId:
                 new_rates[aid] = max(0.0, new_rates[aid])
@@ -106,13 +138,19 @@ class RuleBasedHeuristic:
         best_action = m.ResourceManagerAction.NO_ACTION
 
         def get_deviation(ratios: Dict[m.AgentId, float]) -> float:
-            return sum(
-                abs(r - 1.0) if r != float("inf") else 1000.0 for r in ratios.values()
-            )
+            dev = 0.0
+            for r in ratios.values():
+                if r == float("inf"):
+                    dev += 1000.0
+                else:
+                    dev += math.exp(abs(r - 1.0)) - 1.0
+            return dev
 
         current_deviation = get_deviation(scaling_ratios)
         best_deviation = current_deviation
-        # best_ratios = scaling_ratios
+        best_ratios = scaling_ratios
+
+        action_evaluations = []
 
         for action in valid_actions:
             new_service_rates = simulate_service_rates(action)
@@ -128,29 +166,30 @@ class RuleBasedHeuristic:
 
             action_deviation = get_deviation(new_ratios)
 
+            action_evaluations.append(
+                f"    {action.name:<30} -> Coding: {new_ratios[m.AgentId.CODING]:.2f}, "
+                f"RAG: {new_ratios[m.AgentId.RAG]:.2f} (dev: {action_deviation:.2f})"
+            )
+
             if action_deviation < best_deviation:
                 best_deviation = action_deviation
                 best_action = action
-                # best_ratios = new_ratios
+                best_ratios = new_ratios
 
-        # if best_action != sm.ResourceManagerAction.NO_ACTION:
-        # mig_config_strs = []
-        # for aid in sm.AgentId:
-        #     profiles = [
-        #         e.mig_profile.string
-        #         for e in sim.agents[aid].engines
-        #         if e.status != sm.EngineStatus.BOOTING
-        #     ]
-        #     mig_config_strs.append(f"{aid.name}: [{', '.join(profiles)}]")
-        # current_config_str = " | ".join(mig_config_strs)
+        eval_str = "\n".join(action_evaluations)
 
-        # log_str = (
-        #     f"[Heuristic] Scaling Triggered!\n"
-        #     f"  Current Config : {current_config_str}\n"
-        #     f"  Current Ratios : Coding={scaling_ratios[sm.AgentId.CODING]:.2f}, RAG={scaling_ratios[sm.AgentId.RAG]:.2f}\n"
-        #     f"  Action Taken   : {best_action.name}\n"
-        #     f"  Expected Ratios: Coding={best_ratios[sm.AgentId.CODING]:.2f}, RAG={best_ratios[sm.AgentId.RAG]:.2f}"
-        # )
-        # print(log_str)
+        logger.info(
+            "[Heuristic] Scaling Triggered!\n"
+            "  Current Ratios : Coding=%.2f, RAG=%.2f\n"
+            "  Evaluated Actions:\n%s\n"
+            "  Action Taken   : %s\n"
+            "  Expected Ratios: Coding=%.2f, RAG=%.2f",
+            scaling_ratios[m.AgentId.CODING],
+            scaling_ratios[m.AgentId.RAG],
+            eval_str,
+            best_action.name,
+            best_ratios[m.AgentId.CODING],
+            best_ratios[m.AgentId.RAG],
+        )
 
         return best_action

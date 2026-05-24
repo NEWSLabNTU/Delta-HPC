@@ -80,7 +80,7 @@ class MIGController:
     def _run_nvidia_smi(cls, args: List[str]) -> subprocess.CompletedProcess:
         """Run nvidia-smi command with specified arguments using sudo, ignoring infoROM exit code 127."""
         cmd = ["sudo", "nvidia-smi"] + args
-        logger.info("Executing: %s", " ".join(cmd))
+        logger.debug("Executing: %s", " ".join(cmd))
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         stderr_str = res.stderr.decode().strip()

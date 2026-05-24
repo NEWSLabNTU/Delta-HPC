@@ -18,13 +18,14 @@ Example
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict
-
 import yaml
+from pathlib import Path
+from typing import Dict, Union
+from dataclasses import dataclass
 
+import src.share.models as m
 from src.deploy.models import SimulatedGPUConfig
+from src.simulation.config import GPU_MIG_PROFILE
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,43 @@ class DeploymentConfig:
         self.simulated_gpus: Dict[int, SimulatedGPUConfig] = {
             int(k): v for k, v in data.get("simulated_gpus", {}).items()
         }
+
+        h = data.get("heuristic", {})
+        self.heuristic_service_rates = h.get("service_rates", {})
+
+    def get_service_rate(
+        self,
+        agent_id: m.AgentId,
+        mig_profile: Union[m.MIGProfile, m.MIGProfileBase],
+        gpu_id: int = 0,
+    ) -> float:
+        if isinstance(mig_profile, m.MIGProfile):
+            hw_prof = next(
+                p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == mig_profile
+            )
+        else:
+            hw_prof = mig_profile
+
+        gpu_model = hw_prof.gpu_model
+
+        # Structure: service_rates[gpu_model][agent_id][mig_str]
+        model_rates = self.heuristic_service_rates.get(gpu_model, {})
+        agent_rates = model_rates.get(agent_id.value, {})
+
+        prof_str = hw_prof.string
+        original_rate = float(agent_rates.get(prof_str, 0.0))
+
+        match hw_prof.profile_type:
+            case m.MIGProfile.MIG_7G:
+                factor = 1.0
+            case m.MIGProfile.MIG_4G | m.MIGProfile.MIG_3G:
+                factor = 0.8
+            case m.MIGProfile.MIG_2G | m.MIGProfile.MIG_1G_LARGE | m.MIGProfile.MIG_1G_SMALL:
+                factor = 0.5
+            case _:
+                raise ValueError(f"Unknown MIG profile type: {hw_prof.profile_type}")
+
+        return original_rate * factor
 
     @classmethod
     def load(cls, path: Path = Path("configs/deployment.yaml")) -> "DeploymentConfig":

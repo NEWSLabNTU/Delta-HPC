@@ -4,6 +4,7 @@ from typing import Tuple, Union
 
 from src.bench.models import Workload
 import src.share.models as m
+from src.simulation.config import GPU_MIG_PROFILE
 
 
 class BenchConfig:
@@ -39,8 +40,6 @@ class BenchConfig:
 
         if isinstance(mig_profile, m.MIGProfile):
             # Resolve logical profile to concrete hardware profile for the given gpu_id
-            from src.simulation.config import GPU_MIG_PROFILE
-
             hw_prof = next(
                 p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == mig_profile
             )
@@ -48,13 +47,25 @@ class BenchConfig:
             hw_prof = mig_profile
 
         gpu_model = hw_prof.gpu_model
-        mig_str = hw_prof.string
-
+        
         # Structure: service_rates[gpu_model][agent_id][mig_str]
         model_rates = rates.get(gpu_model, {})
         agent_rates = model_rates.get(agent_id.value, {})
+        
+        prof_str = hw_prof.string
+        original_rate = float(agent_rates.get(prof_str, 0.0))
+        
+        match hw_prof.profile_type:
+            case m.MIGProfile.MIG_7G:
+                factor = 1.0
+            case m.MIGProfile.MIG_4G | m.MIGProfile.MIG_3G:
+                factor = 0.8
+            case m.MIGProfile.MIG_2G | m.MIGProfile.MIG_1G_LARGE | m.MIGProfile.MIG_1G_SMALL:
+                factor = 0.5
+            case _:
+                raise ValueError(f"Unknown MIG profile type: {hw_prof.profile_type}")
 
-        return float(agent_rates.get(mig_str, 0.0))
+        return original_rate * factor
 
     def get_rate_range(
         self, workload: Workload, agent_id: m.AgentId

@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, List, cast, Dict
 import torch
 import numpy as np
 import numpy.typing as npt
-
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import VecNormalize
 
 import src.share.models as m
 from src.deploy.obs import OBS_COLLECTOR
+from src.deploy.base_agent import BasePolicyAgent
 from src.training.config import TRAINING_CONFIG
 
 if TYPE_CHECKING:
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class RLAgent:
+class RLAgent(BasePolicyAgent):
     """Loads a MaskablePPO checkpoint and runs inference on CPU.
 
     Parameters
@@ -48,7 +48,14 @@ class RLAgent:
         that were used during training.
     """
 
-    def __init__(self, ckpt_path: Path, vecnorm_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        act_ctrl: "ActionController",
+        ckpt_path: Path,
+        vecnorm_path: Path | None = None,
+    ) -> None:
+        super().__init__(act_ctrl)
+        self.ckpt_path = ckpt_path
         logger.info("Loading RL policy from %s (device=cpu) …", ckpt_path)
 
         # PyTorch distributions validate_args can cause Simplex constraint failures
@@ -82,7 +89,7 @@ class RLAgent:
     # Observation construction
     # ------------------------------------------------------------------
 
-    def get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:
+    def _get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:
         """Build the flat observation vector from *state_data*.
 
         Mirrors :meth:`src.share.env.BaseMIGResourceEnv._get_obs` exactly so
@@ -176,7 +183,7 @@ class RLAgent:
     # Inference
     # ------------------------------------------------------------------
 
-    def predict(
+    def _predict(
         self,
         state_data: m.EnvironmentStateData,
         action_mask: List[bool],
@@ -190,7 +197,7 @@ class RLAgent:
         action_mask:
             Boolean mask produced by :meth:`~src.deploy.act_controller.ActionController.get_action_mask`.
         """
-        obs = self.get_obs(state_data)
+        obs = self._get_obs(state_data)
         mask_arr = np.array(action_mask, dtype=np.bool_)
 
         # MaskablePPO.predict expects a batched obs; squeeze the extra dim back.
@@ -211,7 +218,6 @@ class RLAgent:
 
     async def run_loop(
         self,
-        act_ctrl: "ActionController",
         duration_s: float,
     ) -> None:
         """Periodically collect an observation and execute the policy's action.
@@ -223,9 +229,6 @@ class RLAgent:
 
         Parameters
         ----------
-        act_ctrl:
-            :class:`~src.deploy.act_controller.ActionController` used to
-            translate and execute the chosen action on physical hardware.
         duration_s:
             Total benchmark duration in seconds; the loop exits when this
             wall-clock time has elapsed.
@@ -256,7 +259,7 @@ class RLAgent:
 
             # Observation and action mask
             state_data = OBS_COLLECTOR.get_observation()
-            action_mask = act_ctrl.get_action_mask()
+            action_mask = self.act_ctrl.get_action_mask()
 
             # Log the complete action mask
             allowed_action_names = [
@@ -278,13 +281,13 @@ class RLAgent:
             )
 
             # Policy inference
-            chosen_action = self.predict(state_data, action_mask)
+            chosen_action = self._predict(state_data, action_mask)
             logger.info("[step %d] RL action: %s", step, chosen_action.name)
 
             # Execute (NO_ACTION is a no-op)
             if chosen_action != m.ResourceManagerAction.NO_ACTION:
-                concrete_action = act_ctrl.map_to_action(chosen_action)
+                concrete_action = self.act_ctrl.map_to_action(chosen_action)
                 if concrete_action is not None:
-                    await act_ctrl.execute_action(concrete_action)
+                    await self.act_ctrl.execute_action(concrete_action)
 
             step += 1

@@ -906,7 +906,7 @@ class SimulatorImpl(m.Simulator):
             return True
         return False
 
-    def get_action_mask(self) -> List[bool]:
+    def get_action_mask(self, ignore_cooldowns: bool = False) -> List[bool]:
         mask: List[bool] = [False] * len(m.ResourceManagerAction)
         if self._environment_state.reconfig_flag:
             mask[
@@ -914,7 +914,7 @@ class SimulatorImpl(m.Simulator):
             ] = True
             return mask
 
-        cooldown_steps = TRAINING_CONFIG.action_cooldown
+        cooldown_steps = TRAINING_CONFIG.action_cooldown if not ignore_cooldowns else 0
         # Transfer cooldown
         transfer_blocked = any(
             self._environment_state.get_steps_since(aid, "give") < cooldown_steps
