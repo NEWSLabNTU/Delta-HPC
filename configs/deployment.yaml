@@ -1,44 +1,36 @@
-# configs/deployment.yaml
-#
-# Static deployment configuration for the physical cluster.
-# Defines which RL agent "owns" each GPU at startup, and tunable vLLM parameters.
-
-# Which simulation agent is initially assigned to each physical GPU.
-# Keys are GPU indices (int); values must match agent names in simulation_config.yaml.
 gpu_assignment:
   0: CodingAgent
   1: RAGAgent
-
 vllm:
-  # First port allocated to vLLM containers.  Ports are assigned sequentially:
-  #   slot 0 → base_port, slot 1 → base_port+1, …
   base_port: 8100
-
-  # Path (relative to repo root) to the launch helper script.
   script: scripts/launch_vllm.sh
-
-  # Path (relative to repo root) to the docker-compose file.
   compose_file: docker-compose.yaml
-
-  # Seconds to wait for a freshly started container to pass its /health check.
   health_timeout_s: 600
-
-  # HTTP request timeout in seconds when calling vLLM inference or metrics endpoints.
   request_timeout_s: 300
-
-# Simulated GPUs (e.g. for permanent engines when extra hardware is missing).
-# Maps GPU index to its simulated hardware model and permanent engine list.
 simulated_gpus:
   2:
     model: A100_40GB
     state_id: 8
     permanent_engines:
-      - agent: CodingAgent
-        mig: 2g.10gb
-      - agent: RAGAgent
-        mig: 2g.10gb
-
-# Configuration for the real-time plain-text monitor server
+    - agent: CodingAgent
+      mig: 2g.10gb
+    - agent: RAGAgent
+      mig: 2g.10gb
 dashboard:
-  host: "localhost"
+  host: localhost
   port: 9000
+heuristic:
+  service_rates:
+    A100_40GB:
+      CodingAgent:
+        7g.40gb: 3.12
+        4g.20gb: 8.07
+        3g.20gb: 7.06
+        2g.10gb: 4.48
+        1g.10gb: 3.43
+      RAGAgent:
+        7g.40gb: 3.58
+        4g.20gb: 4.97
+        3g.20gb: 4.28
+        2g.10gb: 5.13
+        1g.10gb: 3.35

@@ -11,7 +11,7 @@ from src.deploy.metrics import VLLMMetricsClient
 from src.share.request_loader import RequestLoader
 from src.deploy.obs import OBS_COLLECTOR
 from src.deploy.config import DEPLOY_CONFIG
-from src.bench.models import Workload
+
 from src.deploy.report import AgentMetrics, print_benchmark_report, MetricsCollector
 
 logger = logging.getLogger(__name__)
@@ -264,6 +264,36 @@ class ReqPublisher:
             )
         except Exception as e:
             logger.error(f"Request {req.id} failed on slot {slot_key}: {e}")
+            if not is_simulated:
+                import requests
+
+                def probe():
+                    try:
+                        r = requests.get(
+                            f"http://localhost:{slot.port}/health", timeout=2.0
+                        )
+                        return r.status_code == 200
+                    except Exception:
+                        return False
+
+                is_healthy = await asyncio.to_thread(probe)
+                if not is_healthy and slot.is_ready:
+                    slot.is_ready = False
+                    logger.warning(
+                        f"Slot {slot_key} failed health probe. Restarting engine in background."
+                    )
+                    asyncio.create_task(self._restart_engine(slot))
         finally:
             self.completed_requests += 1
+
+    async def _restart_engine(self, slot: MIGSlotState):
+        slot_key = (slot.gpu_idx, slot.profile_placement.start_slice)
+        logger.info(f"Background restart initiated for slot {slot_key}")
+        try:
+            await asyncio.to_thread(self.vllm_manager.stop, slot, graceful=False)
+            await asyncio.to_thread(self.vllm_manager.start, slot)
+            await asyncio.to_thread(self.vllm_manager.wait_until_ready, slot)
+            logger.info(f"Background restart complete for slot {slot_key}")
+        except Exception as e:
+            logger.error(f"Failed to background restart engine for slot {slot_key}: {e}")
 

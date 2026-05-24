@@ -149,10 +149,16 @@ class ActionController:
                 # Pure state transition
                 mask[act_id] = True
 
-            # 3. Budget Check
+            # 3. Budget Check & Slot Readiness
             if mask[act_id]:
                 pred_action = self.map_to_action(action)
                 if pred_action:
+                    # Disable action if any involved slot is restarting / not ready
+                    gpu_state = SYSTEM_STATE.gpus[pred_action.gpu_id]
+                    if any(not gpu_state.slots[idx].is_ready for idx in pred_action.mig_src):
+                        mask[act_id] = False
+                        continue
+
                     cost = self.predict_action_cost(pred_action)
                     if cost > OBS_COLLECTOR.current_budget:
                         mask[act_id] = False
