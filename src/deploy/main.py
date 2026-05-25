@@ -12,6 +12,7 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Optional
+import subprocess
 
 from src.deploy.req_pub import ReqPublisher
 from src.deploy.vllm import VLLMManager
@@ -175,6 +176,27 @@ async def main() -> None:
         logger.info("Benchmark interrupted.")
     except Exception as e:
         logger.exception(f"Fatal error during benchmark: {e}")
+        try:
+            logger.info("Attempting to dump docker compose logs to 'fatal_error_docker.log'...")
+            with open("fatal_error_docker.log", "w") as log_file:
+                for gpu_state in SYSTEM_STATE.gpus.values():
+                    for slot in gpu_state.slots:
+                        if slot.port is not None and slot.mig_uuid:
+                            try:
+                                model_id = vllm_manager.model_for_slot(slot)
+                                logger.info(f"Dumping logs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice}...")
+                                log_file.write(f"\n\n{'='*80}\nLogs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice} (MIG {slot.mig_uuid}, Port {slot.port})\n{'='*80}\n")
+                                log_file.flush()
+                                subprocess.run(
+                                    [str(DEPLOY_CONFIG.vllm.script), slot.mig_uuid, model_id, str(slot.port), "logs"],
+                                    stdout=log_file,
+                                    stderr=subprocess.STDOUT
+                                )
+                            except Exception as e:
+                                logger.error(f"Error dumping logs for slot: {e}")
+            logger.info("Dumped docker compose logs to fatal_error_docker.log")
+        except Exception as log_e:
+            logger.error(f"Failed to dump docker logs: {log_e}")
     finally:
         # Stop the Web Dashboard Server
         if dashboard:

@@ -22,6 +22,7 @@ class AgentMetrics:
         self.completion_times: List[float] = []
         self.tpot_samples: List[float] = []
         self.queue_length_samples: List[float] = []
+        self.error_count: int = 0
 
         patterns = [w.value for w in Workload]
         self.tokens_by_mig = {
@@ -50,6 +51,8 @@ def print_benchmark_report(agent_metrics: Dict[m.AgentId, AgentMetrics]):
             )
         else:
             print("  TTFT (s)  : N/A")
+            
+        print(f"  Errors    : {metrics.error_count}")
 
         if metrics.tpot_samples:
             p25_tp = np.percentile(metrics.tpot_samples, 25)

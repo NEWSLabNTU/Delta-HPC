@@ -136,13 +136,38 @@ class ReqPublisher:
             return last_ph["pattern"]
         raise AssertionError(f"No pattern found for {agent_id} at t={t:.2f}s")
 
+    async def _restart_engine(self, slot: MIGSlotState) -> None:
+        try:
+            logger.info(
+                f"Restarting engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}..."
+            )
+            await asyncio.to_thread(self.vllm_manager.stop, slot, graceful=False)
+            await asyncio.to_thread(self.vllm_manager.start, slot)
+            await asyncio.to_thread(self.vllm_manager.wait_until_ready, slot)
+            slot.is_ready = True
+            logger.info(
+                f"Successfully restarted engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}."
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to restart engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}: {e}"
+            )
+
     async def _get_slot_waiting(self, slot: MIGSlotState) -> float:
         """Query the waiting queue length of slot directly from metrics.py or VLLMManager."""
         if SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated:
             return float(self.vllm_manager.get_sim_waiting(slot.mig_uuid))
         assert slot.port is not None
         client = VLLMMetricsClient(slot.port, timeout=1)
-        return await asyncio.to_thread(client.waiting_requests)
+        try:
+            return await asyncio.to_thread(client.waiting_requests)
+        except Exception as e:
+            logger.error(e)
+            if not slot.is_draining:
+                logger.warning(
+                    f"Metrics timeout on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice} (port {slot.port}). ({e})"
+                )
+            return 0.0
 
     async def _dispatch_loop(
         self, agent_id: m.AgentId, requests: List[m.Request], duration_s: float
@@ -259,10 +284,12 @@ class ReqPublisher:
             )
 
         except asyncio.TimeoutError:
+            self.agent_metrics[agent_id].error_count += 1
             logger.warning(
                 f"Request {req.id} timed out after {timeout} seconds on slot {slot_key}!"
             )
         except Exception as e:
+            self.agent_metrics[agent_id].error_count += 1
             logger.error(f"Request {req.id} failed on slot {slot_key}: {e}")
             if not is_simulated:
                 import requests
@@ -277,23 +304,11 @@ class ReqPublisher:
                         return False
 
                 is_healthy = await asyncio.to_thread(probe)
-                if not is_healthy and slot.is_ready:
-                    slot.is_ready = False
-                    logger.warning(
-                        f"Slot {slot_key} failed health probe. Restarting engine in background."
+                if not is_healthy and slot.is_ready and not slot.is_draining:
+                    logger.error(
+                        f"Slot {slot_key} is dead but marked ready. Restarting engine..."
                     )
+                    slot.is_ready = False
                     asyncio.create_task(self._restart_engine(slot))
         finally:
             self.completed_requests += 1
-
-    async def _restart_engine(self, slot: MIGSlotState):
-        slot_key = (slot.gpu_idx, slot.profile_placement.start_slice)
-        logger.info(f"Background restart initiated for slot {slot_key}")
-        try:
-            await asyncio.to_thread(self.vllm_manager.stop, slot, graceful=False)
-            await asyncio.to_thread(self.vllm_manager.start, slot)
-            await asyncio.to_thread(self.vllm_manager.wait_until_ready, slot)
-            logger.info(f"Background restart complete for slot {slot_key}")
-        except Exception as e:
-            logger.error(f"Failed to background restart engine for slot {slot_key}: {e}")
-

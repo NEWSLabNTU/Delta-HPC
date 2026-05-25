@@ -177,8 +177,11 @@ class DashboardServer:
         completed = getattr(self.publisher, "completed_requests", 0)
         total = getattr(self.publisher, "total_requests", 0)
         pct = (completed / total * 100) if total > 0 else 0.0
+
+        errors = sum(m.error_count for m in self.publisher.agent_metrics.values())
+        error_color = C_RED if errors > 0 else C_GREEN
         lines.append(
-            f"[Elapsed Time]: {elapsed_str} | [RL Action Budget]: {budget_color}{budget:.1f}s{C_RESET} / {max_budget:.1f}s | [Progress]: {completed}/{total} req ({pct:.1f}%)"
+            f"[Elapsed Time]: {elapsed_str} | [RL Action Budget]: {budget_color}{budget:.1f}s{C_RESET} / {max_budget:.1f}s | [Progress]: {completed}/{total} req ({pct:.1f}%) | [Errors]: {error_color}{errors}{C_RESET}"
         )
         lines.append("")
 
