@@ -95,7 +95,7 @@ class DashboardServer:
                         if not gpu_state.is_simulated:
                             # Attempt to use live per-slot metrics cache for accurate dashboard representation
                             live = self.get_live_slot_metrics(slot.mig_uuid)
-                            if live is not None:
+                            if live is not None and slot.is_ready:
                                 running = live["running"]
                                 waiting = live["waiting"]
                             else:
@@ -247,7 +247,7 @@ class DashboardServer:
                         if not gpu_state.is_simulated:
                             # Attempt to use live per-slot metrics cache for accurate dashboard representation
                             live = self.get_live_slot_metrics(slot.mig_uuid)
-                            if live is not None:
+                            if live is not None and slot.is_ready:
                                 running = live["running"]
                                 waiting = live["waiting"]
                             else:
