@@ -33,6 +33,10 @@ from src.training.callbacks import (
 )
 
 
+# PyTorch distributions validate_args can cause Simplex constraint failures
+# due to float32 precision errors during MaskableCategorical softmax normalization
+torch.distributions.Distribution.set_default_validate_args(False)
+
 def setup_training_environment(ckpt: Optional[Path] = None) -> str:
     run_id = os.environ.get(
         "TRAINING_RUN_ID", datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]

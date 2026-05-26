@@ -643,39 +643,6 @@ class SimulatorImpl(m.Simulator):
             case _:
                 raise ValueError(f"Unexpected shutdown purpose {purpose}")
 
-    def _redistribute_agent_waiting_requests(self, agent: m.Agent):
-        active_engines = [e for e in agent.engines if e.status == m.EngineStatus.ACTIVE]
-        if not active_engines:
-            return
-
-        all_requests: List[m.Request] = []
-        for e in active_engines:
-            all_requests.extend(e.waiting_queue)
-            e.waiting_queue.clear()
-
-        # Preserve FIFO by sorting by arrival time
-        all_requests.sort(key=lambda r: r.arrival_time)
-
-        # Distribute based on total load (waiting + running)
-        for req in all_requests:
-            # Find the engine with the minimum total load
-            engine = min(
-                active_engines,
-                key=lambda e: len(e.waiting_queue) + len(e.running_queue),
-            )
-
-            # Resolve prompt and completion tokens based on the destination engine's model
-            model_req_map = utils.TOKENS_MAP[agent.agent_id][engine.model_name]
-            lookup_id = req.original_id if req.original_id else req.id
-            prompt_tokens, completion_tokens = model_req_map[lookup_id]
-            req.prompt_tokens = prompt_tokens
-            req.completion_tokens = completion_tokens
-
-            # Update serving engine
-            req.serving_engine = engine
-
-            engine.waiting_queue.append(req)
-
     def _handle_boot_complete(self, payload: sm.BootPayload) -> None:
         engine_id = payload["engine_id"]
 
@@ -698,15 +665,6 @@ class SimulatorImpl(m.Simulator):
                 return  # Wait for remaining sibling engines
         self._environment_state.reconfig_flag = False  # reconfig action done
 
-        self._redistribute_agent_waiting_requests(agent)
-        for eng in agent.engines:
-            if eng.waiting_queue and len(eng.running_queue) == 0:
-                evt = eng.step(
-                    self._current_time,
-                    next_arrival_time=self._peak_next_stopping_evt(agent.agent_id),
-                )
-                if evt:
-                    self._events.add(evt)
 
     def _handle_request_arrival(self, payload: sm.RequestArrivalPayload):
         req = payload["request"]
