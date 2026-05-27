@@ -7,6 +7,9 @@ import src.share.models as m
 from src.deploy.system import SYSTEM_STATE
 from src.deploy.obs import OBS_COLLECTOR
 from src.training.config import TRAINING_CONFIG
+import io
+import contextlib
+from src.deploy.report import print_benchmark_report
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +42,15 @@ class DashboardServer:
     def get_live_slot_metrics(self, mig_uuid: str) -> Optional[Dict[str, float]]:
         return self.live_slot_metrics.get(mig_uuid)
 
+    def clear_live_slot_metrics(self, mig_uuid: str):
+        self.live_slot_metrics.pop(mig_uuid, None)
+
     async def start(self):
         app = web.Application()
         app.router.add_get("/", self.handle_index)
         app.router.add_get("/api/data", self.handle_api_data)
         app.router.add_get("/api/observation", self.handle_api_observation)
+        app.router.add_get("/api/report", self.handle_api_report)
 
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
@@ -157,6 +164,15 @@ class DashboardServer:
 
         return web.json_response(serialize_obs(obs))
 
+    async def handle_api_report(self, request: web.Request) -> web.Response:
+        agent_metrics = getattr(self.publisher, "agent_metrics", None)
+        if agent_metrics is None:
+            return web.Response(text="No report data available yet.", content_type="text/plain")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_benchmark_report(agent_metrics)
+        return web.Response(text=buf.getvalue(), content_type="text/plain")
+
     async def handle_index(self, request: web.Request) -> web.Response:
         lines = []
         # Main Title Header
@@ -168,8 +184,9 @@ class DashboardServer:
 
         # Elapsed time and budget indicator
         elapsed_s = time.time() - self.start_time
-        elapsed_m, elapsed_sec = divmod(int(elapsed_s), 60)
-        elapsed_str = f"{elapsed_m:02d}:{elapsed_sec:02d}"
+        elapsed_h, remainder = divmod(int(elapsed_s), 3600)
+        elapsed_m, elapsed_sec = divmod(remainder, 60)
+        elapsed_str = f"{elapsed_h:02d}:{elapsed_m:02d}:{elapsed_sec:02d}"
 
         budget = float(OBS_COLLECTOR._current_budget)
         max_budget = TRAINING_CONFIG.reconfig_budget

@@ -309,6 +309,8 @@ class ReqPublisher:
                         f"Slot {slot_key} is dead but marked ready. Restarting engine..."
                     )
                     slot.is_ready = False
+                    if self.dashboard:
+                        self.dashboard.clear_live_slot_metrics(slot.mig_uuid)
                     asyncio.create_task(self._restart_engine(slot))
         finally:
             self.completed_requests += 1

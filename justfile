@@ -9,6 +9,18 @@ gpu := ""
 test-env:
     which python
 
+# Profiling: extract prefill latency parameters (alpha, beta, sigma) from a benchmark JSON
+profile-prefill input output_dir:
+    python -m src.profiling.prefill --input {{ input }} --output-dir {{ output_dir }}
+
+# Profiling: extract TPOT (decoding) parameters from a directory of concurrency-sweep JSONs
+profile-tpot input_dir output_dir:
+    python -m src.profiling.tpot --input-dir {{ input_dir }} --output-dir {{ output_dir }}
+
+# Profiling: generate model responses from a dataset via a running vLLM server
+profile-generate port model dataset_dir output_dir:
+    python -m src.profiling.generate --port {{ port }} --model {{ model }} --dataset-dir {{ dataset_dir }} --output-dir {{ output_dir }}
+
 bench +ckpts:
     python -m src.bench.main --ckpt {{ ckpts }}
 

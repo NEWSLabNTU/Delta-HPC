@@ -51,7 +51,7 @@ def print_benchmark_report(agent_metrics: Dict[m.AgentId, AgentMetrics]):
             )
         else:
             print("  TTFT (s)  : N/A")
-            
+
         print(f"  Errors    : {metrics.error_count}")
 
         if metrics.tpot_samples:
@@ -85,7 +85,7 @@ def print_benchmark_report(agent_metrics: Dict[m.AgentId, AgentMetrics]):
                 if metrics.total_observation_time > 0
                 else 0
             )
-            print(f"    {p_key}: {pct:.1f}")
+            print(f"    {p_key}: {pct:.1f}%")
 
         # Derive total tokens per MIG profile from tokens_by_mig
         derived_tokens_by_profile = {
@@ -157,7 +157,9 @@ def print_benchmark_report(agent_metrics: Dict[m.AgentId, AgentMetrics]):
 
 
 class MetricsCollector:
-    def __init__(self, agent_metrics: Dict[m.AgentId, AgentMetrics], vllm_manager: VLLMManager):
+    def __init__(
+        self, agent_metrics: Dict[m.AgentId, AgentMetrics], vllm_manager: VLLMManager
+    ):
         self.agent_metrics = agent_metrics
         self.vllm_manager = vllm_manager
         self.dashboard = None
@@ -224,16 +226,16 @@ class MetricsCollector:
                             idx = s.profile_placement.profile.profile_type.value
                             if idx not in raw_samples:
                                 raw_samples[idx] = []
-                            raw_samples[idx].append(
-                                {
-                                    "running": running,
-                                    "waiting": waiting,
-                                    "kv_util": data["kv_cache_util"],
-                                    "tpot": tpot,
-                                }
-                            )
+                            raw_samples[idx].append({
+                                "running": running,
+                                "waiting": waiting,
+                                "kv_util": data["kv_cache_util"],
+                                "tpot": tpot,
+                            })
                         except Exception as e:
                             logger.debug(f"Metrics fetch failed for port {s.port}: {e}")
+                            if self.dashboard:
+                                self.dashboard.clear_live_slot_metrics(s.mig_uuid)
                     else:
                         # Simulated/Permanent backup engine slot — use real
                         # KV-cache accounting from VLLMManager instead of estimates.
@@ -262,14 +264,12 @@ class MetricsCollector:
                         idx = 6
                         if idx not in raw_samples:
                             raw_samples[idx] = []
-                        raw_samples[idx].append(
-                            {
-                                "running": running,
-                                "waiting": waiting,
-                                "kv_util": kv_util,
-                                "tpot": tpot,
-                            }
-                        )
+                        raw_samples[idx].append({
+                            "running": running,
+                            "waiting": waiting,
+                            "kv_util": kv_util,
+                            "tpot": tpot,
+                        })
 
                 # Aggregate raw_samples into slot_samples (sum running/waiting, avg kv/tpot)
                 for idx, items in raw_samples.items():
@@ -309,4 +309,3 @@ class MetricsCollector:
             metrics.total_observation_time += 1.0
 
             await asyncio.sleep(1.0)
-

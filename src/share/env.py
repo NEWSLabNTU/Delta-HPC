@@ -18,9 +18,10 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     Handles observation mapping and reward logic.
     """
 
-    def __init__(self, simulator: m.Simulator) -> None:
+    def __init__(self, simulator: m.Simulator, ignore_cooldowns: bool = False) -> None:
         super().__init__()
         self.sim = simulator
+        self.ignore_cooldowns = ignore_cooldowns
         self.action_space = spaces.Discrete(len(m.ResourceManagerAction))
 
         # Ensure simulator is in a valid state before measuring observations
@@ -48,7 +49,9 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
 
     def action_masks(self) -> npt.NDArray[np.bool_]:
         # Directly get the full action mask from the simulator
-        self._current_action_mask = np.array(self.sim.get_action_mask(), dtype=np.bool_)
+        self._current_action_mask = np.array(
+            self.sim.get_action_mask(ignore_cooldowns=self.ignore_cooldowns), dtype=np.bool_
+        )
         return self._current_action_mask
 
     def _get_obs(self, state_data: m.EnvironmentStateData) -> npt.NDArray[np.float32]:

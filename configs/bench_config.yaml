@@ -1,54 +1,54 @@
 cluster:
-  0: B200
-  1: B200
+  0: A100_40GB
+  1: A100_40GB
   2: A100_40GB
-seed: 23
+seed: 77
 benchmark-length: 1024
 workloads:
   idle:
     rate:
       CodingAgent:
-        - 0.2
-        - 0.5
+      - 0.2
+      - 0.5
       RAGAgent:
-        - 0.1
-        - 0.5
+      - 0.1
+      - 0.5
     duration:
-      - 3600.0
-      - 4800.0
+    - 3600.0
+    - 4800.0
   even:
     rate:
       CodingAgent:
-        - 1.0
-        - 2.5
+      - 1.0
+      - 2.5
       RAGAgent:
-        - 1.0
-        - 2.0
+      - 1.0
+      - 2.0
     duration:
-      - 1800.0
-      - 2200.0
+    - 1800.0
+    - 2200.0
   busy:
     rate:
       CodingAgent:
-        - 3.0
-        - 4.0
+      - 3.0
+      - 4.0
       RAGAgent:
-        - 4.5
-        - 5.5
+      - 4.5
+      - 5.5
     duration:
-      - 1800.0
-      - 2200.0
+    - 1800.0
+    - 2200.0
   burst:
     rate:
       CodingAgent:
-        - 4.0
-        - 5.0
+      - 4.0
+      - 5.0
       RAGAgent:
-        - 6.0
-        - 8.0
+      - 6.0
+      - 8.0
     duration:
-      - 300.0
-      - 700.0
+    - 300.0
+    - 700.0
 heuristic:
   utilization_factor: 0.8
   high_threshold: 1.1
@@ -56,17 +56,17 @@ heuristic:
   service_rates:
     A100_40GB:
       CodingAgent:
-        7g.40gb: 1.19
-        4g.20gb: 1.73
-        3g.20gb: 1.58
-        2g.10gb: 1.81
-        1g.10gb: 1.42
+        7g.40gb: 1.34
+        4g.20gb: 1.89
+        3g.20gb: 1.65
+        2g.10gb: 1.97
+        1g.10gb: 1.5
       RAGAgent:
         7g.40gb: 3.36
-        4g.20gb: 3.68
-        3g.20gb: 3.05
-        2g.10gb: 5.08
-        1g.10gb: 3.36
+        4g.20gb: 3.83
+        3g.20gb: 3.21
+        2g.10gb: 5.39
+        1g.10gb: 3.52
     B200:
       CodingAgent:
         7g.180gb: 2.04

@@ -107,16 +107,33 @@ def check_rate(
         # Restore original cluster config
         utils.SIM_CONFIG.cluster = orig_cluster
 
-    # We define "queuing happens" if the wait time in the queue grows continuously.
-    last_10_percent = requests[-int(len(requests) * 0.1) :]
-    valid_reqs = [r for r in last_10_percent if r.start_time is not None]
-    if not valid_reqs:
+    # Check stability by measuring if the wait time grows continuously over the test
+    # This subtracts the base prefill time (which varies wildly between MIG profiles)
+    ttfts = [
+        r.start_time - r.arrival_time
+        for r in requests
+        if r.start_time is not None
+    ]
+
+    first_10_percent_idx = max(1, int(len(ttfts) * 0.1))
+    last_10_percent_idx = max(1, int(len(ttfts) * 0.9))
+
+    first_ttfts = ttfts[:first_10_percent_idx]
+    last_ttfts = ttfts[last_10_percent_idx:]
+
+    if not first_ttfts or not last_ttfts:
         return False
 
-    avg_delay = sum(max(0, r.start_time - r.arrival_time) for r in valid_reqs) / len(
-        valid_reqs
+    avg_ttft_first = sum(first_ttfts) / len(first_ttfts)
+    avg_ttft_last = sum(last_ttfts) / len(last_ttfts)
+
+    # If the TTFT grows by more than 1.0 seconds, the queue is backing up
+    queue_growth = avg_ttft_last - avg_ttft_first
+    print(
+        f"Rate: {rate:.2f} | Base TTFT: {avg_ttft_first:.2f}s | Final TTFT: {avg_ttft_last:.2f}s | Growth: {queue_growth:.2f}s"
     )
-    return avg_delay < 2.0
+
+    return queue_growth < 1.0
 
 
 def measure_max_service_rate():
@@ -190,10 +207,14 @@ def measure_max_service_rate():
     with open(config_path, "r") as f:
         config_data = yaml.safe_load(f)
 
-    if "heuristic" not in config_data:
-        config_data["heuristic"] = {}
+    service_rates = config_data.setdefault("heuristic", {}).setdefault(
+        "service_rates", {}
+    )
 
-    config_data["heuristic"]["service_rates"] = results_dict
+    for gpu_model, agents_dict in results_dict.items():
+        model_rates = service_rates.setdefault(gpu_model, {})
+        for agent_id, mig_dict in agents_dict.items():
+            model_rates.setdefault(agent_id, {}).update(mig_dict)
 
     with open(config_path, "w") as f:
         yaml.dump(config_data, f, default_flow_style=False, sort_keys=False)

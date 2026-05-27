@@ -542,18 +542,16 @@ class BenchRunner:
             total_ben_dur = sum(s["total_duration"] for s in summary.values())
             for pat in sorted(summary.keys()):
                 s = summary[pat]
-                final_phases.append(
-                    {
-                        "pattern": pat,
-                        "avg_rate": s["weighted_rate"] / s["total_duration"]
-                        if s["total_duration"] > 0
-                        else 0,
-                        "duration": s["total_duration"],
-                        "proportion": (s["total_duration"] / total_ben_dur * 100)
-                        if total_ben_dur > 0
-                        else 0,
-                    }
-                )
+                final_phases.append({
+                    "pattern": pat,
+                    "avg_rate": s["weighted_rate"] / s["total_duration"]
+                    if s["total_duration"] > 0
+                    else 0,
+                    "duration": s["total_duration"],
+                    "proportion": (s["total_duration"] / total_ben_dur * 100)
+                    if total_ben_dur > 0
+                    else 0,
+                })
             workload_summary[aid] = final_phases
         return workload_summary
 
@@ -628,13 +626,11 @@ class BenchRunner:
         mapping = {m.value: m for m in BenchMode}
         for bl in args.bl:
             if bl == "all":
-                modes.extend(
-                    [
-                        BenchMode.STATIC_NO_MIG,
-                        BenchMode.STATIC_SPLIT_EXTREME,
-                        BenchMode.BASELINE_HEURISTIC,
-                    ]
-                )
+                modes.extend([
+                    BenchMode.STATIC_NO_MIG,
+                    BenchMode.STATIC_SPLIT_EXTREME,
+                    BenchMode.BASELINE_HEURISTIC,
+                ])
             elif bl in mapping:
                 modes.append(mapping[bl])
             else:

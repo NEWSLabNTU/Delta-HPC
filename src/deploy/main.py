@@ -165,9 +165,7 @@ async def main() -> None:
         # 6. Run request dispatch and policy control loop concurrently
         sending_future = publisher.start_sending(args.duration)
         if policy_agent is not None:
-            policy_task = asyncio.create_task(
-                policy_agent.run_loop(args.duration)
-            )
+            policy_task = asyncio.create_task(policy_agent.run_loop(args.duration))
             await asyncio.gather(sending_future, policy_task, return_exceptions=False)
         else:
             await sending_future
@@ -177,20 +175,32 @@ async def main() -> None:
     except Exception as e:
         logger.exception(f"Fatal error during benchmark: {e}")
         try:
-            logger.info("Attempting to dump docker compose logs to 'fatal_error_docker.log'...")
+            logger.info(
+                "Attempting to dump docker compose logs to 'fatal_error_docker.log'..."
+            )
             with open("fatal_error_docker.log", "w") as log_file:
                 for gpu_state in SYSTEM_STATE.gpus.values():
                     for slot in gpu_state.slots:
                         if slot.port is not None and slot.mig_uuid:
                             try:
                                 model_id = vllm_manager.model_for_slot(slot)
-                                logger.info(f"Dumping logs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice}...")
-                                log_file.write(f"\n\n{'='*80}\nLogs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice} (MIG {slot.mig_uuid}, Port {slot.port})\n{'='*80}\n")
+                                logger.info(
+                                    f"Dumping logs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice}..."
+                                )
+                                log_file.write(
+                                    f"\n\n{'=' * 80}\nLogs for GPU {gpu_state.gpu_idx} slice {slot.profile_placement.start_slice} (MIG {slot.mig_uuid}, Port {slot.port})\n{'=' * 80}\n"
+                                )
                                 log_file.flush()
                                 subprocess.run(
-                                    [str(DEPLOY_CONFIG.vllm.script), slot.mig_uuid, model_id, str(slot.port), "logs"],
+                                    [
+                                        str(DEPLOY_CONFIG.vllm.script),
+                                        slot.mig_uuid,
+                                        model_id,
+                                        str(slot.port),
+                                        "logs",
+                                    ],
                                     stdout=log_file,
-                                    stderr=subprocess.STDOUT
+                                    stderr=subprocess.STDOUT,
                                 )
                             except Exception as e:
                                 logger.error(f"Error dumping logs for slot: {e}")

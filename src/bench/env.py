@@ -20,7 +20,9 @@ class BenchMIGResourceEnv(BaseMIGResourceEnv):
         bench_mode: BenchMode,
         requests: List[m.Request],
     ):
-        super().__init__(simulator)
+        # Heuristic mode bypasses action cooldowns (matches deployment behaviour)
+        ignore_cooldowns = bench_mode == BenchMode.BASELINE_HEURISTIC
+        super().__init__(simulator, ignore_cooldowns=ignore_cooldowns)
         self.bench_mode = bench_mode
         self._requests = requests
         self._is_initialized = False
