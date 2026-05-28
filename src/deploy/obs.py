@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Tuple, Optional
 import src.share.models as m
 from src.deploy.system import SYSTEM_STATE
 from src.training.config import TRAINING_CONFIG
+from src.deploy.config import DEPLOY_CONFIG
 from src.simulation.config import NUM_MIG_SLICES
 
 logger = logging.getLogger(__name__)
@@ -245,14 +246,12 @@ class ObservationCollector:
 
     def record_reconfig(self, action_name: str, cost: float, details: str):
         """Record a reconfiguration action in the history."""
-        self.reconfig_history.append(
-            {
-                "timestamp": time.time(),
-                "action": action_name,
-                "cost": cost,
-                "details": details,
-            }
-        )
+        self.reconfig_history.append({
+            "timestamp": time.time(),
+            "action": action_name,
+            "cost": cost,
+            "details": details,
+        })
         if len(self.reconfig_history) > 10:
             self.reconfig_history.pop(0)
 
@@ -319,12 +318,16 @@ class ObservationCollector:
         arrival_rate_history = {}
         for aid in agents:
             stats = self._agent_stats[aid]
-            curr = stats.history["arrival_rate"][0]
-            prev = (
-                stats.history["arrival_rate"][1]
-                if len(stats.history["arrival_rate"]) > 1
-                else 0.0
+            divisor = DEPLOY_CONFIG.get_arrival_rate_divisor(aid)
+            raw_history = stats.history["arrival_rate"]
+            scaled_history = (
+                [r / divisor for r in raw_history]
+                if divisor > 0.0
+                else list(raw_history)
             )
+
+            curr = scaled_history[0]
+            prev = scaled_history[1] if len(scaled_history) > 1 else 0.0
 
             arrival_rate[aid] = curr / TRAINING_CONFIG.norm_arrival_rate
             if prev == 0:
@@ -333,8 +336,7 @@ class ObservationCollector:
                 arrival_rate_trend[aid] = (curr - prev) / prev
 
             arrival_rate_history[aid] = tuple(
-                r / TRAINING_CONFIG.norm_arrival_rate
-                for r in stats.history["arrival_rate"]
+                r / TRAINING_CONFIG.norm_arrival_rate for r in scaled_history
             )
 
         predicted_arrival_rate = {

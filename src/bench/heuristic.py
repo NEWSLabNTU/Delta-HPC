@@ -72,8 +72,12 @@ class RuleBasedHeuristic:
         )
 
         if not needs_action or not valid_actions:
-            ratio_str = ", ".join([f"{k.name}: {v:.2f}" for k, v in scaling_ratios.items()])
-            logger.info(f"Heuristic deciding NO_ACTION. Current scaling ratios: {ratio_str}")
+            ratio_str = ", ".join([
+                f"{k.name}: {v:.2f}" for k, v in scaling_ratios.items()
+            ])
+            logger.info(
+                f"Heuristic deciding NO_ACTION. Current scaling ratios: {ratio_str}"
+            )
             return m.ResourceManagerAction.NO_ACTION
 
         def simulate_service_rates(

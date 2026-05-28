@@ -50,7 +50,8 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
     def action_masks(self) -> npt.NDArray[np.bool_]:
         # Directly get the full action mask from the simulator
         self._current_action_mask = np.array(
-            self.sim.get_action_mask(ignore_cooldowns=self.ignore_cooldowns), dtype=np.bool_
+            self.sim.get_action_mask(ignore_cooldowns=self.ignore_cooldowns),
+            dtype=np.bool_,
         )
         return self._current_action_mask
 

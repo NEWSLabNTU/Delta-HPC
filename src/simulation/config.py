@@ -251,15 +251,13 @@ class SimulationConfig:
                     )
 
                 agent_name = random.choice(valid_agents)
-                new_state.append(
-                    {
-                        "gpu": gpu_id,
-                        "mig": hw_prof.string,
-                        "agent": agent_name,
-                        "is-permanent": True,
-                        "is-unused": True,
-                    }
-                )
+                new_state.append({
+                    "gpu": gpu_id,
+                    "mig": hw_prof.string,
+                    "agent": agent_name,
+                    "is-permanent": True,
+                    "is-unused": True,
+                })
 
     def generate_initial_state(self) -> None:
         """
@@ -296,14 +294,12 @@ class SimulationConfig:
 
                 agent_name = random.choice(valid_agents)
 
-                new_state.append(
-                    {
-                        "gpu": gpu_id,
-                        "mig": hw_prof.string,
-                        "agent": agent_name,
-                        "is-permanent": False,
-                    }
-                )
+                new_state.append({
+                    "gpu": gpu_id,
+                    "mig": hw_prof.string,
+                    "agent": agent_name,
+                    "is-permanent": False,
+                })
         self._pad_partial_gpu_states(new_state, mode="random")
         self.initial_state = new_state
 
@@ -339,14 +335,12 @@ class SimulationConfig:
 
             agent_name = random.choice(valid_agents)
 
-            new_state.append(
-                {
-                    "gpu": gpu_id,
-                    "mig": hw_prof.string,
-                    "agent": agent_name,
-                    "is-permanent": False,
-                }
-            )
+            new_state.append({
+                "gpu": gpu_id,
+                "mig": hw_prof.string,
+                "agent": agent_name,
+                "is-permanent": False,
+            })
         self._pad_partial_gpu_states(new_state, mode="no_mig")
         self.initial_state = new_state
 
@@ -385,14 +379,12 @@ class SimulationConfig:
 
                 agent_name = random.choice(valid_agents)
 
-                new_state.append(
-                    {
-                        "gpu": gpu_id,
-                        "mig": hw_prof.string,
-                        "agent": agent_name,
-                        "is-permanent": False,
-                    }
-                )
+                new_state.append({
+                    "gpu": gpu_id,
+                    "mig": hw_prof.string,
+                    "agent": agent_name,
+                    "is-permanent": False,
+                })
         self._pad_partial_gpu_states(new_state, mode="split_extreme")
         self.initial_state = new_state
 

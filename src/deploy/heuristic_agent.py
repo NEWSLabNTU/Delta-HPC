@@ -72,18 +72,20 @@ class FakeSimulatorAdapter:
                     status = m.EngineStatus.BOOTING
                 else:
                     status = m.EngineStatus.ACTIVE
-                eng = _FakeEngine(
-                    owner, slot.profile_placement.profile, gpu_id, status
-                )
+                eng = _FakeEngine(owner, slot.profile_placement.profile, gpu_id, status)
                 # Populate fake waiting queue length for heuristic to read
                 stats = OBS_COLLECTOR._agent_stats[slot.agent_id]
-                idx = 6 if gpu.is_simulated else slot.profile_placement.profile.profile_type.value
+                idx = (
+                    6
+                    if gpu.is_simulated
+                    else slot.profile_placement.profile.profile_type.value
+                )
                 try:
                     q_len = int(stats.history["queue_length"][0][idx])
                 except (IndexError, KeyError):
                     q_len = 0
                 eng.waiting_queue = [None] * q_len
-                
+
                 owner.engines.append(eng)
                 engines.append(eng)
             gpu_engines_dict[gpu_id] = engines
@@ -103,9 +105,7 @@ def deploy_get_service_rate(agent_id, mig_profile, gpu_id=0):
 class HeuristicAgent(BasePolicyAgent):
     def __init__(self, act_ctrl: ActionController):
         super().__init__(act_ctrl)
-        self.heuristic = RuleBasedHeuristic(
-            get_service_rate=deploy_get_service_rate
-        )
+        self.heuristic = RuleBasedHeuristic(get_service_rate=deploy_get_service_rate)
 
     async def run_loop(self, duration_s: float) -> None:
         OBS_COLLECTOR.start_budget_refresh_loop()

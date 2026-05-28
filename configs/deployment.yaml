@@ -1,3 +1,7 @@
+seed: 77
+obs_arrival_rate_divisor:
+  CodingAgent: 2.0
+  RAGAgent: 1.0
 gpu_assignment:
   0: CodingAgent
   1: RAGAgent
@@ -12,10 +16,10 @@ simulated_gpus:
     model: A100_40GB
     state_id: 8
     permanent_engines:
-    - agent: CodingAgent
-      mig: 2g.10gb
-    - agent: RAGAgent
-      mig: 2g.10gb
+      - agent: CodingAgent
+        mig: 2g.10gb
+      - agent: RAGAgent
+        mig: 2g.10gb
 dashboard:
   host: localhost
   port: 9000
@@ -34,3 +38,48 @@ heuristic:
         3g.20gb: 4.28
         2g.10gb: 5.13
         1g.10gb: 3.35
+workloads:
+  idle:
+    rate:
+      CodingAgent:
+        - 0.4
+        - 1.0
+      RAGAgent:
+        - 0.1
+        - 0.5
+    duration:
+      - 3600.0
+      - 4800.0
+  even:
+    rate:
+      CodingAgent:
+        - 2.0
+        - 5.0
+      RAGAgent:
+        - 1.0
+        - 2.0
+    duration:
+      - 1800.0
+      - 2200.0
+  busy:
+    rate:
+      CodingAgent:
+        - 6.0
+        - 8.0
+      RAGAgent:
+        - 4.5
+        - 5.5
+    duration:
+      - 1800.0
+      - 2200.0
+  burst:
+    rate:
+      CodingAgent:
+        - 8.0
+        - 10.0
+      RAGAgent:
+        - 6.0
+        - 8.0
+    duration:
+      - 300.0
+      - 700.0

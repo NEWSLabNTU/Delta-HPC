@@ -71,25 +71,21 @@ class DashboardServer:
         for gpu_idx, gpu_state in SYSTEM_STATE.gpus.items():
             slots_data = []
             for slot in gpu_state.slots:
-                slots_data.append(
-                    {
-                        "start_slice": slot.profile_placement.start_slice,
-                        "size": slot.profile_placement.profile.size,
-                        "vram": slot.profile_placement.profile.vram,
-                        "profile_name": slot.profile_placement.profile.profile_type.name,
-                        "agent_owner": slot.agent_id.name if slot.agent_id else None,
-                        "is_ready": slot.is_ready,
-                        "is_draining": slot.is_draining,
-                        "port": slot.port,
-                    }
-                )
-            gpus_data.append(
-                {
-                    "gpu_idx": gpu_idx,
-                    "is_simulated": gpu_state.is_simulated,
-                    "slots": slots_data,
-                }
-            )
+                slots_data.append({
+                    "start_slice": slot.profile_placement.start_slice,
+                    "size": slot.profile_placement.profile.size,
+                    "vram": slot.profile_placement.profile.vram,
+                    "profile_name": slot.profile_placement.profile.profile_type.name,
+                    "agent_owner": slot.agent_id.name if slot.agent_id else None,
+                    "is_ready": slot.is_ready,
+                    "is_draining": slot.is_draining,
+                    "port": slot.port,
+                })
+            gpus_data.append({
+                "gpu_idx": gpu_idx,
+                "is_simulated": gpu_state.is_simulated,
+                "slots": slots_data,
+            })
 
         agents_data = {}
         for agent_id in [m.AgentId.CODING, m.AgentId.RAG]:
@@ -119,18 +115,16 @@ class DashboardServer:
                                 mig_uuid
                             )
 
-                        engines_list.append(
-                            {
-                                "name": slot.profile_placement.profile.profile_type.name,
-                                "gpu_idx": slot.gpu_idx,
-                                "start_slice": slot.profile_placement.start_slice,
-                                "running_requests": int(running),
-                                "waiting_queue_length": int(waiting),
-                                "is_ready": slot.is_ready,
-                                "is_draining": slot.is_draining,
-                                "is_permanent": slot.port is None,
-                            }
-                        )
+                        engines_list.append({
+                            "name": slot.profile_placement.profile.profile_type.name,
+                            "gpu_idx": slot.gpu_idx,
+                            "start_slice": slot.profile_placement.start_slice,
+                            "running_requests": int(running),
+                            "waiting_queue_length": int(waiting),
+                            "is_ready": slot.is_ready,
+                            "is_draining": slot.is_draining,
+                            "is_permanent": slot.port is None,
+                        })
             agents_data[agent_id.name] = engines_list
 
         data = {
@@ -167,7 +161,9 @@ class DashboardServer:
     async def handle_api_report(self, request: web.Request) -> web.Response:
         agent_metrics = getattr(self.publisher, "agent_metrics", None)
         if agent_metrics is None:
-            return web.Response(text="No report data available yet.", content_type="text/plain")
+            return web.Response(
+                text="No report data available yet.", content_type="text/plain"
+            )
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             print_benchmark_report(agent_metrics)

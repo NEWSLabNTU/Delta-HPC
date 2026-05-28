@@ -15,9 +15,10 @@ def convert_dataset(local_hf_path):
         dataset_dict = load_dataset("neural-bridge/rag-dataset-12000")
 
         # Combine the splits into one single dataset object
-        combined_dataset = concatenate_datasets(
-            [dataset_dict["train"], dataset_dict["test"]]
-        )
+        combined_dataset = concatenate_datasets([
+            dataset_dict["train"],
+            dataset_dict["test"],
+        ])
         print(f"Total rows to process: {len(combined_dataset)}")
     except Exception as e:
         print(f"Error loading dataset splits: {e}")

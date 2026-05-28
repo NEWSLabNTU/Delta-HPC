@@ -163,15 +163,13 @@ def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):
 
         phases = summary[aid]
         for i, p in enumerate(phases):
-            table_data.append(
-                [
-                    aid.value if i == 0 else "",
-                    p["pattern"],
-                    f"{p['avg_rate']:.3f}",
-                    f"{p['duration']:.3f}",
-                    f"{p['proportion']:.1f}%",
-                ]
-            )
+            table_data.append([
+                aid.value if i == 0 else "",
+                p["pattern"],
+                f"{p['avg_rate']:.3f}",
+                f"{p['duration']:.3f}",
+                f"{p['proportion']:.1f}%",
+            ])
 
     print(
         tabulate.tabulate(
@@ -189,23 +187,19 @@ def print_initial_state():
     state_info: List[List[str]] = []
     for e in u.SIM_CONFIG.initial_state:
         if e.get("is-unused", False):
-            state_info.append(
-                [
-                    str(e["gpu"]),
-                    "Unused (Pad)",
-                    str(e["mig"]),
-                    " ",
-                ]
-            )
+            state_info.append([
+                str(e["gpu"]),
+                "Unused (Pad)",
+                str(e["mig"]),
+                " ",
+            ])
         else:
-            state_info.append(
-                [
-                    str(e["gpu"]),
-                    str(e["agent"]),
-                    str(e["mig"]),
-                    "✓" if e.get("is-permanent", False) else " ",
-                ]
-            )
+            state_info.append([
+                str(e["gpu"]),
+                str(e["agent"]),
+                str(e["mig"]),
+                "✓" if e.get("is-permanent", False) else " ",
+            ])
     print(
         tabulate.tabulate(
             state_info,

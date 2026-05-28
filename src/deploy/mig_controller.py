@@ -106,12 +106,10 @@ class MIGController:
     def get_active_gpu_processes(cls) -> List[Dict[str, Any]]:
         """Query nvidia-smi for all active compute processes across all GPUs and MIGs."""
         try:
-            res = cls._run_nvidia_smi(
-                [
-                    "--query-compute-apps=pid,process_name,gpu_uuid",
-                    "--format=csv,noheader",
-                ]
-            )
+            res = cls._run_nvidia_smi([
+                "--query-compute-apps=pid,process_name,gpu_uuid",
+                "--format=csv,noheader",
+            ])
             out = res.stdout.decode().strip()
             processes = []
             for line in out.split("\n"):
@@ -119,13 +117,11 @@ class MIGController:
                     continue
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) >= 3:
-                    processes.append(
-                        {
-                            "pid": int(parts[0]),
-                            "name": parts[1],
-                            "gpu_uuid": parts[2],
-                        }
-                    )
+                    processes.append({
+                        "pid": int(parts[0]),
+                        "name": parts[1],
+                        "gpu_uuid": parts[2],
+                    })
             return processes
         except Exception as e:
             logger.warning(f"Failed to query active GPU processes: {e}")
@@ -196,14 +192,12 @@ class MIGController:
                 gi_id = int(m.group(4))
                 profile_str = m.group(2)
                 start_slice = int(m.group(5))
-                gpu_instances.append(
-                    {
-                        "gpu_idx": gpu_idx,
-                        "id": gi_id,
-                        "profile_str": profile_str,
-                        "start_slice": start_slice,
-                    }
-                )
+                gpu_instances.append({
+                    "gpu_idx": gpu_idx,
+                    "id": gi_id,
+                    "profile_str": profile_str,
+                    "start_slice": start_slice,
+                })
         return gpu_instances
 
     # ------------------------------------------------------------------

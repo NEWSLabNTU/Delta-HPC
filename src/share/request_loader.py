@@ -134,15 +134,13 @@ class RequestLoader:
             if self.track_history:
                 if agent_id not in self.phase_history:
                     self.phase_history[agent_id] = []
-                self.phase_history[agent_id].append(
-                    {
-                        "pattern": pattern,
-                        "avg_rate": sum(rates_in_phase) / len(rates_in_phase)
-                        if rates_in_phase
-                        else 0,
-                        "duration": current_time - phase_start_time,
-                        "start_time": phase_start_time,
-                    }
-                )
+                self.phase_history[agent_id].append({
+                    "pattern": pattern,
+                    "avg_rate": sum(rates_in_phase) / len(rates_in_phase)
+                    if rates_in_phase
+                    else 0,
+                    "duration": current_time - phase_start_time,
+                    "start_time": phase_start_time,
+                })
 
         return requests

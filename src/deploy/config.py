@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import yaml
 from pathlib import Path
-from typing import Dict, Union
+from typing import Dict, Union, Tuple
 from dataclasses import dataclass
 
 import src.share.models as m
 from src.deploy.models import SimulatedGPUConfig
 from src.simulation.config import GPU_MIG_PROFILE
+from src.bench.models import Workload
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,16 @@ class DeploymentConfig:
 
         h = data.get("heuristic", {})
         self.heuristic_service_rates = h.get("service_rates", {})
+        self._workloads = data["workloads"]
+        self.seed = int(data.get("seed", 77))
+        self.obs_arrival_rate_divisor: Dict[str, float] = {
+            str(k): float(v)
+            for k, v in data.get("obs_arrival_rate_divisor", {}).items()
+        }
+
+    def get_arrival_rate_divisor(self, agent_id: m.AgentId) -> float:
+        """Get the observation arrival rate divisor for the given agent."""
+        return self.obs_arrival_rate_divisor.get(agent_id.value, 1.0)
 
     def get_service_rate(
         self,
@@ -150,12 +161,28 @@ class DeploymentConfig:
                 factor = 1.0
             case m.MIGProfile.MIG_4G | m.MIGProfile.MIG_3G:
                 factor = 0.8
-            case m.MIGProfile.MIG_2G | m.MIGProfile.MIG_1G_LARGE | m.MIGProfile.MIG_1G_SMALL:
+            case (
+                m.MIGProfile.MIG_2G
+                | m.MIGProfile.MIG_1G_LARGE
+                | m.MIGProfile.MIG_1G_SMALL
+            ):
                 factor = 0.5
             case _:
                 raise ValueError(f"Unknown MIG profile type: {hw_prof.profile_type}")
 
         return original_rate * factor
+
+    def get_rate_range(
+        self, workload: Workload, agent_id: m.AgentId
+    ) -> Tuple[float, float]:
+        cfg = self._workloads[workload.value]["rate"]
+        if isinstance(cfg, dict):
+            cfg = cfg[agent_id.value]
+        return float(cfg[0]), float(cfg[1])
+
+    def get_duration_range(self, workload: Workload) -> Tuple[float, float]:
+        cfg = self._workloads[workload.value]["duration"]
+        return float(cfg[0]), float(cfg[1])
 
     @classmethod
     def load(cls, path: Path = Path("configs/deployment.yaml")) -> "DeploymentConfig":

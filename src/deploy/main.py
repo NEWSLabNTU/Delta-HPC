@@ -21,7 +21,6 @@ from src.deploy.act_controller import ActionController
 from src.share.request_loader import RequestLoader
 from src.deploy.cluster import DeployGPUSetup
 from src.deploy.system import SYSTEM_STATE
-from src.bench.config import BENCH_CONFIG
 from src.bench.models import Workload
 from src.training.config import TRAINING_CONFIG
 from src.share.logging_utils import setup_logging
@@ -58,7 +57,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     setup_logging(getattr(logging, args.log_level))
-    setup = DeployGPUSetup()
+    setup = DeployGPUSetup(seed=DEPLOY_CONFIG.seed)
     vllm_manager = None
     publisher = None
     dashboard = None
@@ -144,9 +143,9 @@ async def main() -> None:
         num_steps = int(args.duration / TRAINING_CONFIG.action_interval) + 10
         loader = RequestLoader(
             num_steps=num_steps,
-            get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
-            get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
-            seed=BENCH_CONFIG.seed,
+            get_rate_range=lambda p, a: DEPLOY_CONFIG.get_rate_range(Workload(p), a),
+            get_duration_range=lambda p: DEPLOY_CONFIG.get_duration_range(Workload(p)),
+            seed=DEPLOY_CONFIG.seed,
             track_history=True,
             load_actual_prompt=True,
         )

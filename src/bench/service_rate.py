@@ -110,9 +110,7 @@ def check_rate(
     # Check stability by measuring if the wait time grows continuously over the test
     # This subtracts the base prefill time (which varies wildly between MIG profiles)
     ttfts = [
-        r.start_time - r.arrival_time
-        for r in requests
-        if r.start_time is not None
+        r.start_time - r.arrival_time for r in requests if r.start_time is not None
     ]
 
     first_10_percent_idx = max(1, int(len(ttfts) * 0.1))

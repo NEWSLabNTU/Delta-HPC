@@ -665,7 +665,6 @@ class SimulatorImpl(m.Simulator):
                 return  # Wait for remaining sibling engines
         self._environment_state.reconfig_flag = False  # reconfig action done
 
-
     def _handle_request_arrival(self, payload: sm.RequestArrivalPayload):
         req = payload["request"]
         agent_id = req.agent_id

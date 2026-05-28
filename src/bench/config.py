@@ -47,20 +47,24 @@ class BenchConfig:
             hw_prof = mig_profile
 
         gpu_model = hw_prof.gpu_model
-        
+
         # Structure: service_rates[gpu_model][agent_id][mig_str]
         model_rates = rates.get(gpu_model, {})
         agent_rates = model_rates.get(agent_id.value, {})
-        
+
         prof_str = hw_prof.string
         original_rate = float(agent_rates.get(prof_str, 0.0))
-        
+
         match hw_prof.profile_type:
             case m.MIGProfile.MIG_7G:
                 factor = 1.0
             case m.MIGProfile.MIG_4G | m.MIGProfile.MIG_3G:
                 factor = 0.8
-            case m.MIGProfile.MIG_2G | m.MIGProfile.MIG_1G_LARGE | m.MIGProfile.MIG_1G_SMALL:
+            case (
+                m.MIGProfile.MIG_2G
+                | m.MIGProfile.MIG_1G_LARGE
+                | m.MIGProfile.MIG_1G_SMALL
+            ):
                 factor = 0.5
             case _:
                 raise ValueError(f"Unknown MIG profile type: {hw_prof.profile_type}")
