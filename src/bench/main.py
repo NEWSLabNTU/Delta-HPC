@@ -7,6 +7,7 @@ import contextlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
 
+import torch
 import numpy as np
 from tqdm import tqdm
 import seaborn as sns
@@ -666,6 +667,7 @@ class BenchRunner:
 
 
 def main():
+    torch.distributions.Distribution.set_default_validate_args(False)
     BenchRunner.run_suite()
 
 
