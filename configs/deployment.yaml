@@ -1,6 +1,6 @@
 seed: 77
 obs_arrival_rate_divisor:
-  CodingAgent: 2.0
+  CodingAgent: 1.5
   RAGAgent: 1.0
 gpu_assignment:
   0: CodingAgent
@@ -42,8 +42,8 @@ workloads:
   idle:
     rate:
       CodingAgent:
-        - 0.4
-        - 1.0
+        - 0.3
+        - 0.75
       RAGAgent:
         - 0.1
         - 0.5
@@ -53,8 +53,8 @@ workloads:
   even:
     rate:
       CodingAgent:
-        - 2.0
-        - 5.0
+        - 1.5
+        - 3.75
       RAGAgent:
         - 1.0
         - 2.0
@@ -64,8 +64,8 @@ workloads:
   busy:
     rate:
       CodingAgent:
+        - 4.5
         - 6.0
-        - 8.0
       RAGAgent:
         - 4.5
         - 5.5
@@ -75,8 +75,8 @@ workloads:
   burst:
     rate:
       CodingAgent:
-        - 8.0
-        - 10.0
+        - 6.0
+        - 7.5
       RAGAgent:
         - 6.0
         - 8.0
