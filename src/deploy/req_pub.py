@@ -235,23 +235,15 @@ class ReqPublisher:
             timeout = DEPLOY_CONFIG.vllm.request_timeout_s
             is_simulated = SYSTEM_STATE.gpus[slot.gpu_idx].is_simulated
 
-            if is_simulated:
-                response = await self.vllm_manager.send_request(
+            response = await asyncio.wait_for(
+                self.vllm_manager.send_request(
                     slot=slot,
                     messages=messages,
                     max_tokens=2048,
                     data_id=lookup_id,
-                )
-            else:
-                response = await asyncio.wait_for(
-                    self.vllm_manager.send_request(
-                        slot=slot,
-                        messages=messages,
-                        max_tokens=2048,
-                        data_id=lookup_id,
-                    ),
-                    timeout=timeout,
-                )
+                ),
+                timeout=timeout,
+            )
 
             metrics = self.agent_metrics[agent_id]
             tokens_generated = response["usage"]["completion_tokens"]

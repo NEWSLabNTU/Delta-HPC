@@ -614,6 +614,7 @@ class BenchRunner:
             "--bl",
             nargs="+",
             default=[],
+            choices=["all"] + [m.value for m in BenchMode],
             help="Baselines to run (e.g., static_no_mig, static_split_extreme, static, heuristic)",
         )
         args = parser.parse_args()
