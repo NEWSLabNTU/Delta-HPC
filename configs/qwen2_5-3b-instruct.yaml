@@ -1,4 +1,5 @@
 model: "Qwen/Qwen2.5-3B-Instruct"
 max_model_len: 32767
 max_num_batched_tokens: 4096
+max_num_seqs: 72 # hot fix: 2g instance tends to OOM before requests queueing
 gpu_memory_utilization: 0.9

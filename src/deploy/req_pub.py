@@ -137,21 +137,32 @@ class ReqPublisher:
         raise AssertionError(f"No pattern found for {agent_id} at t={t:.2f}s")
 
     async def _restart_engine(self, slot: MIGSlotState) -> None:
-        try:
-            logger.info(
-                f"Restarting engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}..."
-            )
-            await asyncio.to_thread(self.vllm_manager.stop, slot, graceful=False)
-            await asyncio.to_thread(self.vllm_manager.start, slot)
-            await asyncio.to_thread(self.vllm_manager.wait_until_ready, slot)
-            slot.is_ready = True
-            logger.info(
-                f"Successfully restarted engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}."
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to restart engine on GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}: {e}"
-            )
+        _RETRY_DELAYS = [10, 30, 60]  # seconds to wait before each retry attempt
+        gpu_slice = f"GPU {slot.gpu_idx} slice {slot.profile_placement.start_slice}"
+
+        for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
+            if delay > 0:
+                logger.info(
+                    f"Waiting {delay}s before restart attempt {attempt} for {gpu_slice}..."
+                )
+                await asyncio.sleep(delay)
+
+            try:
+                logger.info(
+                    f"Restarting engine on {gpu_slice} (attempt {attempt}/{1 + len(_RETRY_DELAYS)})..."
+                )
+                await asyncio.to_thread(self.vllm_manager.stop, slot, graceful=False)
+                await asyncio.to_thread(self.vllm_manager.start, slot)
+                await asyncio.to_thread(self.vllm_manager.wait_until_ready, slot)
+                slot.is_ready = True
+                logger.info(f"Successfully restarted engine on {gpu_slice}.")
+                return
+            except Exception as e:
+                logger.error(f"Restart attempt {attempt} failed for {gpu_slice}: {e}")
+
+        logger.error(
+            f"All restart attempts exhausted for {gpu_slice}. Slot will remain unavailable."
+        )
 
     async def _get_slot_waiting(self, slot: MIGSlotState) -> float:
         """Query the waiting queue length of slot directly from metrics.py or VLLMManager."""

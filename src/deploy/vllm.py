@@ -627,24 +627,8 @@ class VLLMManager:
                 slot, messages, max_tokens, data_id=data_id
             )
 
-        client = AsyncOpenAI(
-            base_url=f"http://localhost:{slot.port}/v1", api_key="EMPTY"
-        )
-
         start_time = time.time()
         ttft = None
-
-        response_stream = await client.chat.completions.create(
-            model=slot.model_id,
-            messages=messages,  # type: ignore
-            max_tokens=max_tokens,
-            temperature=0,
-            timeout=self._cfg.vllm.request_timeout_s,
-            stream=True,
-            stream_options={"include_usage": True},
-            extra_body=kwargs,
-        )
-
         full_content = ""
         usage = None
         chunk_id = None
@@ -652,33 +636,51 @@ class VLLMManager:
         if slot.mig_uuid not in self._active_reqs:
             self._active_reqs[slot.mig_uuid] = {}
 
-        try:
-            async for chunk in response_stream:
-                if chunk.id is not None:
-                    chunk_id = chunk.id
+        # Use async with so the httpx client (and its sockets) are always
+        # closed after the request — even on cancellation or exception.
+        # Without this, every concurrent request leaks a file descriptor,
+        # which quickly exhausts the process fd limit (EMFILE).
+        async with AsyncOpenAI(
+            base_url=f"http://localhost:{slot.port}/v1", api_key="EMPTY"
+        ) as client:
+            response_stream = await client.chat.completions.create(
+                model=slot.model_id,
+                messages=messages,  # type: ignore
+                max_tokens=max_tokens,
+                temperature=0,
+                timeout=self._cfg.vllm.request_timeout_s,
+                stream=True,
+                stream_options={"include_usage": True},
+                extra_body=kwargs,
+            )
 
-                if ttft is None:
-                    ttft = time.time() - start_time
+            try:
+                async for chunk in response_stream:
+                    if chunk.id is not None:
+                        chunk_id = chunk.id
 
-                if (
-                    chunk.choices
-                    and len(chunk.choices) > 0
-                    and chunk.choices[0].delta.content
-                ):
-                    full_content += chunk.choices[0].delta.content
+                    if ttft is None:
+                        ttft = time.time() - start_time
 
-                if chunk.usage is not None:
-                    usage = chunk.usage.model_dump()
-                    # Track current progress
-                    self._active_reqs[slot.mig_uuid][chunk.id] = usage.get(
-                        "completion_tokens", 0
-                    )
+                    if (
+                        chunk.choices
+                        and len(chunk.choices) > 0
+                        and chunk.choices[0].delta.content
+                    ):
+                        full_content += chunk.choices[0].delta.content
 
-            total_time = time.time() - start_time
-        finally:
-            # Always clean up tracking even on failure/cancellation
-            if chunk_id is not None:
-                self._active_reqs[slot.mig_uuid].pop(chunk_id, None)
+                    if chunk.usage is not None:
+                        usage = chunk.usage.model_dump()
+                        # Track current progress
+                        self._active_reqs[slot.mig_uuid][chunk.id] = usage.get(
+                            "completion_tokens", 0
+                        )
+
+                total_time = time.time() - start_time
+            finally:
+                # Always clean up tracking even on failure/cancellation
+                if chunk_id is not None:
+                    self._active_reqs[slot.mig_uuid].pop(chunk_id, None)
 
         return {
             "choices": [{"message": {"role": "assistant", "content": full_content}}],
