@@ -187,6 +187,19 @@ The `string` representation of each profile (e.g. `"2g.10gb"`) is derived automa
 
 This is the central configuration file. The `model` section and the cluster/agent structure should be filled in now (before profiling). The measured parameters (`kv_cache_GB`, `restart_time`, and `param.*`) are filled in **after** running the profiling steps in chapter 3.
 
+#### `datasets` — local dataset paths
+
+This section is **required**. It tells the runtime where to find the preprocessed datasets on disk (the outputs from [§1 Dataset Preparation](#1-dataset-preparation)).
+
+```yaml
+datasets:
+  CodingAgent: assets/processed_code_feedback   # Output of src.dataset.coder_preprocess
+  RAGAgent: assets/rag-dataset-sharegpt         # Output of src.dataset.rag_convert_to_sharegpt
+```
+
+> [!IMPORTANT]
+> The paths must match the `--hf-path` argument you used when running the dataset preprocessing scripts. If you changed the default output paths, update these values accordingly.
+
 #### `model` — per-model global settings
 
 ```yaml

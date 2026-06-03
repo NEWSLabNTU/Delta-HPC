@@ -23,6 +23,7 @@ class RequestLoader:
         num_steps: int,
         get_rate_range: Callable[[str, m.AgentId], Tuple[float, float]],
         get_duration_range: Callable[[str], Tuple[float, float]],
+        dataset_paths: Dict[str, str],
         seed: Optional[int] = None,
         track_history: bool = False,
         load_actual_prompt: bool = False,
@@ -30,6 +31,7 @@ class RequestLoader:
         self.num_steps = num_steps
         self.get_rate_range = get_rate_range
         self.get_duration_range = get_duration_range
+        self.dataset_paths = dataset_paths
         self.seed = seed
         self.track_history = track_history
         self.load_actual_prompt = load_actual_prompt
@@ -39,13 +41,17 @@ class RequestLoader:
             self._init_dataset_cache()
 
     def _init_dataset_cache(self):
-        self._coding_ds = datasets.load_from_disk("assets/processed_code_feedback")
+        self._coding_ds = datasets.load_from_disk(
+            self.dataset_paths[m.AgentId.CODING.value]
+        )
         self._coding_id_map = {
             str(row["id"]): i
             for i, row in enumerate(self._coding_ds.select_columns(["id"]))
         }
 
-        self._rag_ds = datasets.load_from_disk("assets/rag-dataset-sharegpt")
+        self._rag_ds = datasets.load_from_disk(
+            self.dataset_paths[m.AgentId.RAG.value]
+        )
         self._rag_id_map = {
             str(row["id"]): i
             for i, row in enumerate(self._rag_ds.select_columns(["id"]))
@@ -76,8 +82,8 @@ class RequestLoader:
         req_map = utils.TOKENS_MAP[agent_id][first_model]
         items = list(req_map.items())
 
+        agent_idx = list(m.AgentId).index(agent_id)
         if self.seed is not None:
-            agent_idx = list(m.AgentId).index(agent_id)
             random.seed(self.seed ^ (agent_idx * 0x9E3779B9))
         else:
             random.seed()

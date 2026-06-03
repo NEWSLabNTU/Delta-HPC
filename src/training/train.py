@@ -26,6 +26,7 @@ from src.share.request_loader import RequestLoader
 from src.training.logger import TrainingLogger
 from src.training.config import TRAINING_CONFIG
 from src.training.models import AgentPattern
+import src.simulation.utils as sim_utils
 from src.training.callbacks import (
     SaveVecNormalizeCallback,
     EntCoefSchedulerCallback,
@@ -101,6 +102,7 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
             get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(
                 AgentPattern(p)
             ),
+            dataset_paths=sim_utils.SIM_CONFIG.datasets,
         )
 
     @property
@@ -157,6 +159,7 @@ class TrainingMIGResourceEnv(BaseMIGResourceEnv):
             get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(
                 AgentPattern(p)
             ),
+            dataset_paths=sim_utils.SIM_CONFIG.datasets,
         )
 
         requests: List[m.Request] = []

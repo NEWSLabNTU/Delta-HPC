@@ -119,6 +119,7 @@ async def _run_benchmark():
         get_rate_range=lambda p, a: (150.0, 150.0),
         get_duration_range=lambda p: (100.0, 100.0),
         load_actual_prompt=True,
+        dataset_paths=utils.SIM_CONFIG.datasets,
     )
 
     print("Generating requests...")

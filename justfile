@@ -38,7 +38,7 @@ deploy-bench policy duration_s log_level="INFO":
     sudo .venv/bin/python3 -m src.deploy.main --policy {{ policy }} --duration {{ duration_s }} --log-level {{ log_level }}
 
 mock-train:
-    python -m src.simulation.main > test.log
+    TRAINING_RUN_ID=$(date +%Y%m%d-%H%M%S-000) python -m src.simulation.main > test.log
 
 train ckpt="":
     CUDA_VISIBLE_DEVICES={{ gpu }} python -m src.training.train {{ if ckpt != "" { "--ckpt " + ckpt } else { "" } }}

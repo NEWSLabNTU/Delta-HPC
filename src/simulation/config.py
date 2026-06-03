@@ -32,6 +32,8 @@ class SimulationConfig:
     gpu_initial_agents: Dict[int, List[str]]
     # Global model registry: { model_name -> { generate_path, vllm_config } }
     model: Dict[str, Any]
+    # datasets: { dataset_name -> local disk path }
+    datasets: Dict[str, str] = field(default_factory=dict)
     # Populated after loading vllm config files
     max_batched_tokens: Dict[str, int] = field(default_factory=dict[str, int])
 
@@ -160,6 +162,7 @@ class SimulationConfig:
             initial_state=sim_data["initial_state"]["permanent_engines"],
             gpu_initial_agents=initial_agents,
             model=data["model"],
+            datasets=data["datasets"],
         )
 
     def _pad_partial_gpu_states(
@@ -422,6 +425,18 @@ class SimulationConfig:
         return GPU_AGENTS_CONFIG[gpu_id][agent.value]["mig"][mig_profile.string][
             "kv_cache_GB"
         ]
+
+    def get_dataset_path(self, name: str) -> str:
+        """Return the local disk path for a named dataset.
+
+        The key must be an AgentId enum value (e.g. 'CodingAgent', 'RAGAgent').
+        """
+        if name not in self.datasets:
+            raise KeyError(
+                f"Dataset '{name}' not found in simulation config. "
+                f"Available: {list(self.datasets.keys())}"
+            )
+        return self.datasets[name]
 
     def get_generate_path(self, model_name: str) -> str:
         return self.model[model_name]["generate_path"]

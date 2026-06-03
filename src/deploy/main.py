@@ -148,6 +148,7 @@ async def main() -> None:
             seed=DEPLOY_CONFIG.seed,
             track_history=True,
             load_actual_prompt=True,
+            dataset_paths=sim_utils.SIM_CONFIG.datasets,
         )
 
         publisher = ReqPublisher(vllm_manager, loader)

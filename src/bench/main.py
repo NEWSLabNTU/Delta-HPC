@@ -22,6 +22,7 @@ from src.bench.env import BenchMIGResourceEnv
 from src.bench.models import BenchMode, Workload, PhaseHistoryType
 from src.bench.config import BENCH_CONFIG
 from src.share.request_loader import RequestLoader
+import src.simulation.utils as sim_utils
 from src.bench.prints import (
     print_banner,
     print_metrics,
@@ -573,6 +574,7 @@ class BenchRunner:
             num_steps=BENCH_CONFIG.benchmark_length,
             get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
             get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
+            dataset_paths=sim_utils.SIM_CONFIG.datasets,
             seed=BENCH_CONFIG.seed,
             track_history=True,
         )

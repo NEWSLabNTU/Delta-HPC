@@ -3,6 +3,7 @@ from typing import Dict, List, cast
 
 import src.share.models as m
 import src.simulation.models as sm
+import src.simulation.utils as sim_utils
 from src.share.request_loader import RequestLoader
 from src.simulation.simulator import SimulatorImpl
 from src.training.config import TRAINING_CONFIG
@@ -19,6 +20,7 @@ def main():
         num_steps=TRAINING_CONFIG.episode_length,
         get_rate_range=lambda p, a: TRAINING_CONFIG.pattern_rate(AgentPattern(p), a),
         get_duration_range=lambda p: TRAINING_CONFIG.pattern_duration(AgentPattern(p)),
+        dataset_paths=sim_utils.SIM_CONFIG.datasets,
     )
     requests: List[m.Request] = []
     for aid in m.AgentId:

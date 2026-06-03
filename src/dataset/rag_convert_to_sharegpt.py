@@ -1,7 +1,15 @@
+"""
+Loads both train and test splits of the neural-bridge/rag-dataset-12000 dataset,
+concatenates them, and exports to ShareGPT format as a Hugging Face dataset.
+"""
+
 import os
 import argparse
 from datasets import load_dataset, Dataset, concatenate_datasets
 from tqdm import tqdm
+
+DATASET_NAME = "neural-bridge/rag-dataset-12000"
+DEFAULT_OUTPUT_PATH = "./assets/rag-dataset-sharegpt"
 
 
 def convert_dataset(local_hf_path):
@@ -12,7 +20,7 @@ def convert_dataset(local_hf_path):
     print("Loading 'train' and 'test' splits from Hugging Face...")
     try:
         # Load both splits
-        dataset_dict = load_dataset("neural-bridge/rag-dataset-12000")
+        dataset_dict = load_dataset(DATASET_NAME)
 
         # Combine the splits into one single dataset object
         combined_dataset = concatenate_datasets([
@@ -66,8 +74,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf-path",
         type=str,
-        required=True,
-        help="Local directory path to save the Hugging Face dataset format.",
+        default=DEFAULT_OUTPUT_PATH,
+        help=f"Local directory path to save the Hugging Face dataset format. (default: {DEFAULT_OUTPUT_PATH})",
     )
 
     args = parser.parse_args()

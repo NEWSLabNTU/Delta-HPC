@@ -1,4 +1,9 @@
+datasets:
+  CodingAgent: assets/processed_code_feedback
+  RAGAgent: assets/rag-dataset-sharegpt
+
 model:
+
   qwen2.5-14b-instruct:
     generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 192
