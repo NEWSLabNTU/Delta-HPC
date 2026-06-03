@@ -98,8 +98,7 @@ Datasets are stored under `assets/` and must be preprocessed before use. Two dat
 
 ### Coding Agent Dataset — Code Feedback
 
-<!-- TODO: Add dataset download URL -->
-Download URL: *(fill in)*
+Download URL: [Crystalcareai/Code-feedback-sharegpt-renamed](https://huggingface.co/datasets/Crystalcareai/Code-feedback-sharegpt-renamed)
 
 The raw dataset uses multi-round conversations. Preprocess it so that each conversation round becomes an independent row:
 
@@ -110,8 +109,7 @@ python -m src.dataset.coder_preprocess
 
 ### RAG Agent Dataset — RAG Dataset 12k
 
-<!-- TODO: Add dataset download URL -->
-Download URL: *(fill in)*
+Download URL: [neural-bridge/rag-dataset-12000](https://huggingface.co/datasets/neural-bridge/rag-dataset-12000)
 
 Convert the dataset (both train and test splits) to ShareGPT format:
 
