@@ -1,9 +1,8 @@
 datasets:
+  ChatAgent: assets/processed_lmsys_chat
   CodingAgent: assets/processed_code_feedback
   RAGAgent: assets/rag-dataset-sharegpt
-
 model:
-
   qwen2.5-14b-instruct:
     generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 192
@@ -46,6 +45,124 @@ model:
     vllm_config: configs/qwen3-next-80b-a3b-instruct-fp8.yaml
 simulation:
   agents:
+    ChatAgent:
+      A100_40GB:
+        mig:
+          1g.10gb:
+            kv_cache_GB: 2.38
+            model: qwen2.5-3b-instruct
+            param:
+              prefill:
+                alpha: 0.041907479380461986
+                beta: 0.0001921051575137213
+                sigma: 0.05546227584072508
+              tpot:
+                alpha: 0.02159920960406169
+                beta: 0.0003942842328066259
+                sigma: 0.0011120023672045723
+            restart_time: 62.8
+          2g.10gb:
+            kv_cache_GB: 2.36
+            model: qwen2.5-3b-instruct
+            param:
+              prefill:
+                alpha: 0.028287213630630248
+                beta: 0.00011177368304287283
+                sigma: 0.029058523863657818
+              tpot:
+                alpha: 0.021863952266532646
+                beta: 0.000217881320487576
+                sigma: 0.0006084495107671828
+            restart_time: 63.1
+          3g.20gb:
+            kv_cache_GB: 1.96
+            model: qwen2.5-7b-instruct
+            param:
+              prefill:
+                alpha: 0.051270775707020814
+                beta: 0.0001557474601161097
+                sigma: 0.050605126072537074
+              tpot:
+                alpha: 0.023352265970280714
+                beta: 0.0002088799262357157
+                sigma: 0.0005527448870265582
+            restart_time: 62.5
+          4g.20gb:
+            kv_cache_GB: 1.97
+            model: qwen2.5-7b-instruct
+            param:
+              prefill:
+                alpha: 0.030131679064210343
+                beta: 0.00012045879032405954
+                sigma: 0.031631261808311543
+              tpot:
+                alpha: 0.023281234872177783
+                beta: 0.0001654388688334183
+                sigma: 0.00043171032667850063
+            restart_time: 61.9
+          7g.40gb:
+            kv_cache_GB: 6.45
+            model: qwen2.5-14b-instruct
+            param:
+              prefill:
+                alpha: 0.045291878638524366
+                beta: 0.00015694526100495866
+                sigma: 0.042782964822820416
+              tpot:
+                alpha: 0.024763871292589484
+                beta: 0.00015613310131934138
+                sigma: 0.00039039936865724014
+            restart_time: 67.9
+        search-overhead:
+          max: 0.3
+          min: 0.05
+          model: random
+      B200:
+        mig:
+          1g.23gb:
+            kv_cache_GB: 4.27
+            model: qwen2.5-7b-instruct
+            param:
+              prefill:
+                alpha: 0.041907479380461986
+                beta: 0.0001921051575137213
+                sigma: 0.05546227584072508
+              tpot:
+                alpha: 0.02159920960406169
+                beta: 0.0003942842328066259
+                sigma: 0.0011120023672045723
+            restart_time: 63.2
+          1g.45gb:
+            kv_cache_GB: 14.6
+            model: qwen2.5-14b-instruct
+            param:
+              prefill:
+                alpha: 0.041907479380461986
+                beta: 0.0001921051575137213
+                sigma: 0.05546227584072508
+              tpot:
+                alpha: 0.02159920960406169
+                beta: 0.0003942842328066259
+                sigma: 0.0011120023672045723
+            restart_time: 63.2
+          2g.45gb:
+            kv_cache_GB: 11.0
+            model: qwen2.5-14b-instruct
+            param:
+              prefill:
+                alpha: 0.028287213630630248
+                beta: 0.00011177368304287283
+                sigma: 0.029058523863657818
+              tpot:
+                alpha: 0.021863952266532646
+                beta: 0.000217881320487576
+                sigma: 0.0006084495107671828
+            restart_time: 61.4
+          3g.90gb:
+            kv_cache_GB: 1.0
+            model: qwen3-next-80b-a3b-instruct-fp8
+            param:
+              prefill: null
     CodingAgent:
       A100_40GB:
         mig:
@@ -354,16 +471,5 @@ simulation:
     0: A100_40GB
     1: A100_40GB
     2: A100_40GB
-  initial_state:
-    gpu_initial_agents:
-      0:
-      - CodingAgent
-      1:
-      - RAGAgent
-    permanent_engines:
-    - agent: CodingAgent
-      gpu: 2
-      mig: 2g.10gb
-    - agent: RAGAgent
-      gpu: 2
-      mig: 2g.10gb
+    3: A100_40GB
+  gpu_model: A100_40GB

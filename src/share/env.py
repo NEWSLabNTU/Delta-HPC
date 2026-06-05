@@ -6,6 +6,7 @@ import numpy.typing as npt
 
 import src.share.models as m
 from src.training.rewards import compute_reward
+import src.simulation.utils as utils
 
 
 ObsType = TypeVar("ObsType")
@@ -44,7 +45,7 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         self.load_turn: int = 0
         self.episode_count: int = 0
         self._current_action_mask: npt.NDArray[np.bool_] = np.zeros(
-            (len(m.ResourceManagerAction),), dtype=np.bool_
+            (self.action_space.n,), dtype=np.bool_
         )
 
     def action_masks(self) -> npt.NDArray[np.bool_]:
@@ -108,29 +109,46 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
         obs_list.append(float(state_data["downtime_ratio"]))
 
         # Agent Ratios (CODING - RAG)
-        obs_list.append(float(state_data["agent_arrival_rate_ratio"]))
-        obs_list.append(float(state_data["agent_avg_queue_len_ratio"]))
-        obs_list.append(float(state_data["agent_avg_running_req_ratio"]))
-        obs_list.append(float(state_data["agent_avg_kv_cache_ratio"]))
-        obs_list.append(float(state_data["agent_avg_composite_latency_ratio"]))
-        obs_list.append(0.0)
-        obs_list.append(float(state_data["agent_vram_ratio"]))
-        obs_list.append(float(state_data["agent_sm_ratio"]))
+        for key in [
+            "agent_arrival_rate_ratio",
+            "agent_avg_queue_len_ratio",
+            "agent_avg_running_req_ratio",
+            "agent_avg_kv_cache_ratio",
+            "agent_avg_composite_latency_ratio",
+        ]:
+            val = state_data[key]
+            if isinstance(val, (list, tuple)):
+                obs_list.extend(float(v) for v in val)
+            else:
+                obs_list.append(float(val))
 
-        # MIG Geometry: 4 values — GPU 0 [coding, rag] and GPU 1 [coding, rag] (pre-normalized)
+        obs_list.append(0.0)
+
+        for key in [
+            "agent_vram_ratio",
+            "agent_sm_ratio",
+        ]:
+            val = state_data[key]
+            if isinstance(val, (list, tuple)):
+                obs_list.extend(float(v) for v in val)
+            else:
+                obs_list.append(float(val))
+
+        # MIG Geometry: dynamically padded to num_agents per managed GPU
         mig_geom = state_data["mig_geometry"]
-        for gpu_idx in (0, 1):
-            for s in mig_geom.get(gpu_idx, [0.0, 0.0]):
+        num_agents = len(self.sim.agents)
+        for gpu_idx in utils.SIM_CONFIG.managed_gpus:
+            for s in mig_geom.get(gpu_idx, [0.0] * num_agents):
                 obs_list.append(float(s))
 
         # New: 30 features for mig_profile_id_onehot (15 per GPU)
         onehot = state_data["mig_profile_id_onehot"]
-        for gpu_idx in (0, 1):
+        for gpu_idx in utils.SIM_CONFIG.managed_gpus:
             obs_list.extend(onehot.get(gpu_idx, [0.0] * 15))
 
         # New: 14 features for ownership_grid (7 per GPU)
         grid = state_data["ownership_grid"]
-        for gpu_idx in (0, 1):
+        for gpu_idx in utils.SIM_CONFIG.managed_gpus:
             obs_list.extend([float(x) for x in grid.get(gpu_idx, [0] * 7)])
 
         return np.array(obs_list, dtype=np.float32)

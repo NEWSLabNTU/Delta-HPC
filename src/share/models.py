@@ -162,6 +162,7 @@ class EngineStatus(Enum):
 class AgentId(Enum):
     CODING = "CodingAgent"
     RAG = "RAGAgent"
+    CHAT = "ChatAgent"
 
 
 class EventType(IntEnum):
@@ -509,6 +510,7 @@ class ResourceManagerActionValue(NamedTuple):
     gpu_id: int
     target_state_id: Optional[int]
     transfer_mig: Optional[MIGProfile]
+    receiver_id: Optional[AgentId] = None
 
 
 @dataclass
@@ -521,7 +523,28 @@ class Action:
     receiver: Optional[Receiver] = None
 
 
-class ResourceManagerAction(Enum):
+def _get_active_agent_count() -> int:
+    import yaml
+    from pathlib import Path
+
+    try:
+        config_path = Path("configs/simulation_config.yaml")
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                data = yaml.safe_load(f)
+            agents = data.get("simulation", {}).get("agents", {})
+            if agents:
+                return len(agents)
+    except Exception:
+        pass
+    return 2
+
+
+_active_agent_count = _get_active_agent_count()
+
+
+# fmt: off
+class ResourceManagerAction2Agent(Enum):
     NO_ACTION = None
 
     # GPU 0 State Transitions
@@ -564,77 +587,39 @@ class ResourceManagerAction(Enum):
     GPU_0_PROFILE_2_TRANSFER_3G = ResourceManagerActionValue(0, 2, MIGProfile.MIG_3G)
     GPU_0_PROFILE_3_TRANSFER_4G = ResourceManagerActionValue(0, 3, MIGProfile.MIG_4G)
     GPU_0_PROFILE_3_TRANSFER_2G = ResourceManagerActionValue(0, 3, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(
-        0, 3, MIGProfile.MIG_1G_LARGE
-    )
+    GPU_0_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(0, 3, MIGProfile.MIG_1G_LARGE)
     GPU_0_PROFILE_4_TRANSFER_4G = ResourceManagerActionValue(0, 4, MIGProfile.MIG_4G)
-    GPU_0_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(
-        0, 4, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(
-        0, 4, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(0, 4, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(0, 4, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_8_TRANSFER_3G = ResourceManagerActionValue(0, 8, MIGProfile.MIG_3G)
     GPU_0_PROFILE_8_TRANSFER_2G = ResourceManagerActionValue(0, 8, MIGProfile.MIG_2G)
     GPU_0_PROFILE_9_TRANSFER_3G = ResourceManagerActionValue(0, 9, MIGProfile.MIG_3G)
     GPU_0_PROFILE_9_TRANSFER_2G = ResourceManagerActionValue(0, 9, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(
-        0, 9, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(0, 9, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_10_TRANSFER_3G = ResourceManagerActionValue(0, 10, MIGProfile.MIG_3G)
     GPU_0_PROFILE_10_TRANSFER_2G = ResourceManagerActionValue(0, 10, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(
-        0, 10, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(0, 10, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_11_TRANSFER_3G = ResourceManagerActionValue(0, 11, MIGProfile.MIG_3G)
-    GPU_0_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(
-        0, 11, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(0, 11, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_12_TRANSFER_2G = ResourceManagerActionValue(0, 12, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(
-        0, 12, MIGProfile.MIG_1G_LARGE
-    )
+    GPU_0_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(0, 12, MIGProfile.MIG_1G_LARGE)
     GPU_0_PROFILE_13_TRANSFER_2G = ResourceManagerActionValue(0, 13, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(
-        0, 13, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(
-        0, 13, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(0, 13, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(0, 13, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_14_TRANSFER_2G = ResourceManagerActionValue(0, 14, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(
-        0, 14, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(
-        0, 14, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(0, 14, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(0, 14, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_15_TRANSFER_2G = ResourceManagerActionValue(0, 15, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(
-        0, 15, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(
-        0, 15, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(0, 15, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(0, 15, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_16_TRANSFER_2G = ResourceManagerActionValue(0, 16, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(
-        0, 16, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(
-        0, 16, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(0, 16, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(0, 16, MIGProfile.MIG_1G_SMALL)
     GPU_0_PROFILE_17_TRANSFER_2G = ResourceManagerActionValue(0, 17, MIGProfile.MIG_2G)
-    GPU_0_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(
-        0, 17, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(
-        0, 17, MIGProfile.MIG_1G_SMALL
-    )
-    GPU_0_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(
-        0, 19, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_0_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(
-        0, 19, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_0_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(0, 17, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(0, 17, MIGProfile.MIG_1G_SMALL)
+    GPU_0_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(0, 19, MIGProfile.MIG_1G_LARGE)
+    GPU_0_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(0, 19, MIGProfile.MIG_1G_SMALL)
 
     # GPU 1 State + Transfer
     GPU_1_PROFILE_1_TRANSFER_7G = ResourceManagerActionValue(1, 1, MIGProfile.MIG_7G)
@@ -642,77 +627,39 @@ class ResourceManagerAction(Enum):
     GPU_1_PROFILE_2_TRANSFER_3G = ResourceManagerActionValue(1, 2, MIGProfile.MIG_3G)
     GPU_1_PROFILE_3_TRANSFER_4G = ResourceManagerActionValue(1, 3, MIGProfile.MIG_4G)
     GPU_1_PROFILE_3_TRANSFER_2G = ResourceManagerActionValue(1, 3, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(
-        1, 3, MIGProfile.MIG_1G_LARGE
-    )
+    GPU_1_PROFILE_3_TRANSFER_1L = ResourceManagerActionValue(1, 3, MIGProfile.MIG_1G_LARGE)
     GPU_1_PROFILE_4_TRANSFER_4G = ResourceManagerActionValue(1, 4, MIGProfile.MIG_4G)
-    GPU_1_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(
-        1, 4, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(
-        1, 4, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_4_TRANSFER_1L = ResourceManagerActionValue(1, 4, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_4_TRANSFER_1S = ResourceManagerActionValue(1, 4, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_8_TRANSFER_3G = ResourceManagerActionValue(1, 8, MIGProfile.MIG_3G)
     GPU_1_PROFILE_8_TRANSFER_2G = ResourceManagerActionValue(1, 8, MIGProfile.MIG_2G)
     GPU_1_PROFILE_9_TRANSFER_3G = ResourceManagerActionValue(1, 9, MIGProfile.MIG_3G)
     GPU_1_PROFILE_9_TRANSFER_2G = ResourceManagerActionValue(1, 9, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(
-        1, 9, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_9_TRANSFER_1S = ResourceManagerActionValue(1, 9, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_10_TRANSFER_3G = ResourceManagerActionValue(1, 10, MIGProfile.MIG_3G)
     GPU_1_PROFILE_10_TRANSFER_2G = ResourceManagerActionValue(1, 10, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(
-        1, 10, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_10_TRANSFER_1S = ResourceManagerActionValue(1, 10, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_11_TRANSFER_3G = ResourceManagerActionValue(1, 11, MIGProfile.MIG_3G)
-    GPU_1_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(
-        1, 11, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_11_TRANSFER_1S = ResourceManagerActionValue(1, 11, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_12_TRANSFER_2G = ResourceManagerActionValue(1, 12, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(
-        1, 12, MIGProfile.MIG_1G_LARGE
-    )
+    GPU_1_PROFILE_12_TRANSFER_1L = ResourceManagerActionValue(1, 12, MIGProfile.MIG_1G_LARGE)
     GPU_1_PROFILE_13_TRANSFER_2G = ResourceManagerActionValue(1, 13, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(
-        1, 13, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(
-        1, 13, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_13_TRANSFER_1L = ResourceManagerActionValue(1, 13, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_13_TRANSFER_1S = ResourceManagerActionValue(1, 13, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_14_TRANSFER_2G = ResourceManagerActionValue(1, 14, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(
-        1, 14, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(
-        1, 14, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_14_TRANSFER_1L = ResourceManagerActionValue(1, 14, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_14_TRANSFER_1S = ResourceManagerActionValue(1, 14, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_15_TRANSFER_2G = ResourceManagerActionValue(1, 15, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(
-        1, 15, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(
-        1, 15, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_15_TRANSFER_1L = ResourceManagerActionValue(1, 15, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_15_TRANSFER_1S = ResourceManagerActionValue(1, 15, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_16_TRANSFER_2G = ResourceManagerActionValue(1, 16, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(
-        1, 16, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(
-        1, 16, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_16_TRANSFER_1L = ResourceManagerActionValue(1, 16, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_16_TRANSFER_1S = ResourceManagerActionValue(1, 16, MIGProfile.MIG_1G_SMALL)
     GPU_1_PROFILE_17_TRANSFER_2G = ResourceManagerActionValue(1, 17, MIGProfile.MIG_2G)
-    GPU_1_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(
-        1, 17, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(
-        1, 17, MIGProfile.MIG_1G_SMALL
-    )
-    GPU_1_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(
-        1, 19, MIGProfile.MIG_1G_LARGE
-    )
-    GPU_1_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(
-        1, 19, MIGProfile.MIG_1G_SMALL
-    )
+    GPU_1_PROFILE_17_TRANSFER_1L = ResourceManagerActionValue(1, 17, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_17_TRANSFER_1S = ResourceManagerActionValue(1, 17, MIGProfile.MIG_1G_SMALL)
+    GPU_1_PROFILE_19_TRANSFER_1L = ResourceManagerActionValue(1, 19, MIGProfile.MIG_1G_LARGE)
+    GPU_1_PROFILE_19_TRANSFER_1S = ResourceManagerActionValue(1, 19, MIGProfile.MIG_1G_SMALL)
 
     # GPU 0 Pure Transfer
     TRANSFER_GPU_0_7G = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G)
@@ -730,8 +677,130 @@ class ResourceManagerAction(Enum):
     TRANSFER_GPU_1_1L = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE)
     TRANSFER_GPU_1_1S = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL)
 
+class ResourceManagerAction3Agent(Enum):
+    NO_ACTION = None
 
-class EnvironmentStateData(TypedDict):
+    # GPU 0 State Transitions
+    GPU_0_PROFILE_1_7G = ResourceManagerActionValue(0, 1, None)
+    GPU_0_PROFILE_2_4G_3G = ResourceManagerActionValue(0, 2, None)
+    GPU_0_PROFILE_3_4G_2G_1L = ResourceManagerActionValue(0, 3, None)
+    GPU_0_PROFILE_4_4G_1S_1S_1L = ResourceManagerActionValue(0, 4, None)
+    GPU_0_PROFILE_8_2G_2G_3G = ResourceManagerActionValue(0, 8, None)
+    GPU_0_PROFILE_9_2G_1S_1S_3G = ResourceManagerActionValue(0, 9, None)
+    GPU_0_PROFILE_10_1S_1S_2G_3G = ResourceManagerActionValue(0, 10, None)
+    GPU_0_PROFILE_11_1S_1S_1S_1S_3G = ResourceManagerActionValue(0, 11, None)
+    GPU_0_PROFILE_12_2G_2G_2G_1L = ResourceManagerActionValue(0, 12, None)
+    GPU_0_PROFILE_13_2G_1S_1S_2G_1L = ResourceManagerActionValue(0, 13, None)
+    GPU_0_PROFILE_14_1S_1S_2G_2G_1L = ResourceManagerActionValue(0, 14, None)
+    GPU_0_PROFILE_15_2G_1S_1S_1S_1S_1L = ResourceManagerActionValue(0, 15, None)
+    GPU_0_PROFILE_16_1S_1S_2G_1S_1S_1L = ResourceManagerActionValue(0, 16, None)
+    GPU_0_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(0, 17, None)
+    GPU_0_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(0, 19, None)
+
+    # GPU 1 State Transitions
+    GPU_1_PROFILE_1_7G = ResourceManagerActionValue(1, 1, None)
+    GPU_1_PROFILE_2_4G_3G = ResourceManagerActionValue(1, 2, None)
+    GPU_1_PROFILE_3_4G_2G_1L = ResourceManagerActionValue(1, 3, None)
+    GPU_1_PROFILE_4_4G_1S_1S_1L = ResourceManagerActionValue(1, 4, None)
+    GPU_1_PROFILE_8_2G_2G_3G = ResourceManagerActionValue(1, 8, None)
+    GPU_1_PROFILE_9_2G_1S_1S_3G = ResourceManagerActionValue(1, 9, None)
+    GPU_1_PROFILE_10_1S_1S_2G_3G = ResourceManagerActionValue(1, 10, None)
+    GPU_1_PROFILE_11_1S_1S_1S_1S_3G = ResourceManagerActionValue(1, 11, None)
+    GPU_1_PROFILE_12_2G_2G_2G_1L = ResourceManagerActionValue(1, 12, None)
+    GPU_1_PROFILE_13_2G_1S_1S_2G_1L = ResourceManagerActionValue(1, 13, None)
+    GPU_1_PROFILE_14_1S_1S_2G_2G_1L = ResourceManagerActionValue(1, 14, None)
+    GPU_1_PROFILE_15_2G_1S_1S_1S_1S_1L = ResourceManagerActionValue(1, 15, None)
+    GPU_1_PROFILE_16_1S_1S_2G_1S_1S_1L = ResourceManagerActionValue(1, 16, None)
+    GPU_1_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(1, 17, None)
+    GPU_1_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(1, 19, None)
+
+    # GPU 2 State Transitions
+    GPU_2_PROFILE_1_7G = ResourceManagerActionValue(2, 1, None)
+    GPU_2_PROFILE_2_4G_3G = ResourceManagerActionValue(2, 2, None)
+    GPU_2_PROFILE_3_4G_2G_1L = ResourceManagerActionValue(2, 3, None)
+    GPU_2_PROFILE_4_4G_1S_1S_1L = ResourceManagerActionValue(2, 4, None)
+    GPU_2_PROFILE_8_2G_2G_3G = ResourceManagerActionValue(2, 8, None)
+    GPU_2_PROFILE_9_2G_1S_1S_3G = ResourceManagerActionValue(2, 9, None)
+    GPU_2_PROFILE_10_1S_1S_2G_3G = ResourceManagerActionValue(2, 10, None)
+    GPU_2_PROFILE_11_1S_1S_1S_1S_3G = ResourceManagerActionValue(2, 11, None)
+    GPU_2_PROFILE_12_2G_2G_2G_1L = ResourceManagerActionValue(2, 12, None)
+    GPU_2_PROFILE_13_2G_1S_1S_2G_1L = ResourceManagerActionValue(2, 13, None)
+    GPU_2_PROFILE_14_1S_1S_2G_2G_1L = ResourceManagerActionValue(2, 14, None)
+    GPU_2_PROFILE_15_2G_1S_1S_1S_1S_1L = ResourceManagerActionValue(2, 15, None)
+    GPU_2_PROFILE_16_1S_1S_2G_1S_1S_1L = ResourceManagerActionValue(2, 16, None)
+    GPU_2_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(2, 17, None)
+    GPU_2_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(2, 19, None)
+
+    # GPU 0 Pure Transfer Explicit
+    TRANSFER_GPU_0_7G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_7G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_7G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_4G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_4G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_4G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_3G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_3G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_3G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_2G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_2G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_2G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_1L_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_1L_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_1L_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_1S_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_0_1S_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_0_1S_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+
+    # GPU 1 Pure Transfer Explicit
+    TRANSFER_GPU_1_7G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_7G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_7G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_4G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_4G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_4G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_3G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_3G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_3G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_2G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_2G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_2G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_1L_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_1L_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_1L_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_1S_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_1_1S_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_1_1S_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+
+    # GPU 2 Pure Transfer Explicit
+    TRANSFER_GPU_2_7G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_7G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_7G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_4G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_4G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_4G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_3G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_3G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_3G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_2G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_2G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_2G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_1L_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_1L_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_1L_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_1S_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
+    TRANSFER_GPU_2_1S_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
+    TRANSFER_GPU_2_1S_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+# fmt: on
+
+if _active_agent_count == 3:
+    ResourceManagerAction = ResourceManagerAction3Agent
+elif _active_agent_count == 2:
+    ResourceManagerAction = ResourceManagerAction2Agent
+else:
+    raise ValueError("Invalid number of active agents")
+
+
+class EnvironmentStateData2Agent(TypedDict):
     arrival_rate: Dict[AgentId, float]
     predicted_arrival_rate: Dict[AgentId, float]
     arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
@@ -764,3 +833,44 @@ class EnvironmentStateData(TypedDict):
     agent_avg_composite_latency_ratio: float
     agent_vram_ratio: float
     agent_sm_ratio: float
+
+
+class EnvironmentStateData3Agent(TypedDict):
+    arrival_rate: Dict[AgentId, float]
+    predicted_arrival_rate: Dict[AgentId, float]
+    arrival_rate_history: Dict[AgentId, Tuple[float, ...]]
+    avg_queue_length: Dict[AgentId, Tuple[float, ...]]
+    avg_queue_length_trend: Dict[AgentId, Tuple[float, ...]]
+    kv_cache_utilization: Dict[AgentId, Tuple[float, ...]]
+    avg_composite_latency: Dict[AgentId, Tuple[float, ...]]
+    mig_profile_id_onehot: Dict[int, List[float]]
+    ownership_grid: Dict[int, List[int]]
+    agent_owns_mig: Dict[AgentId, Tuple[float, ...]]
+    mig_geometry: Dict[int, List[float]]
+    current_budget: float
+    recovery_flag: bool
+    avg_running_requests: Dict[AgentId, Tuple[float, ...]]
+    downtime_ratio: float
+    total_sm_ratio: Dict[AgentId, float]
+    total_vram_ratio: Dict[AgentId, float]
+    requests: Dict[AgentId, List[Request]]
+    last_split: Dict[AgentId, float]
+    last_merge: Dict[AgentId, float]
+    last_give: Dict[AgentId, float]
+    last_receive: Dict[AgentId, float]
+    last_give_amount: Dict[AgentId, float]
+    last_receive_amount: Dict[AgentId, float]
+    # Agent Ratios (CODING/RAG, CODING/CHAT, RAG/CHAT)
+    agent_arrival_rate_ratio: Tuple[float, float, float]
+    agent_avg_queue_len_ratio: Tuple[float, float, float]
+    agent_avg_running_req_ratio: Tuple[float, float, float]
+    agent_avg_kv_cache_ratio: Tuple[float, float, float]
+    agent_avg_composite_latency_ratio: Tuple[float, float, float]
+    agent_vram_ratio: Tuple[float, float, float]
+    agent_sm_ratio: Tuple[float, float, float]
+
+
+if _active_agent_count == 3:
+    EnvironmentStateData = EnvironmentStateData3Agent
+else:
+    EnvironmentStateData = EnvironmentStateData2Agent

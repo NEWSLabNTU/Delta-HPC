@@ -825,9 +825,12 @@ def map_res_action_to_action(
             return None
 
         current_owner = get_owner_fn(gpu_id, mig_idx)
-        receiver_id = (
-            m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
-        )
+        if val.receiver_id is not None:
+            receiver_id = val.receiver_id
+            if receiver_id == current_owner:
+                return None
+        else:
+            receiver_id = m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
 
         return m.Action(
             action=m.ActionType.TRANSFER,
@@ -855,9 +858,12 @@ def map_res_action_to_action(
         if found_idx != -1:
             src_idx = transition_action.mig_src[0]
             current_owner = get_owner_fn(gpu_id, src_idx)
-            receiver_id = (
-                m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
-            )
+            if val.receiver_id is not None:
+                receiver_id = val.receiver_id
+                if receiver_id == current_owner:
+                    return None
+            else:
+                receiver_id = m.AgentId.RAG if current_owner == m.AgentId.CODING else m.AgentId.CODING
             receiver = m.Receiver(receiver_id=receiver_id, mig_idx=found_idx)
 
     return dataclasses.replace(transition_action, gpu_id=gpu_id, receiver=receiver)

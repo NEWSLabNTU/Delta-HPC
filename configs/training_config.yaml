@@ -2,11 +2,12 @@ training:
   cluster:
     0: A100_40GB
     1: A100_40GB
-    2: A100_40GB # 2g.10gb permanent engine
-  tmux_session: "hpc-a100"
+    2: A100_40GB
+    3: A100_40GB
+  tmux_session: hpc-a100
   sb3_norm: true
-  action-interval: 120.0 # seconds
-  total_timesteps: 1024000
+  action-interval: 120.0
+  total_timesteps: 2048000
   arrival_rate_history_length: 5
   normalization:
     current_budget: 150.0
@@ -21,7 +22,6 @@ training:
     queue_length_trend_clamp: 3.0
     default_waiting_qj: 1.0
   PPO:
-    # vram transfer + mig action
     episode_length: 1024
     n_steps: 2048
     lr_max: 3e-4
@@ -29,45 +29,82 @@ training:
     batch_size: 256
     n_epochs: 10
     gamma: 0.995
-    gae_lambda: 0.90
+    gae_lambda: 0.9
     clip_range: 0.2
     ent_coef_schd: true
     ent_coef: 0.01
     min_ent_coef: 0.005
     max_ent_coef: 0.05
     net_arch:
-      pi: [512, 512]
-      vf: [512, 512]
+      pi:
+      - 512
+      - 512
+      vf:
+      - 512
+      - 512
   action_mask:
     action_cooldown: 10
   patterns:
     idle:
-      duration: [3600.0, 4800.0]
+      duration:
+      - 3600.0
+      - 4800.0
       rate:
-        CodingAgent: [0.2, 0.5]
-        RAGAgent: [0.1, 0.5]
+        CodingAgent:
+        - 0.2
+        - 0.5
+        RAGAgent:
+        - 0.1
+        - 0.5
+        ChatAgent:
+        - 0.1
+        - 0.5
     even:
-      duration: [1800.0, 2200.0]
+      duration:
+      - 1800.0
+      - 2200.0
       rate:
-        CodingAgent: [1.0, 2.5]
-        RAGAgent: [1.0, 2.0]
+        CodingAgent:
+        - 1.0
+        - 2.5
+        RAGAgent:
+        - 1.0
+        - 2.0
+        ChatAgent:
+        - 1.0
+        - 2.0
     busy:
-      duration: [1800.0, 2200.0]
+      duration:
+      - 1800.0
+      - 2200.0
       rate:
-        CodingAgent: [3.0, 4.0]
-        RAGAgent: [4.5, 5.5]
+        CodingAgent:
+        - 3.0
+        - 4.0
+        RAGAgent:
+        - 4.5
+        - 5.5
+        ChatAgent:
+        - 4.5
+        - 5.5
     burst:
-      duration: [300.0, 700.0] # Short duration (3-6 steps)
+      duration:
+      - 300.0
+      - 700.0
       rate:
-        CodingAgent: [4.0, 5.0] # Very high
-        RAGAgent: [6.0, 8.0]
+        CodingAgent:
+        - 4.0
+        - 5.0
+        RAGAgent:
+        - 6.0
+        - 8.0
+        ChatAgent:
+        - 6.0
+        - 8.0
   reconfig:
-    budget: 150.0 # seconds
-    refresh: 15.0 # minutes
+    budget: 150.0
+    refresh: 15.0
   reward:
-    # Reward function:
-    # R_t = -\left( \sum_{k \in \text{Agents}} \left[ \frac{\alpha_k \cdot \overline{\Psi}(L_k)}{Q_k} \right] + \Omega(a_t) \right)
-    # \overline{\Psi}(L_k) = \frac{1}{|\text{Req}_k| + \epsilon} \sum_{j \in \text{Req}_k} \left[ w_{T} \cdot \text{TTFT}_j + w_{P} \cdot \text{TPOT}_j \right]
     Q:
       CodingAgent:
         7g.40gb: 10.0
@@ -93,12 +130,25 @@ training:
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
+      ChatAgent:
+        7g.40gb: 10.0
+        4g.20gb: 5.0
+        3g.20gb: 5.0
+        2g.10gb: 1.0
+        1g.10gb: 1.0
+        7g.180gb: 12.0
+        4g.90gb: 5.0
+        3g.90gb: 5.0
+        2g.45gb: 1.0
+        1g.45gb: 1.0
+        1g.23gb: 1.0
     alpha:
       CodingAgent: 1.0
       RAGAgent: 1.0
-    w_ttft: 0.8 # weight in latency penalty
-    w_tpot: 0.2 # weight in latency penalty
-    gamma: 15.0 # reconfiguration penalty
+      ChatAgent: 1.0
+    w_ttft: 0.8
+    w_tpot: 0.2
+    gamma: 15.0
     scaling: 0.1
     clipping: -50
     use_quality_bonus: true

@@ -16,10 +16,10 @@ simulated_gpus:
     model: A100_40GB
     state_id: 8
     permanent_engines:
-      - agent: CodingAgent
-        mig: 2g.10gb
-      - agent: RAGAgent
-        mig: 2g.10gb
+    - agent: CodingAgent
+      mig: 2g.10gb
+    - agent: RAGAgent
+      mig: 2g.10gb
 dashboard:
   host: localhost
   port: 9000
@@ -42,44 +42,44 @@ workloads:
   idle:
     rate:
       CodingAgent:
-        - 0.3
-        - 0.75
+      - 0.3
+      - 0.75
       RAGAgent:
-        - 0.1
-        - 0.5
+      - 0.1
+      - 0.5
     duration:
-      - 3600.0
-      - 4800.0
+    - 3600.0
+    - 4800.0
   even:
     rate:
       CodingAgent:
-        - 1.5
-        - 3.75
+      - 1.5
+      - 3.75
       RAGAgent:
-        - 1.0
-        - 2.0
+      - 1.0
+      - 2.0
     duration:
-      - 1800.0
-      - 2200.0
+    - 1800.0
+    - 2200.0
   busy:
     rate:
       CodingAgent:
-        - 4.5
-        - 6.0
+      - 4.5
+      - 6.0
       RAGAgent:
-        - 4.5
-        - 5.5
+      - 4.5
+      - 5.5
     duration:
-      - 1800.0
-      - 2200.0
+    - 1800.0
+    - 2200.0
   burst:
     rate:
       CodingAgent:
-        - 6.0
-        - 7.5
+      - 6.0
+      - 7.5
       RAGAgent:
-        - 6.0
-        - 8.0
+      - 6.0
+      - 8.0
     duration:
-      - 300.0
-      - 700.0
+    - 300.0
+    - 700.0

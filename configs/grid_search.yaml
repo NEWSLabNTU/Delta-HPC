@@ -1,5 +1,7 @@
 training:
   reward:
-    affinity_bonus_weight:
-      - 0.1
-      - 0.5
+    Q:
+      ChatAgent:
+        7g.40gb:
+          - 10.0
+          - 12.0

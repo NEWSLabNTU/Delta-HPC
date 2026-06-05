@@ -285,7 +285,7 @@ class EnvironmentStateImpl(sm.EnvironmentState):
         raw_latent_totals: Dict[m.AgentId, float],
         vram: Dict[m.AgentId, float],
         sz: Dict[m.AgentId, float],
-    ) -> Dict[sm.AgentRatioKeys, float]:
+    ) -> Dict[sm.AgentRatioKeys, tuple[float, ...]]:
         def get_total(data_dict: Dict[m.AgentId, Any], aid: m.AgentId):
             val = data_dict[aid]
             return sum(val) if isinstance(val, (tuple, list)) else float(val)  # type: ignore
@@ -299,23 +299,34 @@ class EnvironmentStateImpl(sm.EnvironmentState):
             "agent_sm_ratio": sz,
         }
 
-        ratios: Dict[sm.AgentRatioKeys, float] = {}
+        ratios: Dict[sm.AgentRatioKeys, tuple[float, ...]] = {}
         epsilon = 1e-6
+        # Sort agents by enum value for deterministic pairing order
+        # Pairs are formed as (Agent i, Agent j) where i < j
+        agents_ordered = sorted(rates.keys(), key=lambda a: a.value)
+        
         for key, data in metrics.items():
-            c_val = get_total(data, m.AgentId.CODING)
-            r_val = get_total(data, m.AgentId.RAG)
-            ratios[key] = (c_val - r_val) / (c_val + r_val + epsilon)
+            pair_ratios = []
+            for i in range(len(agents_ordered)):
+                for j in range(i + 1, len(agents_ordered)):
+                    c_val = get_total(data, agents_ordered[i])
+                    r_val = get_total(data, agents_ordered[j])
+                    pair_ratios.append((c_val - r_val) / (c_val + r_val + epsilon))
+            ratios[key] = tuple(pair_ratios) if len(pair_ratios) > 1 else pair_ratios[0]
 
         # 4. Special Case: Latency (Log-Normalized symmetric ratio)
         max_exp = TRAINING_CONFIG.norm_avg_composite_latency
         denom = math.log10(1 + max_exp)
-        l_c_raw = raw_latent_totals[m.AgentId.CODING]
-        l_r_raw = raw_latent_totals[m.AgentId.RAG]
-        l_c_norm = math.log10(1 + l_c_raw) / denom
-        l_r_norm = math.log10(1 + l_r_raw) / denom
-        ratios["agent_avg_composite_latency_ratio"] = (l_c_norm - l_r_norm) / (
-            l_c_norm + l_r_norm + epsilon
-        )
+        latency_ratios = []
+        for i in range(len(agents_ordered)):
+            for j in range(i + 1, len(agents_ordered)):
+                l_c_raw = raw_latent_totals[agents_ordered[i]]
+                l_r_raw = raw_latent_totals[agents_ordered[j]]
+                l_c_norm = math.log10(1 + l_c_raw) / denom
+                l_r_norm = math.log10(1 + l_r_raw) / denom
+                latency_ratios.append((l_c_norm - l_r_norm) / (l_c_norm + l_r_norm + epsilon))
+                
+        ratios["agent_avg_composite_latency_ratio"] = tuple(latency_ratios) if len(latency_ratios) > 1 else latency_ratios[0]
 
         return ratios
 

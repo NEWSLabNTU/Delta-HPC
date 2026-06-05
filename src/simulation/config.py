@@ -53,6 +53,16 @@ class SimulationConfig:
         total_gpus = set(self.cluster.keys())
         return len(total_gpus - permanent_gpus)
 
+    @property
+    def active_agents(self) -> List[m.AgentId]:
+        return [m.AgentId(e["agent"]) for e in self._base_engines]
+
+    @property
+    def managed_gpus(self) -> List[int]:
+        permanent_gpus = {e["gpu"] for e in self._base_engines}
+        total_gpus = set(self.cluster.keys())
+        return sorted(list(total_gpus - permanent_gpus))
+
     @classmethod
     def load(
         cls, config_path: Path, use_hardware_detection: bool = False
@@ -63,14 +73,18 @@ class SimulationConfig:
 
         sim_data = data["simulation"]
 
-        # Convert string keys to int from YAML
-        gpu_to_model = {int(k): v for k, v in sim_data["cluster"].items()}
+        active_agents = list(sim_data.get("agents", {}).keys())
+        num_agents = len(active_agents)
+
+        gpu_model = sim_data.get("gpu_model", "A100_40GB")
+        gpu_to_model = {i: gpu_model for i in range(num_agents + 1)}
 
         if use_hardware_detection:
             from src.deploy.mig_controller import MIGController
 
             try:
                 detected = MIGController.detect_mig_gpus()
+                gpu_to_model = {}
                 for d in detected:
                     gpu_to_model[d.gpu_idx] = d.model_name
                 logger.info(
@@ -122,15 +136,28 @@ class SimulationConfig:
                 if model_name in agent_model_cfg:
                     GPU_AGENTS_CONFIG[gpu_id][agent_name] = agent_model_cfg[model_name]
 
-        initial_agents = {
-            int(k): v
-            for k, v in sim_data["initial_state"]["gpu_initial_agents"].items()
-        }
+        gpu_ids = sorted(list(gpu_to_model.keys()))
+        if not gpu_ids:
+            raise ValueError("No GPUs available in cluster configuration.")
+        
+        permanent_gpu = gpu_ids[-1]
+        managed_gpus = gpu_ids[:-1]
+
+        initial_agents = {gid: [] for gid in managed_gpus}
+        if managed_gpus and active_agents:
+            for idx, agent_name in enumerate(active_agents):
+                gid = managed_gpus[idx % len(managed_gpus)]
+                initial_agents[gid].append(agent_name)
+
+        permanent_engines = [
+            {"agent": agent_name, "gpu": permanent_gpu, "mig": "2g.10gb"}
+            for agent_name in active_agents
+        ]
 
         # Verify that all agents have proper configs on each GPU model listed
         all_models = set(gpu_to_model.values())
         for model_name in all_models:
-            for agent_id in m.AgentId:
+            for agent_id in [m.AgentId(a) for a in agent_defs.keys()]:
                 if agent_id.value not in agent_defs:
                     raise ValueError(
                         f"Agent {agent_id.value} not found in 'agents' config"
@@ -159,7 +186,7 @@ class SimulationConfig:
 
         return cls(
             cluster=gpu_to_model,
-            initial_state=sim_data["initial_state"]["permanent_engines"],
+            initial_state=permanent_engines,
             gpu_initial_agents=initial_agents,
             model=data["model"],
             datasets=data["datasets"],
