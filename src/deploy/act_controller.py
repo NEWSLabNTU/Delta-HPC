@@ -266,7 +266,7 @@ class ActionController:
 
         if action.action == m.ActionType.TRANSFER:
             vram = gpu_state.slots[src_indices[0]].profile_placement.profile.vram
-            OBS_COLLECTOR.set_last_action(triggering_agent, "give", vram)
+            OBS_COLLECTOR.set_last_action(triggering_agent, "give", vram, target_agent=action.receiver.receiver_id)
             OBS_COLLECTOR.set_last_action(action.receiver.receiver_id, "receive", vram)
         else:
             OBS_COLLECTOR.set_last_action(triggering_agent, action.action.name.lower())
@@ -275,7 +275,7 @@ class ActionController:
                     action.receiver.mig_idx
                 ]
                 hw_prof = self._get_hardware_profile(gpu_id, target_profile)
-                OBS_COLLECTOR.set_last_action(triggering_agent, "give", hw_prof.vram)
+                OBS_COLLECTOR.set_last_action(triggering_agent, "give", hw_prof.vram, target_agent=action.receiver.receiver_id)
                 OBS_COLLECTOR.set_last_action(
                     action.receiver.receiver_id, "receive", hw_prof.vram
                 )

@@ -1,5 +1,5 @@
 import os
-import yaml
+
 import datetime
 import argparse
 import io
@@ -30,34 +30,6 @@ from src.bench.prints import (
     print_initial_state,
 )
 from src.bench.heuristic import RuleBasedHeuristic
-
-
-def sync_bench_cluster_config(ckpt: Optional[Path] = None):
-    # Sync cluster config from snapshot if available, else bench_config.yaml
-    cluster_source = None
-
-    if ckpt:
-        # Expected ckpt path: results/{run_id}/ckpts/{run_name}/model.zip
-        # Snapshot path: results/{run_id}/snapshots/training_config.yaml
-        run_id_dir = ckpt.parents[2]
-        snapshot_path = run_id_dir / "snapshots" / "training_config.yaml"
-        if snapshot_path.exists():
-            with open(snapshot_path, "r") as f:
-                _train_data = yaml.safe_load(f)
-            cluster_source = _train_data.get("training", {}).get("cluster")
-
-    if cluster_source is None:
-        with open("configs/bench_config.yaml", "r") as f:
-            _bench_data = yaml.safe_load(f)
-        cluster_source = _bench_data["cluster"]
-
-    with open("configs/simulation_config.yaml", "r") as f:
-        _sim_data = yaml.safe_load(f)
-
-    _sim_data["simulation"]["cluster"] = cluster_source
-
-    with open("configs/simulation_config.yaml", "w") as f:
-        yaml.dump(_sim_data, f, default_flow_style=False)
 
 
 class BenchRunner:
@@ -559,8 +531,7 @@ class BenchRunner:
             ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
             print_banner(mode, ckpt.parent.name if ckpt else "")
 
-            # Sync cluster config and reload dynamically for this specific trial
-            sync_bench_cluster_config(ckpt)
+            # Reload dynamically for this specific trial
             import src.simulation.utils as u
 
             u.SIM_CONFIG = u.init_config(Path("."))

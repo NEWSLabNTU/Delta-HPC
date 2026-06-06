@@ -65,6 +65,11 @@ class AgentStats:
             "receive": {"intervals": TRAINING_CONFIG.action_cooldown, "amount": 0},
         }
     )
+    give_to_steps: Dict[str, int] = field(
+        default_factory=lambda: {
+            aid.value: TRAINING_CONFIG.action_cooldown for aid in m.AgentId
+        }
+    )
 
     reconfig_counts: Dict[str, int] = field(
         default_factory=lambda: {
@@ -81,6 +86,8 @@ class ObservationCollector:
             m.AgentId.CODING: AgentStats(),
             m.AgentId.RAG: AgentStats(),
         }
+        if m._active_agent_count == 3:
+            self._agent_stats[m.AgentId.CHAT] = AgentStats()
         self._last_interval_start = time.time()
         self._current_budget = TRAINING_CONFIG.reconfig_budget
         self._reconfig_flag = False
@@ -213,19 +220,23 @@ class ObservationCollector:
             stats.history["running_requests"].appendleft(tuple(avg_runs))
             stats.history["kv_utilization"] = tuple(avg_kvs)
 
-            # 3. Action Cooldowns
+        for stats in self._agent_stats.values():
             for entry in stats.action_history.values():
                 entry["intervals"] += 1
+            for aid in stats.give_to_steps.keys():
+                stats.give_to_steps[aid] += 1
 
         self._last_interval_start = now
         # Budget refresh logic (simulating simulation/environment_state.py:91)
         # Note: Real-time budget refresh might need a separate timer.
 
-    def set_last_action(self, agent_id: m.AgentId, action_type: str, amount: int = 0):
+    def set_last_action(self, agent_id: m.AgentId, action_type: str, amount: int = 0, target_agent: Optional[m.AgentId] = None):
         entry = self._agent_stats[agent_id].action_history[action_type]
         entry["intervals"] = 0
         if "amount" in entry:
             entry["amount"] = amount
+        if action_type == "give" and target_agent is not None:
+            self._agent_stats[agent_id].give_to_steps[target_agent.value] = 0
 
     def increment_reconfig_count(self, agent_id: m.AgentId, action_type: str):
         """Increment the split, merge, or transfer count for a given agent."""
@@ -310,7 +321,7 @@ class ObservationCollector:
 
     def get_observation(self) -> m.EnvironmentStateData:
         """Construct the full normalized observation dictionary."""
-        agents = list(m.AgentId)
+        agents = list(self._agent_stats.keys())
 
         # 1. Arrival Rate
         arrival_rate = {}
@@ -456,6 +467,15 @@ class ObservationCollector:
             "agent_vram_ratio": ratios["agent_vram_ratio"],
             "agent_sm_ratio": ratios["agent_sm_ratio"],
         }
+        if len(agents) == 3:
+            state_data["give_to_steps"] = {
+                aid: tuple(
+                    min(self._agent_stats[aid].give_to_steps[target.value], float(TRAINING_CONFIG.action_cooldown)) / float(TRAINING_CONFIG.action_cooldown)
+                    for target in sorted(agents, key=lambda x: x.value)
+                )
+                for aid in agents
+            }
+
         self._last_observation = state_data
         return state_data
 
@@ -465,7 +485,7 @@ class ObservationCollector:
 
     def _get_kv_cache_utilization(self) -> Dict[m.AgentId, Tuple[float, ...]]:
         res = {}
-        for aid in list(m.AgentId):
+        for aid in list(self._agent_stats.keys()):
             stats = self._agent_stats[aid]
             res[aid] = stats.history["kv_utilization"]
         return res
@@ -475,7 +495,7 @@ class ObservationCollector:
     ) -> Tuple[Dict[m.AgentId, Tuple[float, ...]], Dict[m.AgentId, float]]:
         proportions = {}
         raw_totals = {}
-        for aid in list(m.AgentId):
+        for aid in list(self._agent_stats.keys()):
             stats = self._agent_stats[aid]
             raw_avgs = []
             for i in range(NUM_LOGICAL_SLOTS):
@@ -558,7 +578,7 @@ class ObservationCollector:
     def _get_agent_owns_mig(self) -> Dict[m.AgentId, Tuple[float, ...]]:
         res = {}
         divisor = TRAINING_CONFIG.norm_mig_geometry
-        for aid in list(m.AgentId):
+        for aid in list(self._agent_stats.keys()):
             counts = [0] * len(m.MIGProfile)
             for gpu in SYSTEM_STATE.gpus.values():
                 for slot in gpu.slots:
@@ -571,7 +591,7 @@ class ObservationCollector:
     def _get_mig_geometry(self) -> Dict[int, List[float]]:
         res = {}
         divisor = TRAINING_CONFIG.norm_mig_geometry
-        agents = list(m.AgentId)
+        agents = list(self._agent_stats.keys())
         for gpu_idx, gpu in SYSTEM_STATE.gpus.items():
             sizes = [0.0] * len(agents)
             for slot in gpu.slots:
@@ -584,7 +604,7 @@ class ObservationCollector:
 
     def _get_total_sm_ratio(self) -> Dict[m.AgentId, float]:
         res = {}
-        for aid in list(m.AgentId):
+        for aid in list(self._agent_stats.keys()):
             total_size = 0
             for gpu in SYSTEM_STATE.gpus.values():
                 for slot in gpu.slots:
@@ -595,7 +615,7 @@ class ObservationCollector:
 
     def _get_total_vram_ratio(self) -> Dict[m.AgentId, float]:
         res = {}
-        for aid in list(m.AgentId):
+        for aid in list(self._agent_stats.keys()):
             total_vram = 0
             for gpu in SYSTEM_STATE.gpus.values():
                 for slot in gpu.slots:

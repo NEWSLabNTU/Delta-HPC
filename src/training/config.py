@@ -56,7 +56,7 @@ class TrainingConfig:
 
     @property
     def norm_current_budget(self) -> float:
-        return float(self._data["normalization"]["current_budget"])
+        return float(self._data["reconfig"]["budget"])
 
     @property
     def norm_total_sm_ratio(self) -> float:

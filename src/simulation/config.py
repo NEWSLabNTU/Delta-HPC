@@ -465,8 +465,12 @@ class SimulationConfig:
             )
         return self.datasets[name]
 
-    def get_generate_path(self, model_name: str) -> str:
-        return self.model[model_name]["generate_path"]
+    def get_generate_path(
+        self, agent: m.AgentId, mig_profile: m.MIGProfileBase, gpu_id: int = 0
+    ) -> str:
+        return GPU_AGENTS_CONFIG[gpu_id][agent.value]["mig"][mig_profile.string][
+            "generate_path"
+        ]
 
     def get_vllm_config_path(self, model_name: str) -> str:
         return self.model[model_name]["vllm_config"]

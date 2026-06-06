@@ -46,6 +46,11 @@ class AgentStats:
             "receive": {"steps": TRAINING_CONFIG.action_cooldown, "amount": 0},
         }
     )
+    give_to_steps: Dict[str, int] = field(
+        default_factory=lambda: {
+            aid.value: TRAINING_CONFIG.action_cooldown for aid in m.AgentId
+        }
+    )
     pending_request_count: int = 0
 
 
@@ -95,6 +100,8 @@ class EnvironmentStateImpl(sm.EnvironmentState):
         for stats in self._agent_stats.values():
             for entry in stats.action_history.values():
                 entry["steps"] += 1
+            for aid in stats.give_to_steps.keys():
+                stats.give_to_steps[aid] += 1
 
     def reset_last_actions(self) -> None:
         for stats in self._agent_stats.values():
@@ -104,14 +111,21 @@ class EnvironmentStateImpl(sm.EnvironmentState):
             stats.action_history["receive"]["amount"] = 0
             stats.action_history["give"]["steps"] = TRAINING_CONFIG.action_cooldown
             stats.action_history["give"]["amount"] = 0
+            for aid in m.AgentId:
+                stats.give_to_steps[aid.value] = TRAINING_CONFIG.action_cooldown
 
     def set_last_action(
-        self, agent_id: m.AgentId, event_type: sm.ActionHistoryKey, amount: int = 0
+        self, agent_id: m.AgentId, event_type: sm.ActionHistoryKey, amount: int = 0, target_agent: Optional[m.AgentId] = None
     ) -> None:
         entry = self._agent_stats[agent_id].action_history[event_type]
         entry["steps"] = 0
         if "amount" in entry:
             entry["amount"] = amount
+        if event_type == "give" and target_agent is not None:
+            self._agent_stats[agent_id].give_to_steps[target_agent.value] = 0
+
+    def get_steps_since_transfer(self, sender_id: m.AgentId, receiver_id: m.AgentId) -> int:
+        return self._agent_stats[sender_id].give_to_steps[receiver_id.value]
 
     def decrement_pending_requests(self, agent_id: m.AgentId) -> None:
         stats = self._agent_stats[agent_id]
@@ -274,6 +288,8 @@ class EnvironmentStateImpl(sm.EnvironmentState):
             "agent_vram_ratio": ratios["agent_vram_ratio"],
             "agent_sm_ratio": ratios["agent_sm_ratio"],
         }
+        if len(agents) == 3:
+            state_data["give_to_steps"] = self._get_give_to_steps(agents)
         return state_data
 
     def _calculate_global_agent_ratios(
@@ -633,15 +649,25 @@ class EnvironmentStateImpl(sm.EnvironmentState):
             for aid in agents.keys()
         }
 
-    def _get_last_receive(
-        self, agents: Dict[m.AgentId, m.Agent]
-    ) -> Dict[m.AgentId, float]:
+    def _get_last_receive(self, agents: Dict[m.AgentId, m.Agent]) -> Dict[m.AgentId, float]:
         norm = float(TRAINING_CONFIG.action_cooldown)
         return {
-            aid: min(self._agent_stats[aid].action_history["receive"]["steps"], norm)
-            / norm
+            aid: min(self.get_steps_since(aid, "receive"), norm) / norm
             for aid in agents.keys()
         }
+
+    def _get_give_to_steps(self, agents: Dict[m.AgentId, m.Agent]) -> Any:
+        norm = float(TRAINING_CONFIG.action_cooldown)
+        ordered_targets = sorted(list(m.AgentId), key=lambda x: x.value)
+        
+        result = {}
+        for aid in agents.keys():
+            steps = []
+            for target in ordered_targets:
+                val = self._agent_stats[aid].give_to_steps[target.value]
+                steps.append(min(val, norm) / norm)
+            result[aid] = tuple(steps)
+        return result
 
     def _get_last_give_amount(
         self, agents: Dict[m.AgentId, m.Agent]

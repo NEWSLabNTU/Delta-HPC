@@ -68,20 +68,26 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
 
     tokens_map: TokensMapType = {}
 
-    # Collect unique (model_name, generate_path) across all GPUs
-    model_paths: Dict[str, Path] = {}
+    # Collect unique (agent_name, model_name, generate_path) across all GPUs
+    agent_model_paths: Dict[Tuple[str, str], Path] = {}
     for gpu_id in GPU_AGENTS_CONFIG:
         for agent_name, agent_cfg in GPU_AGENTS_CONFIG[gpu_id].items():
-            for mig_cfg in agent_cfg["mig"].values():
+            for mig_profile_str, mig_cfg in agent_cfg["mig"].items():
                 mname = mig_cfg["model"]
-                if mname not in model_paths:
-                    model_paths[mname] = base_dir / sim_config.get_generate_path(mname)
+                # Assuming hw_prof logic to just fetch by mig_profile string from config
+                # Need the mig_profile object? Actually, we just need the path string directly
+                gen_path_str = mig_cfg.get("generate_path")
+                if not gen_path_str:
+                    raise ValueError(f"generate_path not found for {agent_name} {mname} in mig profile {mig_profile_str}")
+                key = (agent_name, mname)
+                if key not in agent_model_paths:
+                    agent_model_paths[key] = base_dir / gen_path_str
 
     # Load tokens map
-    m_names = list(model_paths.keys())
-    m_paths = [model_paths[n] for n in m_names]
+    keys = list(agent_model_paths.keys())
+    m_paths = [agent_model_paths[k] for k in keys]
     results = [_load_model_tokens(p) for p in m_paths]
-    model_to_map = dict(zip(m_names, results))
+    key_to_map = dict(zip(keys, results))
 
     # Reconstruct tokens_map: { agent_id -> { model_name -> req_map } }
     for aid in m.AgentId:
@@ -91,7 +97,7 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
                 if agent_name == aid.value:
                     for mig_cfg in agent_cfg["mig"].values():
                         mname = mig_cfg["model"]
-                        tokens_map[aid][mname] = model_to_map[mname]
+                        tokens_map[aid][mname] = key_to_map[(agent_name, mname)]
 
     # Validate IDs consistency per agent (optional, keeping for safety)
     for agent_id in m.AgentId:

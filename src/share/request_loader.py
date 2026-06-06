@@ -57,6 +57,14 @@ class RequestLoader:
             for i, row in enumerate(self._rag_ds.select_columns(["id"]))
         }
 
+        self._chat_ds = datasets.load_from_disk(
+            self.dataset_paths[m.AgentId.CHAT.value]
+        )
+        self._chat_id_map = {
+            str(row["id"]): i
+            for i, row in enumerate(self._chat_ds.select_columns(["id"]))
+        }
+
     def _get_actual_prompt(self, agent_id: m.AgentId, rid: str) -> Optional[str]:
         if agent_id == m.AgentId.CODING:
             idx = self._coding_id_map.get(str(rid))
@@ -68,6 +76,11 @@ class RequestLoader:
             if idx is not None:
                 msgs = self._rag_ds[idx]["messages"]
                 return msgs[0]["value"] if msgs else None
+        elif agent_id == m.AgentId.CHAT:
+            idx = self._chat_id_map.get(str(rid))
+            if idx is not None:
+                msgs = self._chat_ds[idx]["messages"]
+                return " ".join([m["value"] for m in msgs[:-1]]) if msgs else None
         return None
 
     def generate_requests(

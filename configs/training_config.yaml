@@ -1,16 +1,10 @@
 training:
-  cluster:
-    0: A100_40GB
-    1: A100_40GB
-    2: A100_40GB
-    3: A100_40GB
-  tmux_session: hpc-a100
+  tmux_session: hpc-train-3ag
   sb3_norm: true
   action-interval: 120.0
-  total_timesteps: 2048000
+  total_timesteps: 1024000
   arrival_rate_history_length: 5
   normalization:
-    current_budget: 150.0
     total_sm_ratio: 7.0
     total_vram_ratio: 40.0
     mig_geometry: 7.0
@@ -102,12 +96,12 @@ training:
         - 6.0
         - 8.0
   reconfig:
-    budget: 150.0
-    refresh: 15.0
+    budget: 300.0
+    refresh: 30.0
   reward:
     Q:
       CodingAgent:
-        7g.40gb: 10.0
+        7g.40gb: 12.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
@@ -119,7 +113,7 @@ training:
         1g.45gb: 1.0
         1g.23gb: 1.0
       RAGAgent:
-        7g.40gb: 10.0
+        7g.40gb: 12.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
@@ -131,7 +125,7 @@ training:
         1g.45gb: 1.0
         1g.23gb: 1.0
       ChatAgent:
-        7g.40gb: 10.0
+        7g.40gb: 12.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
@@ -148,7 +142,7 @@ training:
       ChatAgent: 1.0
     w_ttft: 0.8
     w_tpot: 0.2
-    gamma: 15.0
+    gamma: 12.0
     scaling: 0.1
     clipping: -50
     use_quality_bonus: true

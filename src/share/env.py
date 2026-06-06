@@ -102,6 +102,9 @@ class BaseMIGResourceEnv(gym.Env[npt.NDArray[np.float32], int]):
             obs_list.append(float(state_data["last_receive"][aid]))
             obs_list.append(float(state_data["last_give_amount"][aid]))
             obs_list.append(float(state_data["last_receive_amount"][aid]))
+            if "give_to_steps" in state_data:
+                for steps in state_data["give_to_steps"][aid]:
+                    obs_list.append(float(steps))
 
         # Global Metrics: 11 (3 existing + 8 new differences)
         obs_list.append(1.0 if state_data["recovery_flag"] else 0.0)

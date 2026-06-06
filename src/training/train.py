@@ -1,6 +1,5 @@
 from typing import Dict, Any, List, Tuple, Optional
 import os
-import yaml
 import shutil
 import argparse
 from datetime import datetime
@@ -65,19 +64,6 @@ def setup_training_environment(ckpt: Optional[Path] = None) -> str:
     snapshot_path = snapshots_dir / "training_config.yaml"
     if not snapshot_path.exists():
         shutil.copy2(config_path, snapshot_path)
-
-    # Update simulation_config.yaml cluster
-    with open(snapshot_path, "r") as f:
-        training_data = yaml.safe_load(f)
-
-    with open("configs/simulation_config.yaml", "r") as f:
-        sim_data = yaml.safe_load(f)
-
-    sim_data["simulation"]["cluster"] = training_data["training"]["cluster"]
-
-    with open("configs/simulation_config.yaml", "w") as f:
-        yaml.dump(sim_data, f, default_flow_style=False)
-
     return run_id
 
 

@@ -437,7 +437,7 @@ class SimulatorImpl(m.Simulator):
             )
             mig_size = STATE_DEFINITIONS[sid][action.receiver.mig_idx].size
 
-            self._environment_state.set_last_action(giver_id, "give", mig_size)
+            self._environment_state.set_last_action(giver_id, "give", mig_size, target_agent=action.receiver.receiver_id)
             self._environment_state.set_last_action(
                 action.receiver.receiver_id, "receive", mig_size
             )
@@ -872,11 +872,6 @@ class SimulatorImpl(m.Simulator):
             return mask
 
         cooldown_steps = TRAINING_CONFIG.action_cooldown if not ignore_cooldowns else 0
-        # Transfer cooldown
-        transfer_blocked = any(
-            self._environment_state.get_steps_since(aid, "give") < cooldown_steps
-            for aid in self._agents.keys()
-        )
 
         current_states = self.gpu_current_state
         for act_id, action in enumerate(m.ResourceManagerAction):
@@ -927,31 +922,17 @@ class SimulatorImpl(m.Simulator):
 
             # 2. Transfer Check
             if trans_mig is not None:
-                if transfer_blocked:
+                pred_action = self.map_to_action(action)
+                if pred_action is None or pred_action.receiver is None:
                     mask[act_id] = False
                     continue
-                # If target_sid is None, it's a pure transfer. Check if gpu has the MIG.
-                if target_sid is None:
-                    has_mig = any(
-                        eng is not None
-                        and eng.mig_profile.profile_type == trans_mig
-                        and not eng.is_permanent
-                        for eng in self._gpu_engines[act_gpu_id]
-                    )
-                    mask[act_id] = has_mig
-                else:
-                    # It's a state + transition. The transfer MIG must be one of the results of the split/merge.
-                    target_profiles = STATE_DEFINITIONS[target_sid]
-                    resulting_profiles = [
-                        target_profiles[idx]
-                        for idx in TRANSITION_MATRIX[
-                            (current_sid, target_sid)
-                        ].mig_target
-                    ]
-                    if trans_mig not in resulting_profiles:
+                
+                if val.receiver_id is not None:
+                    sender_agent = self._get_engine_owner(pred_action.gpu_id, pred_action.mig_src[0])
+                    if self._environment_state.get_steps_since_transfer(sender_agent, val.receiver_id) < cooldown_steps:
                         mask[act_id] = False
                         continue
-                    mask[act_id] = True
+                mask[act_id] = True
             else:
                 # Pure state transition
                 mask[act_id] = True

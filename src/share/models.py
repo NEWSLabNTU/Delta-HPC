@@ -860,6 +860,7 @@ class EnvironmentStateData3Agent(TypedDict):
     last_receive: Dict[AgentId, float]
     last_give_amount: Dict[AgentId, float]
     last_receive_amount: Dict[AgentId, float]
+    give_to_steps: Dict[AgentId, Tuple[float, float, float]]
     # Agent Ratios (CODING/RAG, CODING/CHAT, RAG/CHAT)
     agent_arrival_rate_ratio: Tuple[float, float, float]
     agent_avg_queue_len_ratio: Tuple[float, float, float]

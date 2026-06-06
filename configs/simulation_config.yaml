@@ -4,43 +4,33 @@ datasets:
   RAGAgent: assets/rag-dataset-sharegpt
 model:
   qwen2.5-14b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 192
     vllm_config: configs/qwen2_5-14b-instruct.yaml
   qwen2.5-3b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 36
     vllm_config: configs/qwen2_5-3b-instruct.yaml
   qwen2.5-7b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 56
     vllm_config: configs/qwen2_5-7b-instruct.yaml
   qwen2.5-coder-14b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
     kv_per_token_KB: 192
     vllm_config: configs/qwen2_5-coder-14b-instruct.yaml
   qwen2.5-coder-3b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
     kv_per_token_KB: 36
     vllm_config: configs/qwen2_5-coder-3b-instruct.yaml
   qwen2.5-coder-7b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
     kv_per_token_KB: 56
     vllm_config: configs/qwen2_5-coder-7b-instruct.yaml
   qwen3-coder-next:
-    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
     kv_per_token_KB: 24
     vllm_config: configs/qwen3-coder-next.yaml
   qwen3-coder-next-fp8:
-    generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
     kv_per_token_KB: 12
     vllm_config: configs/qwen3-coder-next-fp8.yaml
   qwen3-next-80b-a3b-instruct:
-    generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 24
     vllm_config: configs/qwen3-next-80b-a3b-instruct.yaml
   qwen3-next-80b-a3b-instruct-fp8:
-    generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
     kv_per_token_KB: 12
     vllm_config: configs/qwen3-next-80b-a3b-instruct-fp8.yaml
 simulation:
@@ -49,6 +39,7 @@ simulation:
       A100_40GB:
         mig:
           1g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 2.38
             model: qwen2.5-3b-instruct
             param:
@@ -62,6 +53,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 62.8
           2g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 2.36
             model: qwen2.5-3b-instruct
             param:
@@ -75,6 +67,7 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 63.1
           3g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 1.96
             model: qwen2.5-7b-instruct
             param:
@@ -88,6 +81,7 @@ simulation:
                 sigma: 0.0005527448870265582
             restart_time: 62.5
           4g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 1.97
             model: qwen2.5-7b-instruct
             param:
@@ -101,6 +95,7 @@ simulation:
                 sigma: 0.00043171032667850063
             restart_time: 61.9
           7g.40gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 6.45
             model: qwen2.5-14b-instruct
             param:
@@ -120,6 +115,7 @@ simulation:
       B200:
         mig:
           1g.23gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 4.27
             model: qwen2.5-7b-instruct
             param:
@@ -133,6 +129,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           1g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 14.6
             model: qwen2.5-14b-instruct
             param:
@@ -146,6 +143,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           2g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 11.0
             model: qwen2.5-14b-instruct
             param:
@@ -159,6 +157,7 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 61.4
           3g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 1.0
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
@@ -167,6 +166,7 @@ simulation:
       A100_40GB:
         mig:
           1g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 2.38
             model: qwen2.5-coder-3b-instruct
             param:
@@ -180,6 +180,7 @@ simulation:
                 sigma: 0.0011141595232364713
             restart_time: 62.8
           2g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-3b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 2.36
             model: qwen2.5-coder-3b-instruct
             param:
@@ -193,6 +194,7 @@ simulation:
                 sigma: 0.0005937982119924863
             restart_time: 63.1
           3g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 1.97
             model: qwen2.5-coder-7b-instruct
             param:
@@ -206,6 +208,7 @@ simulation:
                 sigma: 0.0005542026973441775
             restart_time: 62.2
           4g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 1.97
             model: qwen2.5-coder-7b-instruct
             param:
@@ -219,6 +222,7 @@ simulation:
                 sigma: 0.0004502867542284373
             restart_time: 61.9
           7g.40gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 6.45
             model: qwen2.5-coder-14b-instruct
             param:
@@ -234,6 +238,7 @@ simulation:
       B200:
         mig:
           1g.23gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-7b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 4.27
             model: qwen2.5-coder-7b-instruct
             param:
@@ -247,6 +252,7 @@ simulation:
                 sigma: 0.0011141595232364713
             restart_time: 63.2
           1g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 14.6
             model: qwen2.5-coder-14b-instruct
             param:
@@ -260,6 +266,7 @@ simulation:
                 sigma: 0.0011141595232364713
             restart_time: 63.2
           2g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 14.6
             model: qwen2.5-coder-14b-instruct
             param:
@@ -273,6 +280,7 @@ simulation:
                 sigma: 0.0005937982119924863
             restart_time: 61.4
           3g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 1.0
             model: qwen3-coder-next-fp8
             param:
@@ -286,6 +294,7 @@ simulation:
                 sigma: 0.0005542026973441775
             restart_time: 62.5
           4g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 1.0
             model: qwen3-coder-next-fp8
             param:
@@ -299,6 +308,7 @@ simulation:
                 sigma: 0.0004502867542284373
             restart_time: 62.1
           7g.180gb:
+            generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
             kv_cache_GB: 1.83
             model: qwen3-coder-next
             param:
@@ -315,6 +325,7 @@ simulation:
       A100_40GB:
         mig:
           1g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 2.38
             model: qwen2.5-3b-instruct
             param:
@@ -328,6 +339,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 62.8
           2g.10gb:
+            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 2.36
             model: qwen2.5-3b-instruct
             param:
@@ -341,6 +353,7 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 63.1
           3g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 1.96
             model: qwen2.5-7b-instruct
             param:
@@ -354,6 +367,7 @@ simulation:
                 sigma: 0.0005527448870265582
             restart_time: 62.5
           4g.20gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 1.97
             model: qwen2.5-7b-instruct
             param:
@@ -367,6 +381,7 @@ simulation:
                 sigma: 0.00043171032667850063
             restart_time: 61.9
           7g.40gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 6.45
             model: qwen2.5-14b-instruct
             param:
@@ -386,6 +401,7 @@ simulation:
       B200:
         mig:
           1g.23gb:
+            generate_path: profiling_results/generated/qwen2.5-7b-instruct-port-8007-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 4.27
             model: qwen2.5-7b-instruct
             param:
@@ -399,6 +415,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           1g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 14.6
             model: qwen2.5-14b-instruct
             param:
@@ -412,6 +429,7 @@ simulation:
                 sigma: 0.0011120023672045723
             restart_time: 63.2
           2g.45gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 11.0
             model: qwen2.5-14b-instruct
             param:
@@ -425,6 +443,7 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 61.4
           3g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 1.0
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
@@ -438,6 +457,7 @@ simulation:
                 sigma: 0.0005527448870265582
             restart_time: 62.5
           4g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 0.7
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
@@ -451,6 +471,7 @@ simulation:
                 sigma: 0.00043171032667850063
             restart_time: 62.1
           7g.180gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
             kv_cache_GB: 1.83
             model: qwen3-next-80b-a3b-instruct
             param:
@@ -467,9 +488,4 @@ simulation:
           max: 0.3
           min: 0.05
           model: random
-  cluster:
-    0: A100_40GB
-    1: A100_40GB
-    2: A100_40GB
-    3: A100_40GB
   gpu_model: A100_40GB
