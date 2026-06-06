@@ -63,7 +63,8 @@ def setup_training_environment(ckpt: Optional[Path] = None) -> str:
             )
 
     snapshot_path = snapshots_dir / "training_config.yaml"
-    shutil.copy2(config_path, snapshot_path)
+    if not snapshot_path.exists():
+        shutil.copy2(config_path, snapshot_path)
 
     # Update simulation_config.yaml cluster
     with open(snapshot_path, "r") as f:
@@ -178,12 +179,11 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
     run_id = run_id or os.environ["TRAINING_RUN_ID"]
     run_name = f"{run_id}"
 
-    # Ensure we use the snapshotted config if loading from a checkpoint
-    if ckpt is not None:
-        snapshot_path = Path(f"results/{run_id}/snapshots/training_config.yaml")
-        if snapshot_path.exists():
-            print(f"Reloading TRAINING_CONFIG from session snapshot: {snapshot_path}")
-            TRAINING_CONFIG.update(snapshot_path)
+    # Ensure we use the snapshotted config for this run
+    snapshot_path = Path(f"results/{run_id}/snapshots/training_config.yaml")
+    if snapshot_path.exists():
+        print(f"Reloading TRAINING_CONFIG from session snapshot: {snapshot_path}")
+        TRAINING_CONFIG.update(snapshot_path)
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
