@@ -170,9 +170,11 @@ class RuleBasedHeuristic:
 
             action_deviation = get_deviation(new_ratios)
 
+            ratio_parts = ", ".join(
+                f"{aid.name}: {new_ratios[aid]:.2f}" for aid in m.AgentId
+            )
             action_evaluations.append(
-                f"    {action.name:<30} -> Coding: {new_ratios[m.AgentId.CODING]:.2f}, "
-                f"RAG: {new_ratios[m.AgentId.RAG]:.2f} (dev: {action_deviation:.2f})"
+                f"    {action.name:<30} -> {ratio_parts} (dev: {action_deviation:.2f})"
             )
 
             if action_deviation < best_deviation:
@@ -182,18 +184,22 @@ class RuleBasedHeuristic:
 
         eval_str = "\n".join(action_evaluations)
 
+        current_ratio_str = ", ".join(
+            f"{aid.name}={scaling_ratios[aid]:.2f}" for aid in m.AgentId
+        )
+        best_ratio_str = ", ".join(
+            f"{aid.name}={best_ratios[aid]:.2f}" for aid in m.AgentId
+        )
         logger.info(
             "[Heuristic] Scaling Triggered!\n"
-            "  Current Ratios : Coding=%.2f, RAG=%.2f\n"
+            "  Current Ratios : %s\n"
             "  Evaluated Actions:\n%s\n"
             "  Action Taken   : %s\n"
-            "  Expected Ratios: Coding=%.2f, RAG=%.2f",
-            scaling_ratios[m.AgentId.CODING],
-            scaling_ratios[m.AgentId.RAG],
+            "  Expected Ratios: %s",
+            current_ratio_str,
             eval_str,
             best_action.name,
-            best_ratios[m.AgentId.CODING],
-            best_ratios[m.AgentId.RAG],
+            best_ratio_str,
         )
 
         return best_action

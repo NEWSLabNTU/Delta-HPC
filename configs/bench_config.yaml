@@ -2,6 +2,7 @@ cluster:
   0: A100_40GB
   1: A100_40GB
   2: A100_40GB
+  3: A100_40GB
 seed: 77
 benchmark-length: 1024
 workloads:
@@ -11,6 +12,9 @@ workloads:
       - 0.2
       - 0.5
       RAGAgent:
+      - 0.1
+      - 0.5
+      ChatAgent:
       - 0.1
       - 0.5
     duration:
@@ -24,6 +28,9 @@ workloads:
       RAGAgent:
       - 1.0
       - 2.0
+      ChatAgent:
+      - 1.0
+      - 2.0
     duration:
     - 1800.0
     - 2200.0
@@ -35,6 +42,9 @@ workloads:
       RAGAgent:
       - 4.5
       - 5.5
+      ChatAgent:
+      - 4.5
+      - 5.5
     duration:
     - 1800.0
     - 2200.0
@@ -44,6 +54,9 @@ workloads:
       - 4.0
       - 5.0
       RAGAgent:
+      - 6.0
+      - 8.0
+      ChatAgent:
       - 6.0
       - 8.0
     duration:
@@ -67,6 +80,12 @@ heuristic:
         3g.20gb: 3.21
         2g.10gb: 5.39
         1g.10gb: 3.52
+      ChatAgent:
+        7g.40gb: 3.36
+        4g.20gb: 3.83
+        3g.20gb: 3.21
+        2g.10gb: 5.39
+        1g.10gb: 3.52
     B200:
       CodingAgent:
         7g.180gb: 2.04
@@ -76,6 +95,13 @@ heuristic:
         1g.45gb: 1.65
         1g.23gb: 2.04
       RAGAgent:
+        7g.180gb: 4.61
+        4g.90gb: 5.23
+        3g.90gb: 4.53
+        2g.45gb: 5.31
+        1g.45gb: 3.75
+        1g.23gb: 3.44
+      ChatAgent:
         7g.180gb: 4.61
         4g.90gb: 5.23
         3g.90gb: 4.53

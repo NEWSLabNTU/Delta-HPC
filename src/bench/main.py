@@ -149,11 +149,9 @@ class BenchRunner:
             "presence_by_mig": {
                 aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId
             },
-            "joint_phase_ticks": {pc: {pr: 0 for pr in patterns} for pc in patterns},
             "patterns": patterns,
             "timeline_time": [],
-            "timeline_pattern_coding": [],
-            "timeline_pattern_rag": [],
+            "timeline_pattern_by_agent": {aid: [] for aid in m.AgentId},
             "timeline_actions": [],
         }
 
@@ -236,12 +234,11 @@ class BenchRunner:
     def _tick_step_stats(self, stats: Dict[str, Any]):
         assert self.env is not None
         curr_time = self.env.sim.current_time
-        pat_c = self._get_active_pattern(m.AgentId.CODING, curr_time)
-        pat_r = self._get_active_pattern(m.AgentId.RAG, curr_time)
-        stats["joint_phase_ticks"][pat_c][pat_r] += 1
+        # Record pattern for each agent
+        for aid in m.AgentId:
+            pat = self._get_active_pattern(aid, curr_time)
+            stats["timeline_pattern_by_agent"][aid].append(pat)
         stats["timeline_time"].append(curr_time)
-        stats["timeline_pattern_coding"].append(pat_c)
-        stats["timeline_pattern_rag"].append(pat_r)
 
         for aid, agent in self.env.sim.agents.items():
             ql_sum = sum(
@@ -332,16 +329,16 @@ class BenchRunner:
     ) -> Dict[str, Dict[str, Any]]:
         presence = stats["presence_by_mig"]
         ql_sum = stats["queue_lengths_sum"]
-        patterns = stats["patterns"]
         total_steps = BENCH_CONFIG.benchmark_length
 
         ttft_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
         tpot_list: Dict[m.AgentId, List[float]] = {aid: [] for aid in m.AgentId}
-        tokens_by_mig = {
-            aid: {
-                pc: {pr: {prof: 0 for prof in m.MIGProfile} for pr in patterns}
-                for pc in patterns
-            }
+        patterns = [w.value for w in Workload]
+        overall_tokens: Dict[m.AgentId, Dict[m.MIGProfile, int]] = {
+            aid: {prof: 0 for prof in m.MIGProfile} for aid in m.AgentId
+        }
+        tokens_by_pattern: Dict[m.AgentId, Dict[str, Dict[m.MIGProfile, int]]] = {
+            aid: {pat: {prof: 0 for prof in m.MIGProfile} for pat in patterns}
             for aid in m.AgentId
         }
 
@@ -359,48 +356,20 @@ class BenchRunner:
                 if req.generated_tokens > 0 and req.decode_time > 0:
                     tpot_list[aid].append(req.decode_time / req.generated_tokens)
 
-                # Track token migration attribution
-                r_pat_c = self._get_active_pattern(m.AgentId.CODING, req.arrival_time)
-                r_pat_r = self._get_active_pattern(m.AgentId.RAG, req.arrival_time)
                 assert req.serving_engine is not None
-                tokens_by_mig[aid][r_pat_c][r_pat_r][
-                    req.serving_engine.mig_profile.profile_type
-                ] += req.generated_tokens
+                mig_type = req.serving_engine.mig_profile.profile_type
+                overall_tokens[aid][mig_type] += req.generated_tokens
+                # Track by the agent's own active workload pattern at arrival
+                req_pattern = self._get_active_pattern(aid, req.arrival_time)
+                tokens_by_pattern[aid][req_pattern][mig_type] += req.generated_tokens
 
         res: Dict[str, Dict[str, Any]] = {}
-        total_ticks = max(
-            1, sum(sum(stats["joint_phase_ticks"][pc].values()) for pc in patterns)
-        )
 
         for aid in m.AgentId:
-            # Token distribution math
-            token_mig_percentages = {
-                pc: {
-                    pr: {
-                        k: (
-                            v / sum(tokens_by_mig[aid][pc][pr].values()) * 100
-                            if sum(tokens_by_mig[aid][pc][pr].values()) > 0
-                            else 0
-                        )
-                        for k, v in tokens_by_mig[aid][pc][pr].items()
-                    }
-                    for pr in patterns
-                }
-                for pc in patterns
-            }
-
-            overall_tokens = {
-                prof: sum(
-                    tokens_by_mig[aid][pc][pr][prof]
-                    for pc in patterns
-                    for pr in patterns
-                )
-                for prof in m.MIGProfile
-            }
-            total_gen = sum(overall_tokens.values())
+            total_gen = sum(overall_tokens[aid].values())
             overall_token_mig_percentages = {
                 prof: (v / total_gen * 100)
-                for prof, v in overall_tokens.items()
+                for prof, v in overall_tokens[aid].items()
                 if total_gen > 0
             }
 
@@ -417,14 +386,17 @@ class BenchRunner:
                 "split_count": stats["split_count"][aid],
                 "merge_count": stats["merge_count"][aid],
                 "transfer_count": stats["transfer_count"][aid],
-                "token_mig_percentages": token_mig_percentages,
                 "overall_token_mig_percentages": overall_token_mig_percentages,
-                "joint_occurrences": {
-                    pc: {
-                        pr: (stats["joint_phase_ticks"][pc][pr] / total_ticks * 100)
-                        for pr in patterns
+                "token_mig_by_pattern": {
+                    pat: {
+                        prof: (
+                            v / sum(tokens_by_pattern[aid][pat].values()) * 100
+                            if sum(tokens_by_pattern[aid][pat].values()) > 0
+                            else 0.0
+                        )
+                        for prof, v in tokens_by_pattern[aid][pat].items()
                     }
-                    for pc in patterns
+                    for pat in patterns
                 },
                 "mig_existence_percentages": {
                     prof: (count / total_steps * 100)
@@ -443,28 +415,24 @@ class BenchRunner:
         if not times:
             return
 
-        coding_patterns = stats["timeline_pattern_coding"]
-        rag_patterns = stats["timeline_pattern_rag"]
-
         mapping = {"idle": 0, "even": 1, "busy": 2, "burst": 3}
-        y_coding = [mapping[p] for p in coding_patterns]
-        y_rag = [mapping[p] for p in rag_patterns]
+        colors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"]
 
         for target_action in ["split", "merge", "transfer"]:
             plt.figure(figsize=(15, 5))
             sns.set_style("whitegrid")
 
-            plt.step(
-                times,
-                y_coding,
-                label="CodingAgent",
-                where="post",
-                alpha=0.8,
-                linewidth=3,
-            )
-            plt.step(
-                times, y_rag, label="RAGAgent", where="post", alpha=0.8, linewidth=3
-            )
+            for idx, aid in enumerate(m.AgentId):
+                y_vals = [mapping[p] for p in stats["timeline_pattern_by_agent"][aid]]
+                plt.step(
+                    times,
+                    y_vals,
+                    label=aid.value,
+                    where="post",
+                    alpha=0.8,
+                    linewidth=3,
+                    color=colors[idx % len(colors)],
+                )
 
             for t, action in stats["timeline_actions"]:
                 if action.action == m.ActionType.SPLIT and target_action == "split":

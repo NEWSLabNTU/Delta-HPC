@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Union
 
 import src.share.models as m
 import src.simulation.utils as u
-from src.bench.models import BenchMode, Workload
+from src.bench.models import BenchMode
 
 
 def get_mig_name(mig: Union[m.MIGProfile, m.MIGProfileBase]) -> str:
@@ -77,79 +77,68 @@ def print_metrics(results: Dict[str, Any]):
             overall_token_str,
         ]
 
-    coding_metrics = format_metrics(results[m.AgentId.CODING.value])
-    rag_metrics = format_metrics(results[m.AgentId.RAG.value])
+    # Dynamically build per-agent columns
+    active_agents = list(m.AgentId)
+    agent_metrics = {aid: format_metrics(results[aid.value]) for aid in active_agents}
+    agent_labels = [aid.value for aid in active_agents]
 
+    metric_rows = [
+        "TTFT (P25/50/75/99)",
+        "TPOT (P25/50/75)",
+        "Avg Q",
+        "S/M/T",
+        "MIG Existence (%)",
+        "Tokens by MIG (%)",
+    ]
     table_data = [
-        ["TTFT (P25/50/75/99)", coding_metrics[0], rag_metrics[0]],
-        ["TPOT (P25/50/75)", coding_metrics[1], rag_metrics[1]],
-        ["Avg Q", coding_metrics[2], rag_metrics[2]],
-        ["S/M/T", coding_metrics[3], rag_metrics[3]],
-        ["MIG Existence (%)", coding_metrics[4], rag_metrics[4]],
-        ["Tokens by MIG (%)", coding_metrics[5], rag_metrics[5]],
+        [label] + [agent_metrics[aid][i] for aid in active_agents]
+        for i, label in enumerate(metric_rows)
     ]
 
     print("\n● Aggregate Metrics")
     print(
         tabulate.tabulate(
             table_data,
-            headers=["Metric", "Coding Agent", "RAG Agent"],
+            headers=["Metric"] + agent_labels,
             tablefmt="fancy_outline",
             headersglobalalign="center",
         )
     )
 
-    patterns = [w.value for w in Workload]
+    sorted_mig_profiles = sorted(
+        m.MIGProfile, key=lambda x: x.idx if hasattr(x, "idx") else x.value
+    )
+    mig_names = [get_mig_name(prof) for prof in sorted_mig_profiles]
 
-    print("\n● Tokens by MIG Matrix (%)")
+    print("\n● Tokens by MIG Profile per Workload (%)")
     print("Format: 7G | 4G | 3G | 2G | 1L | 1S")
-    for aid in [m.AgentId.CODING, m.AgentId.RAG]:
-        print(f"\n[{aid.name} Agent]")
-        headers = ["Coding \\ RAG"] + patterns
-        mat_data: List[List[str]] = []
-        token_mig_percentages = results[aid.value]["token_mig_percentages"]
-        for pat_c in patterns:
-            row_data = [pat_c]
-            for pat_r in patterns:
-                pat_dict = token_mig_percentages[pat_c][pat_r]
-                mig_vals: List[str] = []
-                # Sort by logical profile index
-                sorted_pat_migs = sorted(
-                    pat_dict.keys(),
-                    key=lambda x: x.idx if hasattr(x, "idx") else x.value,
-                )
-                for mig in sorted_pat_migs:
-                    mig_vals.append(f"{pat_dict[mig]:3.0f}%")
-                row_data.append(" | ".join(mig_vals))
-            mat_data.append(row_data)
+    for aid in active_agents:
+        print(f"\n[{aid.value}]")
+        tok_headers = ["Workload"] + mig_names
+        tok_data: List[List[str]] = []
+        tok_by_pat = results[aid.value]["token_mig_by_pattern"]
+        for pat, mig_dict in tok_by_pat.items():
+            row = [pat] + [
+                f"{mig_dict.get(prof, 0.0):.1f}%"
+                for prof in sorted_mig_profiles
+            ]
+            tok_data.append(row)
+        # Overall row
+        overall = results[aid.value]["overall_token_mig_percentages"]
+        tok_data.append(
+            ["[overall]"] + [f"{overall.get(prof, 0.0):.1f}%" for prof in sorted_mig_profiles]
+        )
         print(
             tabulate.tabulate(
-                mat_data,
-                headers=headers,
+                tok_data,
+                headers=tok_headers,
                 tablefmt="fancy_outline",
                 stralign="right",
                 headersglobalalign="center",
             )
         )
 
-    print("\n● Joint Workload Occurrences (%)")
-    occ_headers = ["Coding \\ RAG"] + patterns
-    occ_data: List[List[str]] = []
-    occurrences = results[m.AgentId.CODING.value]["joint_occurrences"]
-    for pat_c in patterns:
-        row_data = [pat_c]
-        for pat_r in patterns:
-            row_data.append(f"{occurrences[pat_c][pat_r]:3.0f}%")
-        occ_data.append(row_data)
-    print(
-        tabulate.tabulate(
-            occ_data,
-            headers=occ_headers,
-            tablefmt="fancy_outline",
-            stralign="right",
-            headersglobalalign="center",
-        )
-    )
+
 
 
 def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):

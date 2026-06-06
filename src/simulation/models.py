@@ -295,7 +295,7 @@ class SimulationEvent:
     payload: PayloadType = field(compare=False, repr=False)
 
 
-ActionHistoryKey = Literal["split", "merge", "give", "receive"]
+ActionHistoryKey = str
 AgentRatioKeys = Literal[
     "agent_arrival_rate_ratio",
     "agent_avg_queue_len_ratio",
