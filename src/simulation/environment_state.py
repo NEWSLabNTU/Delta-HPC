@@ -115,7 +115,11 @@ class EnvironmentStateImpl(sm.EnvironmentState):
                 stats.give_to_steps[aid.value] = TRAINING_CONFIG.action_cooldown
 
     def set_last_action(
-        self, agent_id: m.AgentId, event_type: sm.ActionHistoryKey, amount: int = 0, target_agent: Optional[m.AgentId] = None
+        self,
+        agent_id: m.AgentId,
+        event_type: sm.ActionHistoryKey,
+        amount: int = 0,
+        target_agent: Optional[m.AgentId] = None,
     ) -> None:
         entry = self._agent_stats[agent_id].action_history[event_type]
         entry["steps"] = 0
@@ -124,7 +128,9 @@ class EnvironmentStateImpl(sm.EnvironmentState):
         if event_type == "give" and target_agent is not None:
             self._agent_stats[agent_id].give_to_steps[target_agent.value] = 0
 
-    def get_steps_since_transfer(self, sender_id: m.AgentId, receiver_id: m.AgentId) -> int:
+    def get_steps_since_transfer(
+        self, sender_id: m.AgentId, receiver_id: m.AgentId
+    ) -> int:
         return self._agent_stats[sender_id].give_to_steps[receiver_id.value]
 
     def decrement_pending_requests(self, agent_id: m.AgentId) -> None:
@@ -320,7 +326,7 @@ class EnvironmentStateImpl(sm.EnvironmentState):
         # Sort agents by enum value for deterministic pairing order
         # Pairs are formed as (Agent i, Agent j) where i < j
         agents_ordered = sorted(rates.keys(), key=lambda a: a.value)
-        
+
         for key, data in metrics.items():
             pair_ratios = []
             for i in range(len(agents_ordered)):
@@ -340,9 +346,13 @@ class EnvironmentStateImpl(sm.EnvironmentState):
                 l_r_raw = raw_latent_totals[agents_ordered[j]]
                 l_c_norm = math.log10(1 + l_c_raw) / denom
                 l_r_norm = math.log10(1 + l_r_raw) / denom
-                latency_ratios.append((l_c_norm - l_r_norm) / (l_c_norm + l_r_norm + epsilon))
-                
-        ratios["agent_avg_composite_latency_ratio"] = tuple(latency_ratios) if len(latency_ratios) > 1 else latency_ratios[0]
+                latency_ratios.append(
+                    (l_c_norm - l_r_norm) / (l_c_norm + l_r_norm + epsilon)
+                )
+
+        ratios["agent_avg_composite_latency_ratio"] = (
+            tuple(latency_ratios) if len(latency_ratios) > 1 else latency_ratios[0]
+        )
 
         return ratios
 
@@ -649,7 +659,9 @@ class EnvironmentStateImpl(sm.EnvironmentState):
             for aid in agents.keys()
         }
 
-    def _get_last_receive(self, agents: Dict[m.AgentId, m.Agent]) -> Dict[m.AgentId, float]:
+    def _get_last_receive(
+        self, agents: Dict[m.AgentId, m.Agent]
+    ) -> Dict[m.AgentId, float]:
         norm = float(TRAINING_CONFIG.action_cooldown)
         return {
             aid: min(self.get_steps_since(aid, "receive"), norm) / norm
@@ -659,7 +671,7 @@ class EnvironmentStateImpl(sm.EnvironmentState):
     def _get_give_to_steps(self, agents: Dict[m.AgentId, m.Agent]) -> Any:
         norm = float(TRAINING_CONFIG.action_cooldown)
         ordered_targets = sorted(list(m.AgentId), key=lambda x: x.value)
-        
+
         result = {}
         for aid in agents.keys():
             steps = []

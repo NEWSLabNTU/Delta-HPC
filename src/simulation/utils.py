@@ -78,7 +78,9 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
                 # Need the mig_profile object? Actually, we just need the path string directly
                 gen_path_str = mig_cfg.get("generate_path")
                 if not gen_path_str:
-                    raise ValueError(f"generate_path not found for {agent_name} {mname} in mig profile {mig_profile_str}")
+                    raise ValueError(
+                        f"generate_path not found for {agent_name} {mname} in mig profile {mig_profile_str}"
+                    )
                 key = (agent_name, mname)
                 if key not in agent_model_paths:
                     agent_model_paths[key] = base_dir / gen_path_str

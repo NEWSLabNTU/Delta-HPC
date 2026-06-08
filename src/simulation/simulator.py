@@ -437,7 +437,9 @@ class SimulatorImpl(m.Simulator):
             )
             mig_size = STATE_DEFINITIONS[sid][action.receiver.mig_idx].size
 
-            self._environment_state.set_last_action(giver_id, "give", mig_size, target_agent=action.receiver.receiver_id)
+            self._environment_state.set_last_action(
+                giver_id, "give", mig_size, target_agent=action.receiver.receiver_id
+            )
             self._environment_state.set_last_action(
                 action.receiver.receiver_id, "receive", mig_size
             )
@@ -926,10 +928,17 @@ class SimulatorImpl(m.Simulator):
                 if pred_action is None or pred_action.receiver is None:
                     mask[act_id] = False
                     continue
-                
+
                 if val.receiver_id is not None:
-                    sender_agent = self._get_engine_owner(pred_action.gpu_id, pred_action.mig_src[0])
-                    if self._environment_state.get_steps_since_transfer(sender_agent, val.receiver_id) < cooldown_steps:
+                    sender_agent = self._get_engine_owner(
+                        pred_action.gpu_id, pred_action.mig_src[0]
+                    )
+                    if (
+                        self._environment_state.get_steps_since_transfer(
+                            sender_agent, val.receiver_id
+                        )
+                        < cooldown_steps
+                    ):
                         mask[act_id] = False
                         continue
                 mask[act_id] = True

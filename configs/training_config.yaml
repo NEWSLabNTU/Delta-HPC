@@ -101,7 +101,7 @@ training:
   reward:
     Q:
       CodingAgent:
-        7g.40gb: 12.0
+        7g.40gb: 18.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
@@ -113,7 +113,7 @@ training:
         1g.45gb: 1.0
         1g.23gb: 1.0
       RAGAgent:
-        7g.40gb: 12.0
+        7g.40gb: 18.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
@@ -125,7 +125,7 @@ training:
         1g.45gb: 1.0
         1g.23gb: 1.0
       ChatAgent:
-        7g.40gb: 12.0
+        7g.40gb: 18.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0

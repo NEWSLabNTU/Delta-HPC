@@ -230,7 +230,13 @@ class ObservationCollector:
         # Budget refresh logic (simulating simulation/environment_state.py:91)
         # Note: Real-time budget refresh might need a separate timer.
 
-    def set_last_action(self, agent_id: m.AgentId, action_type: str, amount: int = 0, target_agent: Optional[m.AgentId] = None):
+    def set_last_action(
+        self,
+        agent_id: m.AgentId,
+        action_type: str,
+        amount: int = 0,
+        target_agent: Optional[m.AgentId] = None,
+    ):
         entry = self._agent_stats[agent_id].action_history[action_type]
         entry["intervals"] = 0
         if "amount" in entry:
@@ -470,7 +476,11 @@ class ObservationCollector:
         if len(agents) == 3:
             state_data["give_to_steps"] = {
                 aid: tuple(
-                    min(self._agent_stats[aid].give_to_steps[target.value], float(TRAINING_CONFIG.action_cooldown)) / float(TRAINING_CONFIG.action_cooldown)
+                    min(
+                        self._agent_stats[aid].give_to_steps[target.value],
+                        float(TRAINING_CONFIG.action_cooldown),
+                    )
+                    / float(TRAINING_CONFIG.action_cooldown)
                     for target in sorted(agents, key=lambda x: x.value)
                 )
                 for aid in agents

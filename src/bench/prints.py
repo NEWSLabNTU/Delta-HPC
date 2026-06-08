@@ -119,14 +119,14 @@ def print_metrics(results: Dict[str, Any]):
         tok_by_pat = results[aid.value]["token_mig_by_pattern"]
         for pat, mig_dict in tok_by_pat.items():
             row = [pat] + [
-                f"{mig_dict.get(prof, 0.0):.1f}%"
-                for prof in sorted_mig_profiles
+                f"{mig_dict.get(prof, 0.0):.1f}%" for prof in sorted_mig_profiles
             ]
             tok_data.append(row)
         # Overall row
         overall = results[aid.value]["overall_token_mig_percentages"]
         tok_data.append(
-            ["[overall]"] + [f"{overall.get(prof, 0.0):.1f}%" for prof in sorted_mig_profiles]
+            ["[overall]"]
+            + [f"{overall.get(prof, 0.0):.1f}%" for prof in sorted_mig_profiles]
         )
         print(
             tabulate.tabulate(
@@ -137,8 +137,6 @@ def print_metrics(results: Dict[str, Any]):
                 headersglobalalign="center",
             )
         )
-
-
 
 
 def print_workloads(summary: Dict[m.AgentId, List[Dict[str, Any]]]):

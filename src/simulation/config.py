@@ -139,7 +139,7 @@ class SimulationConfig:
         gpu_ids = sorted(list(gpu_to_model.keys()))
         if not gpu_ids:
             raise ValueError("No GPUs available in cluster configuration.")
-        
+
         permanent_gpu = gpu_ids[-1]
         managed_gpus = gpu_ids[:-1]
 

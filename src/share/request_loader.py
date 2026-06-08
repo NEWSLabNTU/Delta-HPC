@@ -49,9 +49,7 @@ class RequestLoader:
             for i, row in enumerate(self._coding_ds.select_columns(["id"]))
         }
 
-        self._rag_ds = datasets.load_from_disk(
-            self.dataset_paths[m.AgentId.RAG.value]
-        )
+        self._rag_ds = datasets.load_from_disk(self.dataset_paths[m.AgentId.RAG.value])
         self._rag_id_map = {
             str(row["id"]): i
             for i, row in enumerate(self._rag_ds.select_columns(["id"]))
