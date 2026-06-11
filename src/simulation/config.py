@@ -77,7 +77,8 @@ class SimulationConfig:
         num_agents = len(active_agents)
 
         gpu_model = sim_data.get("gpu_model", "A100_40GB")
-        gpu_to_model = {i: gpu_model for i in range(num_agents + 1)}
+        gpu_to_model = {i: gpu_model for i in range(num_agents)}
+        gpu_to_model[num_agents] = "A100_40GB"
 
         if use_hardware_detection:
             from src.deploy.mig_controller import MIGController
@@ -149,8 +150,12 @@ class SimulationConfig:
                 gid = managed_gpus[idx % len(managed_gpus)]
                 initial_agents[gid].append(agent_name)
 
+        prof_2g = next((p for p in GPU_MIG_PROFILE[permanent_gpu] if p.profile_type == m.MIGProfile.MIG_2G), None)
+        if not prof_2g:
+            prof_2g = sorted(GPU_MIG_PROFILE[permanent_gpu], key=lambda x: x.profile_type.value)[0]
+            
         permanent_engines = [
-            {"agent": agent_name, "gpu": permanent_gpu, "mig": "2g.10gb"}
+            {"agent": agent_name, "gpu": permanent_gpu, "mig": prof_2g.string}
             for agent_name in active_agents
         ]
 

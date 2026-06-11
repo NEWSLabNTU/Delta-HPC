@@ -7,6 +7,7 @@ from datetime import datetime
 import itertools
 import time
 import subprocess
+import shutil
 from typing import Dict, Iterator, List, Mapping, Set, Tuple, Any, Union, cast
 
 type Tree = Union[Mapping[str, "Tree"], Any]
@@ -121,6 +122,11 @@ def main():
 
         snapshot_path = Path(f"results/{timestamp}/snapshots/training_config.yaml")
         save_yaml(config_copy, snapshot_path)
+
+        sim_config_path = Path("configs/simulation_config.yaml")
+        sim_snapshot_path = Path(f"results/{timestamp}/snapshots/simulation_config.yaml")
+        if sim_config_path.exists():
+            shutil.copy2(sim_config_path, sim_snapshot_path)
 
         cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
         cmd_str = (

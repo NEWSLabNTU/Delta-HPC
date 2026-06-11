@@ -157,11 +157,51 @@ simulation:
                 sigma: 0.0006084495107671828
             restart_time: 61.4
           3g.90gb:
-            generate_path: profiling_results/generated/qwen2.5-3b-instruct-port-8003-processed-lmsys-chat-generated.jsonl
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
             kv_cache_GB: 1.0
             model: qwen3-next-80b-a3b-instruct-fp8
             param:
-              prefill: null
+              prefill:
+                alpha: 0.051270775707020814
+                beta: 0.0001557474601161097
+                sigma: 0.050605126072537074
+              tpot:
+                alpha: 0.023352265970280714
+                beta: 0.0002088799262357157
+                sigma: 0.0005527448870265582
+            restart_time: 62.5
+          4g.90gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
+            kv_cache_GB: 0.7
+            model: qwen3-next-80b-a3b-instruct-fp8
+            param:
+              prefill:
+                alpha: 0.030131679064210343
+                beta: 0.00012045879032405954
+                sigma: 0.031631261808311543
+              tpot:
+                alpha: 0.023281234872177783
+                beta: 0.0001654388688334183
+                sigma: 0.00043171032667850063
+            restart_time: 62.1
+          7g.180gb:
+            generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
+            kv_cache_GB: 1.83
+            model: qwen3-next-80b-a3b-instruct
+            param:
+              prefill:
+                alpha: 0.045291878638524366
+                beta: 0.00015694526100495866
+                sigma: 0.042782964822820416
+              tpot:
+                alpha: 0.024763871292589484
+                beta: 0.00015613310131934138
+                sigma: 0.00039039936865724014
+            restart_time: 68.5
+        search-overhead:
+          max: 0.3
+          min: 0.05
+          model: random
     CodingAgent:
       A100_40GB:
         mig:
@@ -488,4 +528,4 @@ simulation:
           max: 0.3
           min: 0.05
           model: random
-  gpu_model: A100_40GB
+  gpu_model: B200

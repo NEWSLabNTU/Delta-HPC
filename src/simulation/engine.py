@@ -253,8 +253,10 @@ class LLMEngineImpl(m.LLMEngine):
         )
         decode_time = 0.0
         num_reqs = len(all_reqs)
-        for _ in range(max_decode_steps):
-            decode_time += self._get_tpot(num_reqs)
+        if max_decode_steps > 0:
+            mu = self._tpot_alpha + self._tpot_beta * num_reqs
+            avg_tpot = max(0.0, random.gauss(mu, self._tpot_sigma))
+            decode_time = avg_tpot * max_decode_steps
 
         return prefill_time + decode_time
 

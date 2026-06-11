@@ -1,5 +1,5 @@
 training:
-  tmux_session: hpc-train-3ag
+  tmux_session: hpc-train-3ag-b200
   sb3_norm: true
   action-interval: 120.0
   total_timesteps: 1024000
@@ -31,106 +31,106 @@ training:
     max_ent_coef: 0.05
     net_arch:
       pi:
-      - 512
-      - 512
+        - 512
+        - 512
       vf:
-      - 512
-      - 512
+        - 512
+        - 512
   action_mask:
     action_cooldown: 10
   patterns:
     idle:
       duration:
-      - 3600.0
-      - 4800.0
+        - 3600.0
+        - 4800.0
       rate:
         CodingAgent:
-        - 0.2
-        - 0.5
+          - 0.2
+          - 0.5
         RAGAgent:
-        - 0.1
-        - 0.5
+          - 0.1
+          - 0.5
         ChatAgent:
-        - 0.1
-        - 0.5
+          - 0.1
+          - 0.5
     even:
       duration:
-      - 1800.0
-      - 2200.0
+        - 1800.0
+        - 2200.0
       rate:
         CodingAgent:
-        - 1.0
-        - 2.5
+          - 1.0
+          - 2.5
         RAGAgent:
-        - 1.0
-        - 2.0
+          - 1.0
+          - 2.0
         ChatAgent:
-        - 1.0
-        - 2.0
+          - 1.0
+          - 2.0
     busy:
       duration:
-      - 1800.0
-      - 2200.0
+        - 1800.0
+        - 2200.0
       rate:
         CodingAgent:
-        - 3.0
-        - 4.0
+          - 3.0
+          - 4.0
         RAGAgent:
-        - 4.5
-        - 5.5
+          - 4.5
+          - 5.5
         ChatAgent:
-        - 4.5
-        - 5.5
+          - 4.5
+          - 5.5
     burst:
       duration:
-      - 300.0
-      - 700.0
+        - 300.0
+        - 700.0
       rate:
         CodingAgent:
-        - 4.0
-        - 5.0
+          - 4.0
+          - 5.0
         RAGAgent:
-        - 6.0
-        - 8.0
+          - 6.0
+          - 8.0
         ChatAgent:
-        - 6.0
-        - 8.0
+          - 6.0
+          - 8.0
   reconfig:
     budget: 300.0
     refresh: 30.0
   reward:
     Q:
       CodingAgent:
-        7g.40gb: 18.0
+        7g.40gb: 15.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 12.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
       RAGAgent:
-        7g.40gb: 18.0
+        7g.40gb: 15.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 12.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
       ChatAgent:
-        7g.40gb: 18.0
+        7g.40gb: 15.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 12.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
@@ -144,7 +144,7 @@ training:
     w_tpot: 0.2
     gamma: 12.0
     scaling: 0.1
-    clipping: -50
+    clipping: -500
     use_quality_bonus: true
     use_affinity_bonus: true
-    affinity_bonus_weight: 0.1
+    affinity_bonus_weight: 0.3

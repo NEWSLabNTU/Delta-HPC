@@ -51,6 +51,7 @@ def setup_training_environment(ckpt: Optional[Path] = None) -> str:
 
     # Handle snapshotting config
     config_path = Path("configs/training_config.yaml")
+    sim_config_path = Path("configs/simulation_config.yaml")
     if ckpt is not None:
         old_snapshot = ckpt.parent.parent.parent / "snapshots" / "training_config.yaml"
         if old_snapshot.exists():
@@ -60,10 +61,23 @@ def setup_training_environment(ckpt: Optional[Path] = None) -> str:
             print(
                 f"Warning: Old snapshot not found at {old_snapshot}, using current config"
             )
+        
+        old_sim_snapshot = ckpt.parent.parent.parent / "snapshots" / "simulation_config.yaml"
+        if old_sim_snapshot.exists():
+            print(f"Using old snapshot simulation config from {old_sim_snapshot}")
+            sim_config_path = old_sim_snapshot
+        else:
+            print(
+                f"Warning: Old snapshot simulation config not found at {old_sim_snapshot}, using current config"
+            )
 
     snapshot_path = snapshots_dir / "training_config.yaml"
     if not snapshot_path.exists():
         shutil.copy2(config_path, snapshot_path)
+
+    sim_snapshot_path = snapshots_dir / "simulation_config.yaml"
+    if not sim_snapshot_path.exists() and sim_config_path.exists():
+        shutil.copy2(sim_config_path, sim_snapshot_path)
     return run_id
 
 
