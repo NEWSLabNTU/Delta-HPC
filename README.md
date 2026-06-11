@@ -78,7 +78,7 @@ Refer to the [vLLM documentation](https://docs.vllm.ai) for build instructions. 
 
 ## 1. Dataset Preparation
 
-> **About agents.** This repository currently defines **two agents**: `CodingAgent` (serves coding-assistant LLM requests) and `RAGAgent` (serves retrieval-augmented generation requests). All dataset preparation, LLM configuration, profiling, and training are organised around these two agents.
+> **About agents.** This repository currently defines **three agents**: `CodingAgent` (serves coding-assistant LLM requests), `RAGAgent` (serves retrieval-augmented generation requests), and `ChatAgent` (serves general chat requests). All dataset preparation, LLM configuration, profiling, and training are organised around these three agents.
 >
 > If you want to add more agents, the following files must be modified:
 >
@@ -92,9 +92,9 @@ Refer to the [vLLM documentation](https://docs.vllm.ai) for build instructions. 
 > | `configs/simulation_config.yaml` | Add the new agent block under `simulation.agents` |
 > | `configs/deployment.yaml` | Assign the new agent to a GPU slot |
 >
-> **Note:** Adding more than two agents has not been tested. Proceed with caution and expect to debug edge cases in the simulator and RL environment.
+> **Note:** Adding more than three agents has not been tested. Proceed with caution and expect to debug edge cases in the simulator and RL environment.
 
-Datasets are stored under `assets/` and must be preprocessed before use. Two datasets are required: one for the **Coding Agent** workload and one for the **RAG Agent** workload.
+Datasets are stored under `assets/` and must be preprocessed before use. Three datasets are required: one for the **Coding Agent** workload, one for the **RAG Agent** workload, and one for the **Chat Agent** workload.
 
 ### Coding Agent Dataset — Code Feedback
 
@@ -117,6 +117,18 @@ Convert the dataset (both train and test splits) to ShareGPT format:
 python -m src.dataset.rag_convert_to_sharegpt \
     --hf-path assets/rag-dataset-sharegpt
 # Output saved to: assets/rag-dataset-sharegpt/
+```
+
+### Chat Agent Dataset — LMSYS Chat 1M
+
+Download URL: [lmsys/lmsys-chat-1m](https://huggingface.co/datasets/lmsys/lmsys-chat-1m)
+
+Filter the dataset to English, convert to ShareGPT format, and expand multi-round conversations into individual rows:
+
+```bash
+python -m src.dataset.lmsys_preprocess \
+    --hf-path assets/processed_lmsys_chat
+# Output saved to: assets/processed_lmsys_chat/
 ```
 
 ---
@@ -195,6 +207,7 @@ This section is **required**. It tells the runtime where to find the preprocesse
 datasets:
   CodingAgent: assets/processed_code_feedback   # Output of src.dataset.coder_preprocess
   RAGAgent: assets/rag-dataset-sharegpt         # Output of src.dataset.rag_convert_to_sharegpt
+  ChatAgent: assets/processed_lmsys_chat        # Output of src.dataset.lmsys_preprocess
 ```
 
 > [!IMPORTANT]
@@ -230,7 +243,7 @@ simulation:
         agent: <AgentName>
 
   agents:
-    <AgentName>:                         # e.g. CodingAgent, RAGAgent
+    <AgentName>:                         # e.g. CodingAgent, RAGAgent, ChatAgent
       <GPU_MODEL>:                       # e.g. A100_40GB
         mig:
           <mig_profile_string>:          # e.g. 1g.10gb, 2g.10gb, 7g.40gb
