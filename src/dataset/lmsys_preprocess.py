@@ -14,6 +14,8 @@ import os
 import argparse
 from datasets import load_dataset, Dataset
 from tqdm import tqdm
+from transformers import AutoTokenizer
+
 
 DATASET_NAME = "lmsys/lmsys-chat-1m"
 DEFAULT_OUTPUT_PATH = "./assets/processed_lmsys_chat"
@@ -75,20 +77,29 @@ def preprocess_dataset(local_hf_path):
     # Step 1 — filter to English only
     english_dataset = raw_dataset.filter(lambda row: row["language"] == "English")
     print(f"Rows after English filter: {len(english_dataset)}")
+    print("Loading tokenizer Qwen/Qwen2.5-7B-Instruct for length filtering...")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 
     new_data_list = []
 
     # Steps 2 & 3 — convert format and expand rounds
-    print("Converting to ShareGPT format and expanding multi-round conversations...")
+    print(
+        "Converting to ShareGPT format, expanding multi-round conversations, and filtering length..."
+    )
     for example in tqdm(english_dataset):
         example["messages"] = to_sharegpt_messages(example["conversation"])
         rounds = expand_conversations(example)
-        new_data_list.extend(rounds)
+        for r in rounds:
+            # Estimate token length by joining all message values
+            text_content = "\n".join(m["value"] for m in r["messages"])
+            tokens = tokenizer(text_content, add_special_tokens=False)["input_ids"]
+            if len(tokens) <= 32767:
+                new_data_list.append(r)
 
     processed_dataset = Dataset.from_list(new_data_list)
 
     print(f"Original (English) size: {len(english_dataset)}")
-    print(f"New expanded size: {len(processed_dataset)}")
+    print(f"New expanded size (filtered < 32767 tokens): {len(processed_dataset)}")
 
     # --- Saving Logic ---
     if local_hf_path:
