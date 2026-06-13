@@ -72,8 +72,7 @@ class SimulationConfig:
             data = yaml.safe_load(f)
 
         sim_data = data["simulation"]
-
-        active_agents = list(sim_data.get("agents", {}).keys())
+        active_agents = [name for name, is_active in data["agent"].items() if is_active]
         num_agents = len(active_agents)
 
         gpu_model = sim_data.get("gpu_model", "A100_40GB")
@@ -134,7 +133,7 @@ class SimulationConfig:
             # Reconstruct agent info for THIS gpu_id
             GPU_AGENTS_CONFIG[gpu_id] = {}
             for agent_name, agent_model_cfg in agent_defs.items():
-                if model_name in agent_model_cfg:
+                if agent_name in active_agents and model_name in agent_model_cfg:
                     GPU_AGENTS_CONFIG[gpu_id][agent_name] = agent_model_cfg[model_name]
 
         gpu_ids = sorted(list(gpu_to_model.keys()))
@@ -150,10 +149,19 @@ class SimulationConfig:
                 gid = managed_gpus[idx % len(managed_gpus)]
                 initial_agents[gid].append(agent_name)
 
-        prof_2g = next((p for p in GPU_MIG_PROFILE[permanent_gpu] if p.profile_type == m.MIGProfile.MIG_2G), None)
+        prof_2g = next(
+            (
+                p
+                for p in GPU_MIG_PROFILE[permanent_gpu]
+                if p.profile_type == m.MIGProfile.MIG_2G
+            ),
+            None,
+        )
         if not prof_2g:
-            prof_2g = sorted(GPU_MIG_PROFILE[permanent_gpu], key=lambda x: x.profile_type.value)[0]
-            
+            prof_2g = sorted(
+                GPU_MIG_PROFILE[permanent_gpu], key=lambda x: x.profile_type.value
+            )[0]
+
         permanent_engines = [
             {"agent": agent_name, "gpu": permanent_gpu, "mig": prof_2g.string}
             for agent_name in active_agents
@@ -162,7 +170,7 @@ class SimulationConfig:
         # Verify that all agents have proper configs on each GPU model listed
         all_models = set(gpu_to_model.values())
         for model_name in all_models:
-            for agent_id in [m.AgentId(a) for a in agent_defs.keys()]:
+            for agent_id in [m.AgentId(a) for a in active_agents]:
                 if agent_id.value not in agent_defs:
                     raise ValueError(
                         f"Agent {agent_id.value} not found in 'agents' config"

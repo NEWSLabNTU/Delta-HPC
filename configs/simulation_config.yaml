@@ -1,3 +1,7 @@
+agent:
+  ChatAgent: true
+  CodingAgent: true
+  RAGAgent: true
 datasets:
   ChatAgent: assets/processed_lmsys_chat
   CodingAgent: assets/processed_code_feedback
@@ -34,6 +38,7 @@ model:
     kv_per_token_KB: 12
     vllm_config: configs/qwen3-next-80b-a3b-instruct-fp8.yaml
 simulation:
+  gpu_model: B200
   agents:
     ChatAgent:
       A100_40GB:
@@ -528,4 +533,3 @@ simulation:
           max: 0.3
           min: 0.05
           model: random
-  gpu_model: B200

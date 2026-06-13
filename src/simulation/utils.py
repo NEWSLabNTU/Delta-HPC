@@ -49,8 +49,9 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
 
     # Use a simple cache for now
     if cache_file.exists():
-        with open(cache_file, "rb") as f:
-            tokens_map = pickle.load(f)
+        try:
+            with open(cache_file, "rb") as f:
+                tokens_map = pickle.load(f)
 
             # Validate that all currently required models are in the cache
             required_models = set()
@@ -64,7 +65,10 @@ def init_tokens_map(base_dir: Path, sim_config: SimulationConfig) -> TokensMapTy
                 all_cached_models.update(agent_map.keys())
 
             if required_models.issubset(all_cached_models):
-                return tokens_map
+                if len(tokens_map) == len(sim_config.active_agents):
+                    return tokens_map
+        except Exception as e:
+            print(f"Ignoring token map cache due to load error: {e}")
 
     tokens_map: TokensMapType = {}
 

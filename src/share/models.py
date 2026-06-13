@@ -159,10 +159,46 @@ class EngineStatus(Enum):
     BOOTING = "BOOTING"
 
 
-class AgentId(Enum):
+def _get_active_agent_count() -> int:
+    import yaml
+    from pathlib import Path
+
+    try:
+        config_path = Path("configs/simulation_config.yaml")
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                data = yaml.safe_load(f)
+            
+            agent_conf = data.get("agent")
+            if agent_conf is not None:
+                return sum(1 for is_active in agent_conf.values() if is_active)
+            
+            agents = data.get("simulation", {}).get("agents", {})
+            if agents:
+                return len(agents)
+    except Exception:
+        pass
+    return 2
+
+
+_active_agent_count = _get_active_agent_count()
+
+
+class AgentId3Agent(Enum):
     CODING = "CodingAgent"
     RAG = "RAGAgent"
     CHAT = "ChatAgent"
+
+class AgentId2Agent(Enum):
+    CODING = "CodingAgent"
+    RAG = "RAGAgent"
+
+if _active_agent_count == 3:
+    AgentId = AgentId3Agent
+elif _active_agent_count == 2:
+    AgentId = AgentId2Agent
+else:
+    raise ValueError("Invalid number of active agents")
 
 
 class EventType(IntEnum):
@@ -523,24 +559,7 @@ class Action:
     receiver: Optional[Receiver] = None
 
 
-def _get_active_agent_count() -> int:
-    import yaml
-    from pathlib import Path
 
-    try:
-        config_path = Path("configs/simulation_config.yaml")
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                data = yaml.safe_load(f)
-            agents = data.get("simulation", {}).get("agents", {})
-            if agents:
-                return len(agents)
-    except Exception:
-        pass
-    return 2
-
-
-_active_agent_count = _get_active_agent_count()
 
 
 # fmt: off
@@ -732,64 +751,64 @@ class ResourceManagerAction3Agent(Enum):
     GPU_2_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(2, 19, None)
 
     # GPU 0 Pure Transfer Explicit
-    TRANSFER_GPU_0_7G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_7G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_7G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_0_4G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_4G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_4G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_0_3G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_3G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_3G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_0_2G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_2G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_2G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_0_1L_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_1L_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_1L_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_0_1S_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_0_1S_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_0_1S_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_0_7G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_7G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_7G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_0_4G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_4G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_4G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_0_3G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_3G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_3G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_0_2G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_2G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_2G_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_0_1L_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_1L_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_1L_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_0_1S_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_0_1S_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_0_1S_TO_CHAT = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CHAT)
 
     # GPU 1 Pure Transfer Explicit
-    TRANSFER_GPU_1_7G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_7G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_7G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_1_4G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_4G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_4G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_1_3G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_3G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_3G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_1_2G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_2G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_2G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_1_1L_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_1L_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_1L_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_1_1S_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_1_1S_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_1_1S_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_1_7G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_7G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_7G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_1_4G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_4G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_4G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_1_3G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_3G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_3G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_1_2G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_2G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_2G_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_1_1L_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_1L_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_1L_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_1_1S_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_1_1S_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_1_1S_TO_CHAT = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CHAT)
 
     # GPU 2 Pure Transfer Explicit
-    TRANSFER_GPU_2_7G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_7G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_7G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_2_4G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_4G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_4G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_2_3G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_3G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_3G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_2_2G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_2G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_2G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_2_1L_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_1L_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_1L_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId.CHAT)
-    TRANSFER_GPU_2_1S_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CODING)
-    TRANSFER_GPU_2_1S_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.RAG)
-    TRANSFER_GPU_2_1S_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId.CHAT)
+    TRANSFER_GPU_2_7G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_7G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_7G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_7G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_2_4G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_4G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_4G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_4G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_2_3G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_3G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_3G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_3G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_2_2G_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_2G_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_2G_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_2G, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_2_1L_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_1L_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_1L_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId3Agent.CHAT)
+    TRANSFER_GPU_2_1S_TO_CODING = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CODING)
+    TRANSFER_GPU_2_1S_TO_RAG = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.RAG)
+    TRANSFER_GPU_2_1S_TO_CHAT = ResourceManagerActionValue(2, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId3Agent.CHAT)
 # fmt: on
 
 if _active_agent_count == 3:

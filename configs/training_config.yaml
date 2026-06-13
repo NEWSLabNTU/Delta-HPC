@@ -28,7 +28,7 @@ training:
     ent_coef_schd: true
     ent_coef: 0.01
     min_ent_coef: 0.005
-    max_ent_coef: 0.05
+    max_ent_coef: 0.03
     net_arch:
       pi:
         - 512
@@ -144,7 +144,7 @@ training:
     w_tpot: 0.2
     gamma: 12.0
     scaling: 0.1
-    clipping: -500
+    clipping: -50
     use_quality_bonus: true
     use_affinity_bonus: true
     affinity_bonus_weight: 0.3
