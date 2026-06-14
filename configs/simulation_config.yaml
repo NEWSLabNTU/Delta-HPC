@@ -191,7 +191,7 @@ simulation:
             restart_time: 62.1
           7g.180gb:
             generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-processed-lmsys-chat-generated.jsonl
-            kv_cache_GB: 1.83
+            kv_cache_GB: 1.03
             model: qwen3-next-80b-a3b-instruct
             param:
               prefill:
@@ -354,7 +354,7 @@ simulation:
             restart_time: 62.1
           7g.180gb:
             generate_path: profiling_results/generated/qwen2.5-coder-14b-instruct-code-feedback-generated.jsonl
-            kv_cache_GB: 1.83
+            kv_cache_GB: 1.03
             model: qwen3-coder-next
             param:
               prefill:
@@ -517,7 +517,7 @@ simulation:
             restart_time: 62.1
           7g.180gb:
             generate_path: profiling_results/generated/qwen2.5-14b-instruct-port-8014-rag-dataset-sharegpt-generated.jsonl
-            kv_cache_GB: 1.83
+            kv_cache_GB: 1.03
             model: qwen3-next-80b-a3b-instruct
             param:
               prefill:

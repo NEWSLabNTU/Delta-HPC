@@ -28,7 +28,7 @@ training:
     ent_coef_schd: true
     ent_coef: 0.01
     min_ent_coef: 0.005
-    max_ent_coef: 0.03
+    max_ent_coef: 0.05
     net_arch:
       pi:
         - 512
@@ -106,7 +106,7 @@ training:
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 18.0
+        7g.180gb: 10.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
@@ -118,7 +118,7 @@ training:
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 18.0
+        7g.180gb: 10.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
@@ -130,7 +130,7 @@ training:
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 18.0
+        7g.180gb: 10.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
