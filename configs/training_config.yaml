@@ -1,5 +1,5 @@
 training:
-  tmux_session: hpc-train-3ag-b200
+  tmux_session: hpc-train-2ag-b200
   sb3_norm: true
   action-interval: 120.0
   total_timesteps: 1024000
@@ -101,36 +101,36 @@ training:
   reward:
     Q:
       CodingAgent:
-        7g.40gb: 15.0
+        7g.40gb: 10.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 10.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
       RAGAgent:
-        7g.40gb: 15.0
+        7g.40gb: 10.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 10.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0
         1g.45gb: 1.0
         1g.23gb: 1.0
       ChatAgent:
-        7g.40gb: 15.0
+        7g.40gb: 10.0
         4g.20gb: 5.0
         3g.20gb: 5.0
         2g.10gb: 1.0
         1g.10gb: 1.0
-        7g.180gb: 10.0
+        7g.180gb: 18.0
         4g.90gb: 5.0
         3g.90gb: 5.0
         2g.45gb: 1.0

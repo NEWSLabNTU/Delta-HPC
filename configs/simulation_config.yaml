@@ -1,5 +1,5 @@
 agent:
-  ChatAgent: true
+  ChatAgent: false
   CodingAgent: true
   RAGAgent: true
 datasets:
@@ -38,7 +38,7 @@ model:
     kv_per_token_KB: 12
     vllm_config: configs/qwen3-next-80b-a3b-instruct-fp8.yaml
 simulation:
-  gpu_model: B200
+  gpu_model: A100_40GB # match the file name in configs/gpu/xxx.py
   agents:
     ChatAgent:
       A100_40GB:

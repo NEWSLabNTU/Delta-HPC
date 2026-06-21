@@ -600,21 +600,33 @@ class ResourceManagerAction2Agent(Enum):
     GPU_1_PROFILE_17_1S_1S_1S_1S_2G_1L = ResourceManagerActionValue(1, 17, None)
     GPU_1_PROFILE_19_1S_1S_1S_1S_1S_1S_1L = ResourceManagerActionValue(1, 19, None)
 
-    # GPU 0 Pure Transfer
-    TRANSFER_GPU_0_7G = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G)
-    TRANSFER_GPU_0_4G = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G)
-    TRANSFER_GPU_0_3G = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G)
-    TRANSFER_GPU_0_2G = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G)
-    TRANSFER_GPU_0_1L = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE)
-    TRANSFER_GPU_0_1S = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL)
+    # GPU 0 Pure Transfer Explicit
+    TRANSFER_GPU_0_7G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_7G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_7G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_0_4G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_4G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_4G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_0_3G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_3G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_3G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_0_2G_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_2G_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_2G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_0_1L_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_1L_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_0_1S_TO_CODING = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_0_1S_TO_RAG = ResourceManagerActionValue(0, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId2Agent.RAG)
 
-    # GPU 1 Pure Transfer
-    TRANSFER_GPU_1_7G = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G)
-    TRANSFER_GPU_1_4G = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G)
-    TRANSFER_GPU_1_3G = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G)
-    TRANSFER_GPU_1_2G = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G)
-    TRANSFER_GPU_1_1L = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE)
-    TRANSFER_GPU_1_1S = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL)
+    # GPU 1 Pure Transfer Explicit
+    TRANSFER_GPU_1_7G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_7G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_7G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_1_4G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_4G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_4G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_1_3G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_3G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_3G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_1_2G_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_2G_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_2G, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_1_1L_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_1L_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_LARGE, receiver_id=AgentId2Agent.RAG)
+    TRANSFER_GPU_1_1S_TO_CODING = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId2Agent.CODING)
+    TRANSFER_GPU_1_1S_TO_RAG = ResourceManagerActionValue(1, None, MIGProfile.MIG_1G_SMALL, receiver_id=AgentId2Agent.RAG)
 
 class ResourceManagerAction3Agent(Enum):
     NO_ACTION = None

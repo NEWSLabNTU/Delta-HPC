@@ -3,4 +3,3 @@ training:
     affinity_bonus_weight:
       - 0.1
       - 0.2
-      - 0.3
