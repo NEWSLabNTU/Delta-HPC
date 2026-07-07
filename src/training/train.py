@@ -53,16 +53,18 @@ def setup_training_environment(ckpt: Optional[Path] = None) -> str:
     config_path = Path("configs/training_config.yaml")
     sim_config_path = Path("configs/simulation_config.yaml")
     if ckpt is not None:
-        old_snapshot = ckpt.parent.parent.parent / "snapshots" / "training_config.yaml"
-        if old_snapshot.exists():
-            print(f"Using old snapshot config from {old_snapshot}")
-            config_path = old_snapshot
-        else:
-            print(
-                f"Warning: Old snapshot not found at {old_snapshot}, using current config"
-            )
-        
-        old_sim_snapshot = ckpt.parent.parent.parent / "snapshots" / "simulation_config.yaml"
+        # old_snapshot = ckpt.parent.parent.parent / "snapshots" / "training_config.yaml"
+        # if old_snapshot.exists():
+        #     print(f"Using old snapshot config from {old_snapshot}")
+        #     config_path = old_snapshot
+        # else:
+        #     print(
+        #         f"Warning: Old snapshot not found at {old_snapshot}, using current config"
+        #     )
+
+        old_sim_snapshot = (
+            ckpt.parent.parent.parent / "snapshots" / "simulation_config.yaml"
+        )
         if old_sim_snapshot.exists():
             print(f"Using old snapshot simulation config from {old_sim_snapshot}")
             sim_config_path = old_sim_snapshot
@@ -180,10 +182,10 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
     run_name = f"{run_id}"
 
     # Ensure we use the snapshotted config for this run
-    snapshot_path = Path(f"results/{run_id}/snapshots/training_config.yaml")
-    if snapshot_path.exists():
-        print(f"Reloading TRAINING_CONFIG from session snapshot: {snapshot_path}")
-        TRAINING_CONFIG.update(snapshot_path)
+    # snapshot_path = Path(f"results/{run_id}/snapshots/training_config.yaml")
+    # if snapshot_path.exists():
+    #     print(f"Reloading TRAINING_CONFIG from session snapshot: {snapshot_path}")
+    #     TRAINING_CONFIG.update(snapshot_path)
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
     for aid in m.AgentId:
@@ -262,6 +264,13 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
         )
         # Ensure tensorboard logger is properly setup for the new run
         model.tensorboard_log = f"results/{run_id}/tboards/{run_name}"
+
+        import re
+        match = re.search(r'_(\d+)_steps', ckpt.name)
+        if match:
+            initial_steps = int(match.group(1))
+            model.num_timesteps = initial_steps
+            print(f"Resuming from step {initial_steps}")
     else:
         model = MaskablePPO(
             "MlpPolicy",
@@ -310,6 +319,7 @@ def train(ckpt: Optional[Path] = None, run_id: Optional[str] = None) -> None:
         total_timesteps=TRAINING_CONFIG.total_timesteps,
         callback=callbacks,
         progress_bar=True,
+        reset_num_timesteps=ckpt is None,
     )
 
     # 5. Save the final model

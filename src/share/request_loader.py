@@ -1,5 +1,5 @@
 import random
-from typing import List, Dict, Callable, Tuple, Optional, TypedDict
+from typing import List, Dict, Callable, Tuple, Optional, TypedDict, Any
 
 import datasets
 
@@ -27,6 +27,7 @@ class RequestLoader:
         seed: Optional[int] = None,
         track_history: bool = False,
         load_actual_prompt: bool = False,
+        workload_sequence: Optional[List[Any]] = None,
     ):
         self.num_steps = num_steps
         self.get_rate_range = get_rate_range
@@ -35,46 +36,50 @@ class RequestLoader:
         self.seed = seed
         self.track_history = track_history
         self.load_actual_prompt = load_actual_prompt
+        self.workload_sequence = workload_sequence
         self.phase_history: Dict[m.AgentId, List[PhaseHistoryType]] = {}
 
         if self.load_actual_prompt:
             self._init_dataset_cache()
 
     def _init_dataset_cache(self):
-        self._coding_ds = datasets.load_from_disk(
-            self.dataset_paths[m.AgentId.CODING.value]
-        )
-        self._coding_id_map = {
-            str(row["id"]): i
-            for i, row in enumerate(self._coding_ds.select_columns(["id"]))
-        }
+        if hasattr(m.AgentId, "CODING"):
+            self._coding_ds = datasets.load_from_disk(
+                self.dataset_paths[m.AgentId.CODING.value]
+            )
+            self._coding_id_map = {
+                str(row["id"]): i
+                for i, row in enumerate(self._coding_ds.select_columns(["id"]))
+            }
 
-        self._rag_ds = datasets.load_from_disk(self.dataset_paths[m.AgentId.RAG.value])
-        self._rag_id_map = {
-            str(row["id"]): i
-            for i, row in enumerate(self._rag_ds.select_columns(["id"]))
-        }
+        if hasattr(m.AgentId, "RAG"):
+            self._rag_ds = datasets.load_from_disk(self.dataset_paths[m.AgentId.RAG.value])
+            self._rag_id_map = {
+                str(row["id"]): i
+                for i, row in enumerate(self._rag_ds.select_columns(["id"]))
+            }
 
-        self._chat_ds = datasets.load_from_disk(
-            self.dataset_paths[m.AgentId.CHAT.value]
-        )
-        self._chat_id_map = {
-            str(row["id"]): i
-            for i, row in enumerate(self._chat_ds.select_columns(["id"]))
-        }
+        if hasattr(m.AgentId, "CHAT"):
+            self._chat_ds = datasets.load_from_disk(
+                self.dataset_paths[m.AgentId.CHAT.value]
+            )
+            self._chat_id_map = {
+                str(row["id"]): i
+                for i, row in enumerate(self._chat_ds.select_columns(["id"]))
+            }
 
     def _get_actual_prompt(self, agent_id: m.AgentId, rid: str) -> Optional[str]:
-        if agent_id == m.AgentId.CODING:
+        if agent_id.name == "CODING":
             idx = self._coding_id_map.get(str(rid))
             if idx is not None:
                 msgs = self._coding_ds[idx]["messages"]
                 return msgs[0]["value"] if msgs else None
-        elif agent_id == m.AgentId.RAG:
+        elif agent_id.name == "RAG":
             idx = self._rag_id_map.get(str(rid))
             if idx is not None:
                 msgs = self._rag_ds[idx]["messages"]
                 return msgs[0]["value"] if msgs else None
-        elif agent_id == m.AgentId.CHAT:
+        elif agent_id.name == "CHAT":
             idx = self._chat_id_map.get(str(rid))
             if idx is not None:
                 msgs = self._chat_ds[idx]["messages"]
@@ -109,9 +114,20 @@ class RequestLoader:
         max_time = start_time + self.num_steps * TRAINING_CONFIG.action_interval
 
         patterns = [w.value for w in Workload]
+        sequence_idx = 0
 
         while current_time < max_time:
-            pattern = random.choice(patterns)
+            if self.workload_sequence:
+                seq_item = self.workload_sequence[sequence_idx % len(self.workload_sequence)]
+                if isinstance(seq_item, dict):
+                    pattern = seq_item.get(agent_id.value)
+                    if pattern is None:
+                        raise ValueError(f"workload_sequence must specify pattern for {agent_id.value}")
+                else:
+                    pattern = seq_item
+                sequence_idx += 1
+            else:
+                pattern = random.choice(patterns)
             min_rate, max_rate = self.get_rate_range(pattern, agent_id)
             min_dur, max_dur = self.get_duration_range(pattern)
 

@@ -23,7 +23,7 @@ class RuleBasedHeuristic:
 
     def decide_action(self, sim: m.Simulator) -> m.ResourceManagerAction:
         state = sim.get_state()
-        mask = sim.get_action_mask(ignore_cooldowns=True)
+        mask = sim.get_action_mask(ignore_cooldowns=False)
         all_actions = list(m.ResourceManagerAction)
         valid_actions = [
             a

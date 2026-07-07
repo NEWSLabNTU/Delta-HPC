@@ -24,8 +24,10 @@ def main():
     )
     requests: List[m.Request] = []
     for aid in m.AgentId:
-        requests.extend(request_loader.generate_requests(agent_id=aid, turn=load_turn))
-    print(f"Loaded {len(requests)} requests.")
+        agent_reqs = request_loader.generate_requests(agent_id=aid, turn=load_turn)
+        requests.extend(agent_reqs)
+        print(f"  {aid.value}: {len(agent_reqs)} requests")
+    print(f"Loaded {len(requests)} requests total.")
 
     agents: Dict[m.AgentId, m.Agent] = {}
     engines: Dict[str, m.LLMEngine] = {}
@@ -55,7 +57,7 @@ def main():
             print(f"    GPU {gpu_id}: {[e.engine_id for e in gpu_engines]}")
         for aid in m.AgentId:
             print(
-                f" Agent {aid.value}: {[e.engine_id for e in sim.agents[aid].engines]}"
+                f"  Agent {aid.value}: {[e.engine_id for e in sim.agents[aid].engines]}"
             )
         state_data = sim.get_state()
         avg_q = state_data["avg_queue_length"]

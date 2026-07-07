@@ -502,34 +502,47 @@ class BenchRunner:
         args = cls._parse_args()
         bench_modes = cls._resolve_bench_modes(args)
 
-        print(
-            "\n" + "=" * 60 + "\nSTARTING HYBRID BENCHMARKS\nUsing seed:",
-            BENCH_CONFIG.seed,
-            "\n" + "=" * 60,
-        )
-
-        # 1. Prepare Workload
-        print("Pre-generating workload requests...")
-        shared_loader = RequestLoader(
-            num_steps=BENCH_CONFIG.benchmark_length,
-            get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
-            get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
-            dataset_paths=sim_utils.SIM_CONFIG.datasets,
-            seed=BENCH_CONFIG.seed,
-            track_history=True,
-        )
-        shared_requests: List[m.Request] = []
-        for aid in m.AgentId:
-            shared_requests.extend(
-                shared_loader.generate_requests(agent_id=aid, turn=0)
+        f_pre = io.StringIO()
+        with contextlib.redirect_stdout(f_pre):
+            print(
+                "\n" + "=" * 60 + "\nSTARTING HYBRID BENCHMARKS\nUsing seed:",
+                BENCH_CONFIG.seed,
+                "\n" + "=" * 60,
             )
-        print(f"Generated {len(shared_requests)} requests.")
-        print_workloads(cls.get_workload_summary(shared_loader.phase_history))
+            if BENCH_CONFIG.workload_sequence:
+                seq_strs = []
+                for item in BENCH_CONFIG.workload_sequence:
+                    if isinstance(item, dict):
+                        seq_strs.append("{" + ", ".join(f"{k}: {v}" for k, v in item.items()) + "}")
+                    else:
+                        seq_strs.append(str(item))
+                print(f"Workload Sequence: {' -> '.join(seq_strs)}")
+
+            # 1. Prepare Workload
+            print("Pre-generating workload requests...")
+            shared_loader = RequestLoader(
+                num_steps=BENCH_CONFIG.benchmark_length,
+                get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
+                get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
+                dataset_paths=sim_utils.SIM_CONFIG.datasets,
+                seed=BENCH_CONFIG.seed,
+                track_history=True,
+                workload_sequence=BENCH_CONFIG.workload_sequence,
+            )
+            shared_requests: List[m.Request] = []
+            for aid in m.AgentId:
+                shared_requests.extend(
+                    shared_loader.generate_requests(agent_id=aid, turn=0)
+                )
+            print(f"Generated {len(shared_requests)} requests.")
+            print_workloads(cls.get_workload_summary(shared_loader.phase_history))
+        
+        pre_print_str = f_pre.getvalue()
+        print(pre_print_str, end="")
 
         # 2. Run sequential trials
         for mode in bench_modes:
             ckpt = Path(args.ckpts.pop()) if mode == BenchMode.RL else None
-            print_banner(mode, ckpt.parent.name if ckpt else "")
 
             # Reload dynamically for this specific trial
             import src.simulation.utils as u
@@ -537,7 +550,7 @@ class BenchRunner:
             u.SIM_CONFIG = u.init_config(Path("."))
             u.TOKENS_MAP = u.init_tokens_map(Path("."), u.SIM_CONFIG)
 
-            cls._run_trial(mode, shared_requests, shared_loader.phase_history, ckpt)
+            cls._run_trial(mode, shared_requests, shared_loader.phase_history, ckpt, pre_print_str)
 
         print("\nBenchmark Suite Completed.")
 
@@ -591,21 +604,26 @@ class BenchRunner:
         requests: List[m.Request],
         phase_history: Dict[m.AgentId, List[PhaseHistoryType]],
         ckpt: Optional[Path],
+        pre_print_str: str = "",
     ):
         runner = cls(ckpt, mode, requests, phase_history)
-        results = runner.run()
 
         bench_dir = Path(f"results/{runner.run_id}/bench")
         bench_dir.mkdir(parents=True, exist_ok=True)
 
         f_out = io.StringIO()
         with contextlib.redirect_stdout(f_out):
+            print_banner(mode, ckpt.parent.name if ckpt else "")
+            results = runner.run()
             print_metrics(results)
 
-        print(f_out.getvalue())
+        trial_output = f_out.getvalue()
+        print(trial_output, end="")
+        
+        full_output = pre_print_str + trial_output
         run_name = ckpt.stem if ckpt else mode.name
         with open(bench_dir / f"results_{run_name}.txt", "w") as f:
-            f.write(f_out.getvalue())
+            f.write(full_output)
 
 
 def main():

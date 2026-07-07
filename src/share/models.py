@@ -168,11 +168,11 @@ def _get_active_agent_count() -> int:
         if config_path.exists():
             with open(config_path, "r") as f:
                 data = yaml.safe_load(f)
-            
+
             agent_conf = data.get("agent")
             if agent_conf is not None:
                 return sum(1 for is_active in agent_conf.values() if is_active)
-            
+
             agents = data.get("simulation", {}).get("agents", {})
             if agents:
                 return len(agents)
@@ -189,9 +189,11 @@ class AgentId3Agent(Enum):
     RAG = "RAGAgent"
     CHAT = "ChatAgent"
 
+
 class AgentId2Agent(Enum):
     CODING = "CodingAgent"
     RAG = "RAGAgent"
+
 
 if _active_agent_count == 3:
     AgentId = AgentId3Agent
@@ -557,9 +559,6 @@ class Action:
     mig_target: List[int]
     target_state_id: Optional[int] = None
     receiver: Optional[Receiver] = None
-
-
-
 
 
 # fmt: off

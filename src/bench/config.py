@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Tuple, Union, Any
 
 from src.bench.models import Workload
 import src.share.models as m
@@ -17,6 +17,11 @@ class BenchConfig:
             self._heuristic = data.get(
                 "heuristic", {"watermark_high": 20.0, "watermark_low": 5.0}
             )
+            self._workload_sequence = data.get("workload_sequence", None)
+
+    @property
+    def workload_sequence(self) -> list[Any] | None:
+        return self._workload_sequence
 
     @property
     def utilization_factor(self) -> float:

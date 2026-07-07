@@ -13,8 +13,8 @@ workloads:
       - 0.1
       - 0.5
     duration:
-    - 3600.0
-    - 4800.0
+    - 3200.0
+    - 4000.0
   even:
     rate:
       CodingAgent:
@@ -27,8 +27,8 @@ workloads:
       - 1.0
       - 2.0
     duration:
-    - 1800.0
-    - 2200.0
+    - 0.0
+    - 0.0
   busy:
     rate:
       CodingAgent:
@@ -41,8 +41,8 @@ workloads:
       - 4.5
       - 5.5
     duration:
-    - 1800.0
-    - 2200.0
+    - 6800.0
+    - 7400.0
   burst:
     rate:
       CodingAgent:
@@ -55,12 +55,12 @@ workloads:
       - 6.0
       - 8.0
     duration:
-    - 300.0
-    - 700.0
+    - 3200.0
+    - 4000.0
 heuristic:
   utilization_factor: 0.8
   high_threshold: 1.1
-  low_threshold: 0.5
+  low_threshold: 0.4
   service_rates:
     A100_40GB:
       CodingAgent:

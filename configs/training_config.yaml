@@ -18,15 +18,15 @@ training:
   PPO:
     episode_length: 1024
     n_steps: 2048
-    lr_max: 3e-4
+    lr_max: 5e-5
     lr_min: 5e-5
     batch_size: 256
     n_epochs: 10
     gamma: 0.995
     gae_lambda: 0.9
     clip_range: 0.2
-    ent_coef_schd: true
-    ent_coef: 0.01
+    ent_coef_schd: false
+    ent_coef: 0.005
     min_ent_coef: 0.005
     max_ent_coef: 0.05
     net_arch:
@@ -147,4 +147,4 @@ training:
     clipping: -50
     use_quality_bonus: true
     use_affinity_bonus: true
-    affinity_bonus_weight: 0.3
+    affinity_bonus_weight: 0.1
