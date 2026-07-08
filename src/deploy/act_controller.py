@@ -165,6 +165,8 @@ class ActionController:
                     cost = self.predict_action_cost(pred_action)
                     if cost > OBS_COLLECTOR.current_budget:
                         mask[act_id] = False
+                else:
+                    mask[act_id] = False
 
         return mask
 

@@ -288,6 +288,6 @@ class RLAgent(BasePolicyAgent):
             if chosen_action != m.ResourceManagerAction.NO_ACTION:
                 concrete_action = self.act_ctrl.map_to_action(chosen_action)
                 if concrete_action is not None:
-                    await self.act_ctrl.execute_action(concrete_action)
+                    asyncio.create_task(self.act_ctrl.execute_action(concrete_action))
 
             step += 1
