@@ -14,6 +14,7 @@ class BenchMode(Enum):
     STATIC_SPLIT_EXTREME = "static_split_extreme"
     BASELINE_STATIC = "static"
     BASELINE_HEURISTIC = "heuristic"
+    BASELINE_QAS = "qas"
 
 
 class Workload(Enum):

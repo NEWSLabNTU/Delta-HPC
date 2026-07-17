@@ -4,7 +4,7 @@ from typing import Dict
 
 import src.share.models as m
 from src.share.mig_matrix import STATE_DEFINITIONS
-from src.bench.config import BENCH_CONFIG
+from src.bench.config import BENCH_CONFIG, denormalize_arrival_rate
 from src.training.config import TRAINING_CONFIG
 from src.simulation.config import GPU_MIG_PROFILE
 
@@ -19,7 +19,7 @@ class RuleBasedHeuristic:
             self.get_service_rate = get_service_rate
 
     def _denormalize_arrival_rate(self, val: float) -> float:
-        return val * TRAINING_CONFIG.norm_arrival_rate
+        return denormalize_arrival_rate(val)
 
     def decide_action(self, sim: m.Simulator) -> m.ResourceManagerAction:
         state = sim.get_state()

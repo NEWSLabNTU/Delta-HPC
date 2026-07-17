@@ -147,4 +147,4 @@ training:
     clipping: -50
     use_quality_bonus: true
     use_affinity_bonus: true
-    affinity_bonus_weight: 0.1
+    affinity_bonus_weight: 0.2

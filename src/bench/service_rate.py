@@ -1,7 +1,8 @@
+import contextlib
 import yaml
 from pathlib import Path
 import random
-from typing import Dict, List, Tuple, Type
+from typing import Dict, Iterator, List, Tuple, Type
 
 from src.simulation.simulator import SimulatorImpl
 from src.simulation.agent import AgentImpl
@@ -13,29 +14,13 @@ import src.simulation.config as config
 from src.share.mig_matrix import STATE_DEFINITIONS
 
 
-def check_rate(
-    agent_id: m.AgentId,
-    hw_mig: m.MIGProfileBase,
-    sampled_req_ids: List[str],
-    rate: float,
-    gpu_id: int,
-) -> bool:
-    requests = []
-    model_name = utils.SIM_CONFIG.get_model(agent_id, hw_mig, gpu_id=gpu_id)
-    req_map = utils.TOKENS_MAP[agent_id][model_name]
-
-    for idx, rid in enumerate(sampled_req_ids):
-        prompt_tokens, completion_tokens = req_map[rid]
-        req = RequestImpl(
-            id=f"{rid}_{agent_id.value}_{idx}",
-            agent_id=agent_id,
-            prompt_tokens=prompt_tokens,
-            original_id=rid,
-        )
-        req.completion_tokens = completion_tokens
-        req.arrival_time = idx / rate
-        requests.append(req)
-
+def _build_agents_and_engines(
+    agent_id: m.AgentId, hw_mig: m.MIGProfileBase, gpu_id: int
+) -> Tuple[Dict[m.AgentId, m.Agent], Dict[str, m.LLMEngine]]:
+    """Constructs the agents/engines needed for a single-engine mini-simulation
+    that isolates `hw_mig` on `gpu_id`, padding out the rest of the hardware
+    state (co-located slices) with dummy-owned engines so the GPU state is
+    physically valid."""
     # Find a valid state in STATE_DEFINITIONS that contains the target profile
     target_sid = -1
     for sid, defs in STATE_DEFINITIONS.items():
@@ -46,10 +31,9 @@ def check_rate(
 
     target_profiles = STATE_DEFINITIONS[target_sid]
 
-    # Initialize all agents
     agents: Dict[m.AgentId, m.Agent] = {aid: AgentImpl(aid) for aid in m.AgentId}
 
-    # Identify which index in the state will be our "measured" engine
+    # Identify which index in the state will be our "measured" engine.
     # We use the first matching profile index.
     main_idx = -1
     for i, p in enumerate(target_profiles):
@@ -90,12 +74,61 @@ def check_rate(
         engines[eid] = eng
         agents[owner_id].add_engine(eng)
 
-    # Temporarily override SIM_CONFIG.cluster to only include the target GPU
-    # This prevents SimulatorImpl from trying to identify states for other GPUs
+    return agents, engines
+
+
+@contextlib.contextmanager
+def _isolated_gpu_cluster(gpu_id: int) -> Iterator[None]:
+    """Temporarily overrides SIM_CONFIG.cluster to only include the target GPU,
+    preventing SimulatorImpl from trying to identify states for other GPUs."""
     orig_cluster = utils.SIM_CONFIG.cluster
     utils.SIM_CONFIG.cluster = {gpu_id: orig_cluster[gpu_id]}
-
     try:
+        yield
+    finally:
+        utils.SIM_CONFIG.cluster = orig_cluster
+
+
+def build_rate_requests(
+    agent_id: m.AgentId,
+    hw_mig: m.MIGProfileBase,
+    sampled_req_ids: List[str],
+    rate: float,
+    gpu_id: int,
+) -> List[RequestImpl]:
+    """Builds a list of requests with fixed-rate arrival times, sourcing
+    prompt/completion tokens from the dataset for `agent_id` served by
+    `hw_mig` on `gpu_id`."""
+    model_name = utils.SIM_CONFIG.get_model(agent_id, hw_mig, gpu_id=gpu_id)
+    req_map = utils.TOKENS_MAP[agent_id][model_name]
+
+    requests = []
+    for idx, rid in enumerate(sampled_req_ids):
+        prompt_tokens, completion_tokens = req_map[rid]
+        req = RequestImpl(
+            id=f"{rid}_{agent_id.value}_{idx}",
+            agent_id=agent_id,
+            prompt_tokens=prompt_tokens,
+            original_id=rid,
+        )
+        req.completion_tokens = completion_tokens
+        req.arrival_time = idx / rate
+        requests.append(req)
+    return requests
+
+
+def run_single_engine_sim(
+    agent_id: m.AgentId,
+    hw_mig: m.MIGProfileBase,
+    gpu_id: int,
+    requests: List[RequestImpl],
+) -> List[RequestImpl]:
+    """Runs a single-engine mini-simulation with the given pre-built requests
+    to completion, returning the same requests (mutated in place with timing
+    fields such as start_time/first_token_time/finish_time)."""
+    agents, engines = _build_agents_and_engines(agent_id, hw_mig, gpu_id)
+
+    with _isolated_gpu_cluster(gpu_id):
         sim = SimulatorImpl(agents=agents, engines=engines, no_log=True)
         sim.add_arrival_events(requests)
         for e in sim.engines.values():
@@ -103,9 +136,19 @@ def check_rate(
 
         while sim.run():
             pass
-    finally:
-        # Restore original cluster config
-        utils.SIM_CONFIG.cluster = orig_cluster
+
+    return requests
+
+
+def check_rate(
+    agent_id: m.AgentId,
+    hw_mig: m.MIGProfileBase,
+    sampled_req_ids: List[str],
+    rate: float,
+    gpu_id: int,
+) -> bool:
+    requests = build_rate_requests(agent_id, hw_mig, sampled_req_ids, rate, gpu_id)
+    run_single_engine_sim(agent_id, hw_mig, gpu_id, requests)
 
     # Check stability by measuring if the wait time grows continuously over the test
     # This subtracts the base prefill time (which varies wildly between MIG profiles)

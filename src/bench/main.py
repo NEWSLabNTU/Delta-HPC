@@ -5,7 +5,7 @@ import argparse
 import io
 import contextlib
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import numpy as np
@@ -30,6 +30,7 @@ from src.bench.prints import (
     print_initial_state,
 )
 from src.bench.heuristic import RuleBasedHeuristic
+from src.bench.qas import QualityAwareScheduler
 
 
 class BenchRunner:
@@ -131,9 +132,11 @@ class BenchRunner:
         self,
         stats: Dict[str, Any],
     ):
-        heuristic = (
-            RuleBasedHeuristic() if self.mode == BenchMode.BASELINE_HEURISTIC else None
-        )
+        policy: Optional[Union[RuleBasedHeuristic, QualityAwareScheduler]] = None
+        if self.mode == BenchMode.BASELINE_HEURISTIC:
+            policy = RuleBasedHeuristic()
+        elif self.mode == BenchMode.BASELINE_QAS:
+            policy = QualityAwareScheduler()
 
         for _ in tqdm(
             range(BENCH_CONFIG.benchmark_length),
@@ -142,7 +145,7 @@ class BenchRunner:
             ncols=100,
         ):
             # 1. Action Selection
-            action, enum_action = self._select_action(heuristic)
+            action, enum_action = self._select_action(policy)
 
             # 2. Record Structural Actions (Merge/Split/Transfer)
             self._record_structural_actions(enum_action, stats)
@@ -159,7 +162,7 @@ class BenchRunner:
 
     def _select_action(
         self,
-        heuristic: Optional[RuleBasedHeuristic],
+        policy: Optional[Union[RuleBasedHeuristic, QualityAwareScheduler]],
     ) -> Tuple[int, m.ResourceManagerAction]:
         assert self.env is not None
         mask = self.env.action_masks()
@@ -171,8 +174,8 @@ class BenchRunner:
             )
             action = int(act_np[0])
             return action, list(m.ResourceManagerAction)[action]
-        elif self.mode == BenchMode.BASELINE_HEURISTIC and heuristic:
-            enum_act = heuristic.decide_action(self.env.sim)
+        elif self.mode in (BenchMode.BASELINE_HEURISTIC, BenchMode.BASELINE_QAS) and policy:
+            enum_act = policy.decide_action(self.env.sim)
             return list(m.ResourceManagerAction).index(enum_act), enum_act
 
         no_action = m.ResourceManagerAction.NO_ACTION
@@ -586,6 +589,7 @@ class BenchRunner:
                     BenchMode.STATIC_NO_MIG,
                     BenchMode.STATIC_SPLIT_EXTREME,
                     BenchMode.BASELINE_HEURISTIC,
+                    BenchMode.BASELINE_QAS,
                 ])
             elif bl in mapping:
                 modes.append(mapping[bl])
