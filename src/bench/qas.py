@@ -207,7 +207,23 @@ class QualityAwareScheduler:
             tier does the quality objective (or, failing full feasibility,
             the total SLO violation) act as the tiebreaker. Feasible actions
             are ranked by -sum(Q_f) so that `<` (lower score wins) picks the
-            highest total quality among them."""
+            highest total quality among them.
+
+            Deliberately NOT weighted by arrival rate, despite that being the
+            intuitive fix for idle agents' maxed Q_f masking a starved
+            agent's need (see class docstring). Tried empirically: weighting
+            by arrival_rates[aid] (which includes a queue-backlog term, see
+            above) creates a feedback loop -- a falling-behind agent's
+            backlog inflates its weight, which inflates its apparent
+            quality-gain from reconfiguring, which triggers another ~60-70s
+            BOOTING stall, during which the backlog grows further and inflates
+            the weight again. Confirmed on this benchmark: CodingAgent P99
+            TTFT stayed at ~2500s (vs ~100s unweighted) and RAGAgent P99 --
+            previously untouched at ~1.1s -- exploded to 320s as the
+            instability spilled over via contested transfers. QAS is
+            memoryless/cost-blind by design (no state carried between steps),
+            so it has nothing to resist chasing a self-reinforcing moving
+            target once one term in the score scales with backlog."""
             violation = sum(
                 max(0.0, ttft_by_agent[aid] - l_target_by_agent[aid])
                 for aid in m.AgentId

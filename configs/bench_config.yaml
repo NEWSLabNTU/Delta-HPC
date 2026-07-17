@@ -104,8 +104,8 @@ heuristic:
         1g.45gb: 4.76
         1g.23gb: 4.76
 qas:
-  L_target: 0.4
-  min_quality_gain: 0.25
+  L_target: 0.3
+  min_quality_gain: 0.3
   profile_table:
     A100_40GB:
       CodingAgent:

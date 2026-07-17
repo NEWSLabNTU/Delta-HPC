@@ -184,6 +184,10 @@ class BenchConfig:
         points = agent_table.get(hw_prof.string, [])
         return [(float(lam), float(ttft)) for lam, ttft in points]
 
+    # Floor slope (extra TTFT seconds per extra req/s of overload) used to
+    # extrapolate predict_ttft beyond the profiled range -- see its docstring.
+    _MIN_OVERLOAD_SLOPE = 1.0
+
     def predict_ttft(
         self,
         agent_id: m.AgentId,
@@ -192,20 +196,42 @@ class BenchConfig:
         lam: float,
     ) -> float:
         """Piecewise-linear interpolation of the profiled TTFT-vs-lambda curve.
-        Clamps to the lowest profiled TTFT below the min profiled lambda;
-        returns +inf above the max profiled lambda (the profile cannot sustain
-        this load, mirroring the IBM paper's "even a full GPU fails to meet
-        SLA" overload case)."""
+        Clamps to the lowest profiled TTFT below the min profiled lambda.
+
+        Above the max profiled lambda, extrapolates linearly from the curve's
+        own tail slope (floored at _MIN_OVERLOAD_SLOPE) rather than returning
+        a flat +inf. A flat +inf was tried first and empirically causes QAS
+        to freeze: once demand is high enough that every single-step-reachable
+        allocation exceeds its curve's profiled range, every candidate ties at
+        (tier=1, violation=inf), and is_better's `candidate < baseline -
+        margin` comparison can never resolve an inf-vs-inf tie -- confirmed on
+        the A100 bimodal benchmark, where this produced a 104-step (~3.5h
+        simulated) then a 39-step consecutive NO_ACTION streak with every
+        candidate scored infeasible, driving CodingAgent's P99 TTFT past
+        1500s regardless of L_target/min_quality_gain. Extrapolating keeps
+        these candidates correctly classified as infeasible (the projected
+        TTFT will clear l_target by a wide margin) while still ordering them
+        by how overloaded they are, so QAS can take the least-bad step toward
+        feasibility instead of freezing. The floored slope guards against
+        curves whose last two profiled points are locally flat or noisy (measurement
+        sigma, not true capacity) producing a shallow or negative extrapolation
+        that would mask real overload."""
         curve = self.get_ttft_curve(agent_id, mig_profile, gpu_id)
         if not curve:
             return float("inf")
 
         if lam <= curve[0][0]:
             return curve[0][1]
-        if lam > curve[-1][0]:
-            return float("inf")
-        if lam == curve[-1][0]:
-            return curve[-1][1]
+        if lam >= curve[-1][0]:
+            if lam == curve[-1][0]:
+                return curve[-1][1]
+            lam_hi, ttft_hi = curve[-1]
+            slope = 0.0
+            if len(curve) >= 2:
+                lam_lo, ttft_lo = curve[-2]
+                slope = (ttft_hi - ttft_lo) / (lam_hi - lam_lo) if lam_hi > lam_lo else 0.0
+            slope = max(slope, self._MIN_OVERLOAD_SLOPE)
+            return ttft_hi + slope * (lam - lam_hi)
 
         for (lam_lo, ttft_lo), (lam_hi, ttft_hi) in zip(curve, curve[1:]):
             if lam_lo <= lam <= lam_hi:
