@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import yaml
 from pathlib import Path
-from typing import Dict, Union, Tuple
+from typing import Dict, List, Union, Tuple
 from dataclasses import dataclass
 
 import src.share.models as m
@@ -123,6 +123,7 @@ class DeploymentConfig:
 
         h = data.get("heuristic", {})
         self.heuristic_service_rates = h.get("service_rates", {})
+        self._qas = data.get("qas", {})
         self._workloads = data["workloads"]
         self.seed = int(data.get("seed", 77))
         self.obs_arrival_rate_divisor: Dict[str, float] = {
@@ -171,6 +172,69 @@ class DeploymentConfig:
                 raise ValueError(f"Unknown MIG profile type: {hw_prof.profile_type}")
 
         return original_rate * factor
+
+    def get_ttft_curve(
+        self,
+        agent_id: m.AgentId,
+        mig_profile: Union[m.MIGProfile, m.MIGProfileBase],
+        gpu_id: int = 0,
+    ) -> List[Tuple[float, float]]:
+        """Real-hardware counterpart of BenchConfig.get_ttft_curve: returns the
+        (lambda, TTFT) points measured on real GPUs by
+        `python -m src.deploy.qas_profile`, sorted ascending by lambda."""
+        table = self._qas.get("profile_table", {})
+
+        if isinstance(mig_profile, m.MIGProfile):
+            hw_prof = next(
+                p for p in GPU_MIG_PROFILE[gpu_id] if p.profile_type == mig_profile
+            )
+        else:
+            hw_prof = mig_profile
+
+        model_table = table.get(hw_prof.gpu_model, {})
+        agent_table = model_table.get(agent_id.value, {})
+        points = agent_table.get(hw_prof.string, [])
+        return [(float(lam), float(ttft)) for lam, ttft in points]
+
+    # Mirrors BenchConfig._MIN_OVERLOAD_SLOPE -- see its docstring.
+    _MIN_OVERLOAD_SLOPE = 1.0
+
+    def predict_ttft(
+        self,
+        agent_id: m.AgentId,
+        mig_profile: Union[m.MIGProfile, m.MIGProfileBase],
+        gpu_id: int,
+        lam: float,
+    ) -> float:
+        """Real-hardware counterpart of BenchConfig.predict_ttft: piecewise-
+        linear interpolation of the on-hardware profiled TTFT-vs-lambda curve,
+        extrapolating past the profiled range the same way (see
+        BenchConfig.predict_ttft's docstring for the reasoning)."""
+        curve = self.get_ttft_curve(agent_id, mig_profile, gpu_id)
+        if not curve:
+            return float("inf")
+
+        if lam <= curve[0][0]:
+            return curve[0][1]
+        if lam >= curve[-1][0]:
+            if lam == curve[-1][0]:
+                return curve[-1][1]
+            lam_hi, ttft_hi = curve[-1]
+            slope = 0.0
+            if len(curve) >= 2:
+                lam_lo, ttft_lo = curve[-2]
+                slope = (ttft_hi - ttft_lo) / (lam_hi - lam_lo) if lam_hi > lam_lo else 0.0
+            slope = max(slope, self._MIN_OVERLOAD_SLOPE)
+            return ttft_hi + slope * (lam - lam_hi)
+
+        for (lam_lo, ttft_lo), (lam_hi, ttft_hi) in zip(curve, curve[1:]):
+            if lam_lo <= lam <= lam_hi:
+                if lam_hi == lam_lo:
+                    return ttft_lo
+                frac = (lam - lam_lo) / (lam_hi - lam_lo)
+                return ttft_lo + frac * (ttft_hi - ttft_lo)
+
+        return float("inf")
 
     def get_rate_range(
         self, workload: Workload, agent_id: m.AgentId

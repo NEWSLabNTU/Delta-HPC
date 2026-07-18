@@ -28,6 +28,7 @@ from src.deploy.base_agent import BasePolicyAgent
 from src.share.mig_matrix import STATE_DEFINITIONS
 from src.share.models import MIGProfile
 from src.deploy.heuristic_agent import HeuristicAgent
+from src.deploy.qas_agent import QASAgent
 from src.deploy.dashboard import DashboardServer
 from src.deploy.config import DEPLOY_CONFIG
 import src.simulation.utils as sim_utils
@@ -42,7 +43,7 @@ async def main() -> None:
         "--policy",
         type=str,
         required=True,
-        help="Which policy to run: 'heuristic', 'static-7g', 'static-2g', or a path to a MaskablePPO checkpoint (.zip).",
+        help="Which policy to run: 'heuristic', 'qas', 'static-7g', 'static-2g', or a path to a MaskablePPO checkpoint (.zip).",
     )
     parser.add_argument(
         "--duration", type=int, default=100, help="Duration of benchmark in seconds"
@@ -76,6 +77,12 @@ async def main() -> None:
                 )
                 setup.apply_random()
                 policy_agent = HeuristicAgent(act_ctrl)
+            case "qas":
+                logger.info(
+                    "Initializing physical GPU configurations (random setup)..."
+                )
+                setup.apply_random()
+                policy_agent = QASAgent(act_ctrl)
             case "static-7g":
                 target_combo = (MIGProfile.MIG_7G,)
                 state_id = next(
