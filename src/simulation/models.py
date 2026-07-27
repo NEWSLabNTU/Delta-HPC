@@ -207,6 +207,29 @@ class OperationPurpose(Enum):
     PLAIN = "plain"
 
 
+@dataclass
+class ReconfigEpisode:
+    """One agent's view of a single reconfiguration, for recovery analysis.
+
+    Phases are timestamped as the engines actually transition, so the drain and
+    boot costs can be separated from the backlog transient that follows them.
+    """
+
+    agent_id: m.AgentId
+    action_type: str
+    t_trigger: float
+    t_drain_done: Optional[float] = None
+    t_boot_done: Optional[float] = None
+    # True if another reconfiguration hit this agent before this one finished
+    # booting -- such episodes overlap and cannot be attributed cleanly.
+    interrupted: bool = False
+    # The transition has not necessarily reached this agent at trigger time: a
+    # transfer's receiver only sees a BOOTING engine once the giver has finished
+    # draining. Phases stay unstamped until the agent actually goes non-ACTIVE,
+    # otherwise the episode would close instantly with zero-length phases.
+    seen_activity: bool = False
+
+
 # --- Payloads and Events ---
 
 

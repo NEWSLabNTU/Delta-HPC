@@ -68,6 +68,26 @@ def print_metrics(results: Dict[str, Any]):
             overall_token_mig.append(f"{name}: {val:.1f}%")
         overall_token_str = "\n".join(overall_token_mig)
 
+        rc = metrics["reconfig_recovery"]
+        if rc["n_analyzed"] == 0:
+            dropped = (
+                rc["n_overlapping"] + rc["n_pattern_shift"] + rc["n_uncleared"]
+            )
+            recovery_str = (
+                "n/a"
+                if rc["n_episodes"] == 0
+                else f"0/{rc['n_episodes']} usable ({dropped} dropped)"
+            )
+        else:
+            q = "/".join(f"{v:.1f}" for v in rc["total_quartiles"])
+            recovery_str = (
+                f"clear P25/50/75/90:\n  {q}\n"
+                f"max: {rc['max_total']:.0f}s\n"
+                f"n={rc['n_analyzed']}/{rc['n_episodes']}\n"
+                f"  overlap {rc['n_overlapping']}, pattern {rc['n_pattern_shift']}\n"
+                f"  uncleared {rc['n_uncleared']}"
+            )
+
         return [
             ttft_str,
             tpot_str,
@@ -75,6 +95,7 @@ def print_metrics(results: Dict[str, Any]):
             smt_str,
             existence_str,
             overall_token_str,
+            recovery_str,
         ]
 
     # Dynamically build per-agent columns
@@ -89,6 +110,7 @@ def print_metrics(results: Dict[str, Any]):
         "S/M/T",
         "MIG Existence (%)",
         "Tokens by MIG (%)",
+        "Queue Clear Time (s)",
     ]
     table_data = [
         [label] + [agent_metrics[aid][i] for aid in active_agents]

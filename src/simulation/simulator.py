@@ -39,6 +39,9 @@ class SimulatorImpl(m.Simulator):
         self._environment_state = EnvironmentStateImpl()
         self._environment_state.reset_for_next_interval(0.0, self._agents)
 
+        self._reconfig_episodes: List[sm.ReconfigEpisode] = []
+        self._open_episodes: Dict[m.AgentId, sm.ReconfigEpisode] = {}
+
         self._gpu_engines: Dict[int, List[m.LLMEngine]] = {
             gpu: [] for gpu in utils.SIM_CONFIG.cluster.keys()
         }
@@ -143,6 +146,56 @@ class SimulatorImpl(m.Simulator):
             gpu_id: self._identify_gpu_state(gpu_id)
             for gpu_id in range(utils.SIM_CONFIG.num_managed_gpus)
         }
+
+    @property
+    def reconfig_episodes(self) -> List[sm.ReconfigEpisode]:
+        """Completed reconfiguration episodes, plus any still in flight."""
+        return self._reconfig_episodes + list(self._open_episodes.values())
+
+    @property
+    def queue_trace(self) -> Dict[m.AgentId, List[tuple[float, int]]]:
+        return self._environment_state.queue_trace
+
+    def _open_reconfig_episode(self, action: m.Action) -> None:
+        """Start a recovery episode for each agent whose engines this action moves."""
+        affected = set()
+        for idx in action.mig_src:
+            eng = self._gpu_engines[action.gpu_id][idx]
+            if eng is not None:
+                affected.add(eng.owner.agent_id)
+        if action.receiver is not None:
+            affected.add(action.receiver.receiver_id)
+
+        for aid in affected:
+            if aid in self._open_episodes:
+                # Overlapping reconfiguration: the previous episode's recovery is
+                # no longer separable from this one's.
+                self._open_episodes[aid].interrupted = True
+                continue
+            self._open_episodes[aid] = sm.ReconfigEpisode(
+                agent_id=aid,
+                action_type=action.action.name.lower(),
+                t_trigger=self._current_time,
+            )
+
+    def _advance_reconfig_episodes(self) -> None:
+        """Stamp drain/boot completion as each agent's engines settle back."""
+        for aid, ep in list(self._open_episodes.items()):
+            engines = self._agents[aid].engines
+            if any(e.status != m.EngineStatus.ACTIVE for e in engines):
+                ep.seen_activity = True
+            elif not ep.seen_activity:
+                continue  # the reconfiguration has not reached this agent yet
+            if ep.t_drain_done is None and not any(
+                e.status == m.EngineStatus.DRAINING for e in engines
+            ):
+                ep.t_drain_done = self._current_time
+            if ep.t_drain_done is not None and not any(
+                e.status == m.EngineStatus.BOOTING for e in engines
+            ):
+                ep.t_boot_done = self._current_time
+                self._reconfig_episodes.append(ep)
+                del self._open_episodes[aid]
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -460,11 +513,13 @@ class SimulatorImpl(m.Simulator):
         self._environment_state.last_action_downtime = cost
 
         # 2. Perform action
+        self._open_reconfig_episode(action)
         if action.action == m.ActionType.TRANSFER:
             self._handle_resource_manager_trigger_vram_transfer(action)
         elif action.action in (m.ActionType.SPLIT, m.ActionType.MERGE):
             self._handle_resource_manager_trigger_mig_decision(action)
         self._step_draining_or_active_engines()
+        self._advance_reconfig_episodes()
 
     def _handle_shutdown_complete_reallocate(
         self, payload: sm.ShutdownReallocatePayload
@@ -644,6 +699,7 @@ class SimulatorImpl(m.Simulator):
                 )
             case _:
                 raise ValueError(f"Unexpected shutdown purpose {purpose}")
+        self._advance_reconfig_episodes()
 
     def _handle_boot_complete(self, payload: sm.BootPayload) -> None:
         engine_id = payload["engine_id"]
@@ -665,6 +721,7 @@ class SimulatorImpl(m.Simulator):
             )
             if still_booting:
                 return  # Wait for remaining sibling engines
+        self._advance_reconfig_episodes()
         self._environment_state.reconfig_flag = False  # reconfig action done
 
     def _handle_request_arrival(self, payload: sm.RequestArrivalPayload):

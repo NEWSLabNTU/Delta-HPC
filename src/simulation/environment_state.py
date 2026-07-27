@@ -55,12 +55,26 @@ class AgentStats:
 
 
 class EnvironmentStateImpl(sm.EnvironmentState):
+    # Minimum spacing between queue trace samples. Queue-clearing times run to
+    # tens of seconds, so sub-second resolution buys nothing and this keeps a
+    # full run's trace to ~1 sample/sec/agent instead of one per simulator event.
+    QUEUE_TRACE_RESOLUTION = 1.0
+
     def __init__(self):
         self._agent_stats: Dict[m.AgentId, AgentStats] = defaultdict(AgentStats)
         self._last_queue_update_time: float = 0.0
         self._reconfig_flag: bool = False
         self._current_budget = TRAINING_CONFIG.reconfig_budget
         self._last_action_downtime: float = 0.0
+        # Per-agent (time, waiting_requests) history, for post-hoc recovery
+        # analysis. Waiting only, not in-service: a request being served is not
+        # queued, so "queue cleared" means nothing is left waiting for an engine.
+        self._queue_trace: Dict[m.AgentId, List[Tuple[float, int]]] = defaultdict(list)
+
+    @property
+    def queue_trace(self) -> Dict[m.AgentId, List[Tuple[float, int]]]:
+        """Per-agent (time, waiting request count) samples over the whole run."""
+        return self._queue_trace
 
     @property
     def current_budget(self) -> float:
@@ -219,6 +233,10 @@ class EnvironmentStateImpl(sm.EnvironmentState):
                 idx = 6 if e.is_permanent else e.mig_profile.idx
                 stats.last_queue_lengths[idx] += len(e.waiting_queue)
                 stats.last_running_request_counts[idx] += len(e.running_queue)
+
+            trace = self._queue_trace[agent_id]
+            if not trace or current_time - trace[-1][0] >= self.QUEUE_TRACE_RESOLUTION:
+                trace.append((current_time, sum(stats.last_queue_lengths)))
 
     def register_arrival(self, request: m.Request):
         self._agent_stats[request.agent_id].interval_requests.append(request)

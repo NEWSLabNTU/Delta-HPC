@@ -1,5 +1,6 @@
 import os
 
+import bisect
 import datetime
 import argparse
 import io
@@ -31,6 +32,11 @@ from src.bench.prints import (
 )
 from src.bench.heuristic import RuleBasedHeuristic
 from src.bench.qas import QualityAwareScheduler
+
+# Ceiling on how long a single reconfiguration is watched for its queue to
+# clear. Episodes still backed up at this point are reported as uncleared rather
+# than folded into the averages with an arbitrary value.
+RECOVERY_HORIZON = 900.0
 
 
 class BenchRunner:
@@ -70,12 +76,17 @@ class BenchRunner:
 
         # 4. Flush Phase
         completed_reqs = self._flush_simulation(stats=stats)
+        # Retained for post-hoc per-request analysis by external tooling.
+        self.completed_reqs = completed_reqs
 
-        # 5. Plot Timeline
+        # 5. Plot Timeline and compute reconfiguration recovery
+        recovery = self._compute_reconfig_recovery()
         self._plot_timeline(stats, self.ckpt)
 
         # 6. Synthesis
-        return self._synthesize_results(completed_reqs=completed_reqs, stats=stats)
+        return self._synthesize_results(
+            completed_reqs=completed_reqs, stats=stats, recovery=recovery
+        )
 
     def _setup_execution(self, ckpt: Optional[Path]):
         agents: Dict[m.AgentId, m.Agent] = {aid: AgentImpl(aid) for aid in m.AgentId}
@@ -174,7 +185,10 @@ class BenchRunner:
             )
             action = int(act_np[0])
             return action, list(m.ResourceManagerAction)[action]
-        elif self.mode in (BenchMode.BASELINE_HEURISTIC, BenchMode.BASELINE_QAS) and policy:
+        elif (
+            self.mode in (BenchMode.BASELINE_HEURISTIC, BenchMode.BASELINE_QAS)
+            and policy
+        ):
             enum_act = policy.decide_action(self.env.sim)
             return list(m.ResourceManagerAction).index(enum_act), enum_act
 
@@ -301,6 +315,7 @@ class BenchRunner:
         self,
         completed_reqs: Dict[m.AgentId, Dict[str, m.Request]],
         stats: Dict[str, Any],
+        recovery: Dict[m.AgentId, Dict[str, Any]],
     ) -> Dict[str, Dict[str, Any]]:
         presence = stats["presence_by_mig"]
         ql_sum = stats["queue_lengths_sum"]
@@ -377,9 +392,115 @@ class BenchRunner:
                     prof: (count / total_steps * 100)
                     for prof, count in presence[aid].items()
                 },
+                "reconfig_recovery": recovery[aid],
             }
 
         return res
+
+    def _compute_reconfig_recovery(self) -> Dict[m.AgentId, Dict[str, Any]]:
+        """Measure how long each reconfiguration takes to clear the queue it caused.
+
+        Recovery ends the first moment the agent has nothing waiting for an
+        engine. Watching stops after RECOVERY_HORIZON; an episode still backed up
+        then is counted uncleared rather than folded in with a made-up value.
+
+        Episodes are set aside if another reconfiguration hits the same agent
+        before the queue clears (the two disruptions become inseparable), or if
+        the workload pattern changes partway through (the queue then moves for
+        reasons unrelated to the action).
+        """
+        trace = self.env.sim.queue_trace
+        times = {aid: [t for t, _ in trace[aid]] for aid in m.AgentId}
+
+        episodes = sorted(
+            self.env.sim.reconfig_episodes,
+            key=lambda e: (e.t_trigger, e.agent_id.value),
+        )
+        # Next trigger per agent bounds each episode's observation window.
+        next_trigger: Dict[int, float] = {}
+        seen: Dict[m.AgentId, int] = {}
+        for idx, ep in enumerate(episodes):
+            if ep.agent_id in seen:
+                next_trigger[seen[ep.agent_id]] = ep.t_trigger
+            seen[ep.agent_id] = idx
+
+        out: Dict[m.AgentId, Dict[str, Any]] = {
+            aid: {
+                "n_episodes": 0,
+                "n_analyzed": 0,
+                "n_overlapping": 0,
+                "n_pattern_shift": 0,
+                "n_uncleared": 0,
+                "drain": [],
+                "boot": [],
+                "clear": [],
+                "total": [],
+            }
+            for aid in m.AgentId
+        }
+
+        for idx, ep in enumerate(episodes):
+            rec = out[ep.agent_id]
+            rec["n_episodes"] += 1
+
+            if ep.interrupted or ep.t_boot_done is None:
+                rec["n_overlapping"] += 1
+                continue
+
+            t_end = min(
+                next_trigger.get(idx, float("inf")),
+                ep.t_trigger + RECOVERY_HORIZON,
+            )
+            if t_end <= ep.t_trigger:
+                rec["n_overlapping"] += 1
+                continue
+
+            pats = {
+                self._get_active_pattern(ep.agent_id, t)
+                for t in (
+                    ep.t_trigger,
+                    ep.t_boot_done,
+                    min(t_end, self.env.sim.current_time),
+                )
+            }
+            if len(pats) > 1:
+                rec["n_pattern_shift"] += 1
+                continue
+
+            # First moment nothing is left waiting for an engine.
+            i = bisect.bisect_left(times[ep.agent_id], ep.t_trigger)
+            j = bisect.bisect_right(times[ep.agent_id], t_end)
+            t_cleared = next((t for t, q in trace[ep.agent_id][i:j] if q == 0), None)
+            if t_cleared is None:
+                rec["n_uncleared"] += 1
+                continue
+
+            drain = cast(float, ep.t_drain_done) - ep.t_trigger
+            boot = ep.t_boot_done - cast(float, ep.t_drain_done)
+            total = t_cleared - ep.t_trigger
+
+            rec["n_analyzed"] += 1
+            rec["drain"].append(drain)
+            rec["boot"].append(boot)
+            # Queue time remaining once full capacity was back. Negative would
+            # mean it cleared mid-reconfiguration, which counts as zero.
+            rec["clear"].append(max(0.0, t_cleared - ep.t_boot_done))
+            rec["total"].append(total)
+
+        for rec in out.values():
+            for key in ("drain", "boot", "clear", "total"):
+                rec[f"median_{key}"] = float(np.median(rec[key])) if rec[key] else 0.0
+            # Clearing times are heavily skewed -- most actions land on an
+            # already-quiet queue while a few take minutes -- so the spread is
+            # the informative part, not the centre.
+            rec["total_quartiles"] = (
+                np.percentile(rec["total"], [25, 50, 75, 90]).tolist()
+                if rec["total"]
+                else [0.0, 0.0, 0.0, 0.0]
+            )
+            rec["max_total"] = max(rec["total"]) if rec["total"] else 0.0
+
+        return out
 
     def _plot_timeline(self, stats: Dict[str, Any], ckpt: Optional[Path]):
         run_name = ckpt.stem if ckpt else self.mode.name
@@ -516,7 +637,9 @@ class BenchRunner:
                 seq_strs = []
                 for item in BENCH_CONFIG.workload_sequence:
                     if isinstance(item, dict):
-                        seq_strs.append("{" + ", ".join(f"{k}: {v}" for k, v in item.items()) + "}")
+                        seq_strs.append(
+                            "{" + ", ".join(f"{k}: {v}" for k, v in item.items()) + "}"
+                        )
                     else:
                         seq_strs.append(str(item))
                 print(f"Workload Sequence: {' -> '.join(seq_strs)}")
@@ -526,7 +649,9 @@ class BenchRunner:
             shared_loader = RequestLoader(
                 num_steps=BENCH_CONFIG.benchmark_length,
                 get_rate_range=lambda p, a: BENCH_CONFIG.get_rate_range(Workload(p), a),
-                get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(Workload(p)),
+                get_duration_range=lambda p: BENCH_CONFIG.get_duration_range(
+                    Workload(p)
+                ),
                 dataset_paths=sim_utils.SIM_CONFIG.datasets,
                 seed=BENCH_CONFIG.seed,
                 track_history=True,
@@ -539,7 +664,7 @@ class BenchRunner:
                 )
             print(f"Generated {len(shared_requests)} requests.")
             print_workloads(cls.get_workload_summary(shared_loader.phase_history))
-        
+
         pre_print_str = f_pre.getvalue()
         print(pre_print_str, end="")
 
@@ -553,7 +678,9 @@ class BenchRunner:
             u.SIM_CONFIG = u.init_config(Path("."))
             u.TOKENS_MAP = u.init_tokens_map(Path("."), u.SIM_CONFIG)
 
-            cls._run_trial(mode, shared_requests, shared_loader.phase_history, ckpt, pre_print_str)
+            cls._run_trial(
+                mode, shared_requests, shared_loader.phase_history, ckpt, pre_print_str
+            )
 
         print("\nBenchmark Suite Completed.")
 
@@ -623,7 +750,7 @@ class BenchRunner:
 
         trial_output = f_out.getvalue()
         print(trial_output, end="")
-        
+
         full_output = pre_print_str + trial_output
         run_name = ckpt.stem if ckpt else mode.name
         with open(bench_dir / f"results_{run_name}.txt", "w") as f:

@@ -48,8 +48,8 @@ workloads:
       - 0.1
       - 0.5
     duration:
-    - 3200.0
-    - 4000.0
+    - 3600.0
+    - 4800.0
   even:
     rate:
       CodingAgent:
@@ -59,8 +59,8 @@ workloads:
       - 1.0
       - 2.0
     duration:
-    - 0.0
-    - 0.0
+    - 1800.0
+    - 2200.0
   busy:
     rate:
       CodingAgent:
@@ -70,8 +70,8 @@ workloads:
       - 4.5
       - 5.5
     duration:
-    - 6800.0
-    - 7400.0
+    - 1800.0
+    - 2200.0
   burst:
     rate:
       CodingAgent:
@@ -81,8 +81,8 @@ workloads:
       - 6.0
       - 8.0
     duration:
-    - 3200.0
-    - 4000.0
+    - 300.0
+    - 700.0
 qas:
   profile_table:
     A100_40GB:

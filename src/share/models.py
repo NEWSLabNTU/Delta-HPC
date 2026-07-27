@@ -492,6 +492,18 @@ class Simulator(ABC):
     @abstractmethod
     def interval_requests(self) -> Dict[AgentId, List[Request]]: ...
 
+    @property
+    @abstractmethod
+    def reconfig_episodes(self) -> List[Any]:
+        """Per-agent reconfiguration episodes with drain/boot phase timestamps."""
+        ...
+
+    @property
+    @abstractmethod
+    def queue_trace(self) -> Dict[AgentId, List[Tuple[float, int]]]:
+        """Per-agent (time, waiting request count) samples over the run."""
+        ...
+
     @abstractmethod
     def need_requests_replenish(self) -> List[AgentId]: ...
 
