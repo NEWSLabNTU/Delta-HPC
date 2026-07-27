@@ -78,6 +78,12 @@ class BenchRunner:
         completed_reqs = self._flush_simulation(stats=stats)
         # Retained for post-hoc per-request analysis by external tooling.
         self.completed_reqs = completed_reqs
+        # Likewise for the action log: stats["timeline_actions"] is the only exact
+        # record of how many reconfigurations the policy emitted. The per-agent
+        # split/merge/transfer counters cannot be summed to get it, because an
+        # action with a receiver increments transfer_count as well as split or
+        # merge and would be counted twice.
+        self.stats = stats
 
         # 5. Plot Timeline and compute reconfiguration recovery
         recovery = self._compute_reconfig_recovery()
