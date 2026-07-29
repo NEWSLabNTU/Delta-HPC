@@ -1,24 +1,35 @@
 """Compare reconfiguration impact across policies on one shared workload.
 
 Runs GO-CART, the HPA rule-based heuristic and QAS over an identical request
-stream, then draws one figure per policy showing how latency and model-tier
-quality respond in a window around each reconfiguration action. Episode
-accounting is printed to the terminal.
+stream, then draws three figures per policy showing how the waiting-request
+backlog, latency and model-tier quality respond in a window around each
+reconfiguration action: one over every attributable episode, and one for each
+direction of capacity change (see EPISODE_CATEGORIES). Nine figures per run, all
+on shared latency and backlog axes. Episode accounting is printed to the
+terminal.
 
 The policies run concurrently, one process each. Threads would not help -- the
 simulator is a pure-Python event loop and holds the GIL throughout.
 
-Episode accounting differs by exclusion reason, deliberately:
+The table and the figures run two separate passes over the same episodes, and
+they exclude on different terms. Only the table's set is fully attributable:
 
-  - Episodes that never cleared inside the observation window are a *result*, not
-    a measurement failure -- they are reported as each policy's failure rate in
-    the accounting table rather than being dropped silently.
-  - Episodes spanning a workload-pattern change are discarded outright. The queue
-    there moves for reasons unrelated to the reconfiguration, so they belong in
-    neither the recovered nor the failed count. They are counted and printed so
-    the discard volume stays visible.
-  - Episodes overlapping another reconfiguration are likewise unattributable and
-    discarded on the same terms.
+  - The table (BenchRunner._compute_reconfig_recovery) bounds each episode at the
+    next trigger for that agent, and discards episodes spanning a
+    workload-pattern change -- the queue there moves for reasons unrelated to the
+    reconfiguration -- as well as those overlapping another one. Both discard
+    counts are printed so the volume stays visible. Episodes that never cleared
+    inside the horizon are a *result*, not a measurement failure, so they are
+    reported as each policy's failure rate rather than dropped silently.
+  - The figures (action_windows) discard far less: only episodes interrupted
+    before their boot completed, and those with no completed request in the
+    window. Everything else inside the window is drawn as it happened, including
+    a later action on the same agent, the tail of the previous one, and any
+    pattern change. At a 120s decision interval the 300s post-window spans two
+    further decision points, so a frequently-acting policy's line carries its own
+    follow-up actions. Read the first decision interval as one action's cost;
+    past that the trace is how a policy behaves after acting, not how one action
+    recovers.
 
 Usage:
     python -m src.bench.recovery_compare --ckpt results/<run>/ckpt/<model>.zip
@@ -78,7 +89,7 @@ QUIET_STATUS_INTERVAL = 30.0
 
 # --- Action-impact window (per-policy TTFT / quality traces) ---
 IMPACT_PRE = 60.0  # seconds of context before the action fires
-IMPACT_POST = 300.0  # seconds tracked afterwards
+IMPACT_POST = 500.0  # seconds tracked afterwards
 IMPACT_BIN = 15.0  # bin width for the per-window series
 # Below this the TTFT axis is linear, above it logarithmic. 0.1s puts the dense
 # sub-second baseline into the log region instead of squashing it flat against
@@ -109,6 +120,17 @@ IMPACT_POOLED = (
     (90, ":", 1.8),
 )
 
+# The queue panel is sampled state, not per-request observations: the simulator
+# records one (time, waiting requests) point per agent roughly every second, so a
+# bin holds ~15 samples of a step function rather than a noisy statistic over
+# arrivals. One sample is therefore already a valid reading of the backlog, and
+# bins are only left empty when the trace genuinely has nothing there.
+QUEUE_MIN_BIN_SAMPLES = 1
+# Backlogs span zero to thousands across policies on a shared axis, so the queue
+# panel is symlog like the TTFT one. Linear below one request, where the only
+# meaningful value is an empty queue.
+QUEUE_LINTHRESH = 1.0
+
 # Model-tier assignment for the quality score (thesis Table 5.1). Profiles hosting
 # the same model share a tier; the score is the tier-weighted token share,
 # normalised by the platform's top tier (Equation 5.1):
@@ -136,8 +158,42 @@ MODEL_TIERS: Dict[str, Dict[str, int]] = {
 }
 MAX_TIER: Dict[str, int] = {"A100_40GB": 3, "B200": 4}
 
+# Episodes are also plotted split by the direction of the capacity change the
+# action makes *for the agent the episode belongs to*. Splitting a MIG or
+# receiving one from the other agent adds serving capacity, which is how a policy
+# answers rising demand; merging or giving one away removes it, which is what it
+# does when demand falls. The two directions cost different things -- a split
+# pays boot time to gain throughput, a merge gives throughput up for tier -- so
+# pooling them hides both.
+#
+# A transfer lands in both categories, once per side: the giver's episode is a
+# decrease and the receiver's an increase. They are different agents with
+# different queues, so this is two observations, not one counted twice.
+# (key, filename suffix, title clause)
+EPISODE_CATEGORIES = (
+    ("up", "load_up", "Capacity-Adding Actions: Split / Receive"),
+    ("down", "load_down", "Capacity-Releasing Actions: Merge / Give"),
+)
+
 PolicySpec = Tuple[str, BenchMode, Optional[Path]]
 RecoveryByAgent = Dict[m.AgentId, Dict[str, Any]]
+
+
+def episode_category(ep: Any) -> Optional[str]:
+    """Which EPISODE_CATEGORIES key an episode belongs to, or None if neither.
+
+    None is unreachable for the three action types the simulator emits today; it
+    exists so a new one shows up as an uncategorised count rather than being
+    silently filed under a direction it does not have.
+    """
+    match ep.action_type:
+        case "split":
+            return "up"
+        case "merge":
+            return "down"
+        case "transfer":
+            return "up" if ep.is_receiver else "down"
+    return None
 
 
 def build_shared_workload() -> Tuple[List[m.Request], Dict[m.AgentId, Any]]:
@@ -237,19 +293,36 @@ class ImpactData(NamedTuple):
     q_pct: np.ndarray  # tier / T * 100
     q_tokens: np.ndarray  # weights for the score (Eq. 5.1 is token-weighted)
     q_ep: np.ndarray
+    # Queue arrays are samples of the agent's backlog rather than per-request
+    # values, so they too carry their own offsets and episode index.
+    qlen_rel: np.ndarray
+    qlen: np.ndarray  # waiting requests, summed over the agent's engines
+    qlen_ep: np.ndarray
+    # One EPISODE_CATEGORIES key (or "") per episode, indexed by episode number,
+    # so the per-category figures can be cut from this without a second pass over
+    # the simulator.
+    ep_cat: np.ndarray
     n_episodes: int
 
 
 def action_windows(runner: BenchRunner) -> ImpactData:
-    """Collect per-request TTFT and per-action quality traces around each trigger.
+    """Collect per-request TTFT, quality and backlog traces around each trigger.
 
-    The two panels are indexed by different clocks, deliberately. Latency is a
+    The panels are indexed by different clocks, deliberately. Latency is a
     property of a request's whole journey, so it belongs at its arrival. Quality
     is fixed by the engine that served it, so it belongs at the moment service
     began -- binning it by arrival credits a post-reconfiguration tier to a
     pre-action bin whenever the request sat in the queue across the trigger, and
     under HPA (pre-action P99 TTFT ~10^3 s) that reaches back tens of
     seconds and makes quality appear to fall before the action that caused it.
+    Queue length has no such ambiguity: it is agent state sampled by the
+    simulator, already stamped with the time it was observed.
+
+    Only two things are discarded here, both below: an episode interrupted before
+    it finished booting, and one with no completed request in its window. Neither
+    the next-trigger bound nor the pattern-shift check the accounting table
+    applies is repeated -- see the module docstring for what that leaves in the
+    traces.
     """
     edges = np.arange(-IMPACT_PRE, IMPACT_POST + IMPACT_BIN, IMPACT_BIN)
     centres = ((edges[:-1] + edges[1:]) / 2).tolist()
@@ -273,6 +346,11 @@ def action_windows(runner: BenchRunner) -> ImpactData:
         served[aid] = with_ftt
     first_tokens = {aid: [r.first_token_time for r in rs] for aid, rs in served.items()}
 
+    # Waiting-request samples, one series per agent, already time-ordered by the
+    # simulator. Sliced by the same bisect scheme as the request indices above.
+    queue_trace = runner.env.sim.queue_trace
+    queue_times = {aid: [t for t, _ in queue_trace.get(aid, [])] for aid in m.AgentId}
+
     def ttft_of(r: m.Request) -> float:
         if r.first_token_time:
             return r.first_token_time - r.arrival_time
@@ -285,11 +363,19 @@ def action_windows(runner: BenchRunner) -> ImpactData:
     q_pct: List[float] = []
     q_tok: List[float] = []
     q_ep: List[int] = []
+    ql_rel: List[float] = []
+    ql_val: List[float] = []
+    ql_ep: List[int] = []
+    cats: List[str] = []
     n_episodes = 0
 
     for ep in runner.env.sim.reconfig_episodes:
-        # Overlapping reconfigurations put two disturbances in one window, so the
-        # trace could not be attributed to this action.
+        # A second action arriving mid-reconfiguration puts two disturbances in
+        # one trace before this one has even finished. Note the narrow scope: the
+        # flag is set only while the episode is open, so it catches nothing once
+        # boot completes, ~60-70s into a 360s window. t_boot_done is None covers
+        # episodes still open at the end of the run, which includes those whose
+        # action never reached the agent at all (see seen_activity).
         if ep.interrupted or ep.t_boot_done is None:
             continue
 
@@ -298,6 +384,10 @@ def action_windows(runner: BenchRunner) -> ImpactData:
         hi = bisect.bisect_right(arrivals[aid], ep.t_trigger + IMPACT_POST)
         window = by_agent[aid][lo:hi]
         if not window:
+            # No completed request arrived in the window, so there is no latency
+            # trace to draw. This drops the episode's quality and queue samples
+            # too, which is the intended reading: an agent nothing arrived at was
+            # not measurably disturbed by the action.
             continue
 
         for r in window:
@@ -314,6 +404,15 @@ def action_windows(runner: BenchRunner) -> ImpactData:
                 q_pct.append(pct)
                 q_tok.append(float(r.generated_tokens))
                 q_ep.append(n_episodes)
+
+        ql_lo = bisect.bisect_left(queue_times[aid], ep.t_trigger - IMPACT_PRE)
+        ql_hi = bisect.bisect_right(queue_times[aid], ep.t_trigger + IMPACT_POST)
+        for t, q in queue_trace.get(aid, [])[ql_lo:ql_hi]:
+            ql_rel.append(t - ep.t_trigger)
+            ql_val.append(float(q))
+            ql_ep.append(n_episodes)
+
+        cats.append(episode_category(ep) or "")
         n_episodes += 1
 
     return ImpactData(
@@ -325,7 +424,53 @@ def action_windows(runner: BenchRunner) -> ImpactData:
         q_pct=np.asarray(q_pct),
         q_tokens=np.asarray(q_tok),
         q_ep=np.asarray(q_ep, dtype=np.int64),
+        qlen_rel=np.asarray(ql_rel),
+        qlen=np.asarray(ql_val),
+        qlen_ep=np.asarray(ql_ep, dtype=np.int64),
+        ep_cat=np.asarray(cats, dtype=object),
         n_episodes=n_episodes,
+    )
+
+
+def category_subset(data: ImpactData, category: str) -> ImpactData:
+    """The episodes of one category, with episode numbering closed up.
+
+    Every per-episode row in the plots is indexed by position, so the surviving
+    episodes have to be renumbered 0..k-1 rather than keeping their original
+    numbers -- otherwise the per-episode matrices would be mostly empty rows and
+    `faint` would fade the lines for episodes that are no longer there.
+    """
+    keep_ep = data.ep_cat == category
+    n_kept = int(keep_ep.sum())
+    renumber = np.full(data.n_episodes, -1, dtype=np.int64)
+    renumber[keep_ep] = np.arange(n_kept)
+
+    def take(ep: np.ndarray, *arrays: np.ndarray) -> Tuple[np.ndarray, ...]:
+        if ep.size == 0:
+            return (*arrays, ep)
+        sel = keep_ep[ep]
+        return (*(a[sel] for a in arrays), renumber[ep[sel]])
+
+    rel, ttft, ep = take(data.ep, data.rel, data.ttft)
+    q_rel, q_pct, q_tokens, q_ep = take(
+        data.q_ep, data.q_rel, data.q_pct, data.q_tokens
+    )
+    qlen_rel, qlen, qlen_ep = take(data.qlen_ep, data.qlen_rel, data.qlen)
+
+    return ImpactData(
+        centres=data.centres,
+        rel=rel,
+        ttft=ttft,
+        ep=ep,
+        q_rel=q_rel,
+        q_pct=q_pct,
+        q_tokens=q_tokens,
+        q_ep=q_ep,
+        qlen_rel=qlen_rel,
+        qlen=qlen,
+        qlen_ep=qlen_ep,
+        ep_cat=data.ep_cat[keep_ep],
+        n_episodes=n_kept,
     )
 
 
@@ -382,21 +527,59 @@ def episode_percentile(
     return out
 
 
-LatencySeries = Tuple[np.ndarray, Dict[int, List[Optional[float]]]]
+def bin_edges(centres: List[float]) -> np.ndarray:
+    """Bin boundaries for the window's centres, one longer than the centres."""
+    edges = np.asarray(centres) - IMPACT_BIN / 2
+    return np.append(edges, centres[-1] + IMPACT_BIN / 2)
 
 
-def impact_series(data: ImpactData) -> LatencySeries:
-    """Binned latency lines for one policy: per-episode matrix, then pooled lines.
+def episode_mean(
+    ep: np.ndarray,
+    idx: np.ndarray,
+    values: np.ndarray,
+    n_ep: int,
+    n_bins: int,
+    min_count: int,
+) -> np.ndarray:
+    """Per-episode, per-bin mean as an (n_ep, n_bins) array; NaN where thin.
 
-    Split out of the plotting so the three policy figures can share one y-axis:
-    the limit must be known before any figure is drawn, and it depends on these
-    binned values, not on raw TTFTs. A single request can reach 10^3 s while no
-    plotted line goes near it.
+    A mean is a ratio of two sums, so unlike the percentile version this needs no
+    sorting -- two bincount passes over the whole array give every cell.
+    """
+    out = np.full(n_ep * n_bins, np.nan)
+    keep = (idx >= 0) & (idx < n_bins)
+    if not keep.any():
+        return out.reshape(n_ep, n_bins)
+
+    key = ep[keep] * n_bins + idx[keep]
+    size = n_ep * n_bins
+    total = np.bincount(key, weights=values[keep], minlength=size)
+    count = np.bincount(key, minlength=size)
+    enough = count >= min_count
+    out[enough] = total[enough] / count[enough]
+    return out.reshape(n_ep, n_bins)
+
+
+class PolicySeries(NamedTuple):
+    """One policy's binned lines, for the panels drawn on a shared y-axis."""
+
+    ttft_per_ep: np.ndarray  # (n_episodes, n_bins)
+    ttft_pooled: Dict[int, List[Optional[float]]]  # percentile -> line
+    qlen_per_ep: np.ndarray  # (n_episodes, n_bins)
+    qlen_pooled: List[Optional[float]]  # mean backlog across all episodes
+
+
+def impact_series(data: ImpactData) -> PolicySeries:
+    """Binned latency and backlog lines: per-episode matrix, then pooled lines.
+
+    Split out of the plotting so the three policy figures can share one y-axis
+    per panel: the limits must be known before any figure is drawn, and they
+    depend on these binned values, not on the raw observations. A single request
+    can reach 10^3 s while no plotted line goes near it.
     """
     centres = data.centres
     n_bins = len(centres)
-    edges = np.asarray(centres) - IMPACT_BIN / 2
-    edges = np.append(edges, centres[-1] + IMPACT_BIN / 2)
+    edges = bin_edges(centres)
     idx = np.digitize(data.rel, edges) - 1
 
     per_ep = episode_percentile(
@@ -409,48 +592,93 @@ def impact_series(data: ImpactData) -> LatencySeries:
         ]
         for pct, _, _ in IMPACT_POOLED
     }
-    return per_ep, pooled
+
+    # Per-episode backlog lines are bin means: over ~15 samples of a step
+    # function a mean is the time-average queue length, which is the quantity the
+    # panel is about, and it stays defined in bins the trace sampled only once.
+    q_idx = np.digitize(data.qlen_rel, edges) - 1
+    qlen_per_ep = episode_mean(
+        data.qlen_ep, q_idx, data.qlen, data.n_episodes, n_bins, QUEUE_MIN_BIN_SAMPLES
+    )
+    # The mean, not a percentile: a backlog is a total, and the actions that pile
+    # up thousands of requests are the cost the panel exists to show. A median
+    # would report the typical action's queue and hide exactly those.
+    qlen_pooled = [
+        float(np.mean(data.qlen[q_idx == k])) if np.any(q_idx == k) else None
+        for k in range(n_bins)
+    ]
+    return PolicySeries(per_ep, pooled, qlen_per_ep, qlen_pooled)
 
 
-def shared_ttft_top(series: Dict[str, LatencySeries]) -> Optional[float]:
-    """Highest latency value any policy plots, with headroom for the legend.
+def shared_top(
+    per_ep: List[np.ndarray], lines: List[List[Optional[float]]]
+) -> Optional[float]:
+    """Highest value any policy plots on a panel, with headroom for the legend.
 
-    Multiplicative headroom, not additive: the axis is logarithmic above
-    IMPACT_LINTHRESH, so a fixed margin would be invisible at the top and enormous
-    at the bottom.
+    Multiplicative headroom, not additive: both panels using this are logarithmic
+    above their linear threshold, so a fixed margin would be invisible at the top
+    and enormous at the bottom.
     """
     highest: List[float] = []
-    for per_ep, pooled in series.values():
-        if np.isfinite(per_ep).any():
-            highest.append(float(np.nanmax(per_ep)))
-        for line in pooled.values():
-            drawn = [v for v in line if v is not None]
-            if drawn:
-                highest.append(max(drawn))
+    for matrix in per_ep:
+        if np.isfinite(matrix).any():
+            highest.append(float(np.nanmax(matrix)))
+    for line in lines:
+        drawn = [v for v in line if v is not None]
+        if drawn:
+            highest.append(max(drawn))
     return max(highest) * 1.6 if highest else None
+
+
+def shared_ttft_top(series: Dict[str, PolicySeries]) -> Optional[float]:
+    """Latency limit shared by every policy's figure."""
+    return shared_top(
+        [s.ttft_per_ep for s in series.values()],
+        [line for s in series.values() for line in s.ttft_pooled.values()],
+    )
+
+
+def shared_queue_top(series: Dict[str, PolicySeries]) -> Optional[float]:
+    """Backlog limit shared by every policy's figure."""
+    return shared_top(
+        [s.qlen_per_ep for s in series.values()],
+        [s.qlen_pooled for s in series.values()],
+    )
 
 
 def plot_action_impact(
     policy: str,
     data: ImpactData,
-    series: LatencySeries,
+    series: PolicySeries,
     save_path: Path,
     ttft_top: Optional[float] = None,
+    queue_top: Optional[float] = None,
+    category_label: Optional[str] = None,
 ) -> None:
-    """Stacked panels per policy: TTFT above, quality score below, shared time axis.
+    """Stacked panels per policy: backlog, TTFT, quality score, shared time axis.
 
     Each reconfiguration is drawn as its own faint line; the value pooled over all
-    of them carries the solid colour. Two panels rather than twin y-axes: the
+    of them carries the solid colour. Separate panels rather than twin y-axes: the
     measures have no common scale, so overlaying them would imply crossings and
     gaps that are artefacts of the axis limits rather than properties of the data.
 
-    ttft_top is the latency limit shared by every policy's figure. Left to
-    autoscale, each policy would get its own and the three could not be read
-    against one another -- HPA's ~10^3 s recovery would occupy the same height as
-    GO-CART's few seconds.
+    The panels are ordered by causation: an action's immediate cost is a queue
+    that builds and drains, the latency panel below it is what that queue does to
+    the requests sitting in it, and quality is what the new configuration serves
+    them on.
+
+    ttft_top and queue_top are the limits shared by every figure this run draws,
+    per-category ones included. Left to autoscale, each would get its own and none
+    could be read against another -- HPA's ~10^3 s recovery would occupy the same
+    height as GO-CART's few seconds, and a policy's split figure would look like
+    its merge figure at a different scale.
+
+    category_label names the episode subset in the title; None means every
+    attributable episode.
     """
     if data.n_episodes == 0 or data.rel.size == 0:
-        print(f"{policy}: no attributable reconfigurations; skipping impact plot.")
+        what = f"{policy} ({category_label})" if category_label else policy
+        print(f"{what}: no attributable reconfigurations; skipping impact plot.")
         return
 
     centres = data.centres
@@ -461,21 +689,44 @@ def plot_action_impact(
     plt.rcParams["font.serif"] = SERIF_STACK
     plt.rcParams["mathtext.fontset"] = "stix"
 
-    fig, (ax_t, ax_q) = plt.subplots(
-        2, 1, sharex=True, figsize=(10, 8), layout="constrained"
+    fig, (ax_l, ax_t, ax_q) = plt.subplots(
+        3, 1, sharex=True, figsize=(10, 11), layout="constrained"
     )
 
     n_bins = len(centres)
-    edges = np.asarray(centres) - IMPACT_BIN / 2
-    edges = np.append(edges, centres[-1] + IMPACT_BIN / 2)
+    edges = bin_edges(centres)
 
     # Fainter as episodes accumulate, so a policy that reconfigures often does not
     # render as a solid block that hides the pooled line.
     faint = float(np.clip(2.5 / max(data.n_episodes, 1), 0.05, 0.45))
 
+    # --- Queue: waiting requests, the backlog the action creates and drains. ---
+    if data.qlen_rel.size:
+        for row in series.qlen_per_ep:
+            ax_l.plot(centres, row, color=colour, alpha=faint, linewidth=0.9, zorder=2)
+        ax_l.plot(
+            centres,
+            series.qlen_pooled,
+            color=colour,
+            linewidth=2.5,
+            marker="o",
+            markersize=3.5,
+            zorder=5,
+            label="Pooled mean",
+        )
+        ax_l.plot(
+            [],
+            [],
+            color=colour,
+            alpha=max(faint, 0.25),
+            linewidth=0.9,
+            label="Individual action (mean)",
+        )
+        ax_l.legend(loc="upper right", frameon=True)
+
     # --- TTFT: one percentile, per reconfiguration faint and pooled solid. ---
-    per_ep, pooled_lines = series
-    for row in per_ep:
+    pooled_lines = series.ttft_pooled
+    for row in series.ttft_per_ep:
         ax_t.plot(centres, row, color=colour, alpha=faint, linewidth=0.9, zorder=2)
 
     for pct, style, width in IMPACT_POOLED:
@@ -491,8 +742,14 @@ def plot_action_impact(
             zorder=5,
             label=f"Pooled {name}",
         )
-    ax_t.plot([], [], color=colour, alpha=max(faint, 0.25), linewidth=0.9,
-              label=f"Individual action ({PCTL_LABEL.lower()})")
+    ax_t.plot(
+        [],
+        [],
+        color=colour,
+        alpha=max(faint, 0.25),
+        linewidth=0.9,
+        label=f"Individual action ({PCTL_LABEL.lower()})",
+    )
     ax_t.legend(loc="upper right", frameon=True)
 
     # --- Quality: Eq. 5.1 evaluated per bin, token-weighted throughout. ---
@@ -511,18 +768,32 @@ def plot_action_impact(
         for row in cells.reshape(data.n_episodes, n_bins):
             ax_q.plot(centres, row, color=colour, alpha=faint, linewidth=0.9, zorder=2)
 
-        pooled_num = np.bincount(q_idx[keep], weights=(q_pct * q_tok)[keep], minlength=n_bins)
+        pooled_num = np.bincount(
+            q_idx[keep], weights=(q_pct * q_tok)[keep], minlength=n_bins
+        )
         pooled_den = np.bincount(q_idx[keep], weights=q_tok[keep], minlength=n_bins)
         score = [
             float(pooled_num[k] / pooled_den[k]) if pooled_den[k] > 0 else None
             for k in range(n_bins)
         ]
         ax_q.plot(
-            centres, score, color=colour, linewidth=2.5, marker="o", markersize=3.5,
-            zorder=5, label="Pooled score",
+            centres,
+            score,
+            color=colour,
+            linewidth=2.5,
+            marker="o",
+            markersize=3.5,
+            zorder=5,
+            label="Pooled score",
         )
-        ax_q.plot([], [], color=colour, alpha=max(faint, 0.25), linewidth=0.9,
-                  label="Individual action")
+        ax_q.plot(
+            [],
+            [],
+            color=colour,
+            alpha=max(faint, 0.25),
+            linewidth=0.9,
+            label="Individual action",
+        )
         ax_q.legend(loc="lower right", frameon=True)
 
     # The action fires at t=0; everything left of it is pre-action context.
@@ -533,7 +804,7 @@ def plot_action_impact(
     # as a slope through t=0, and reads the drop as starting before the action.
     # Markers show where the data actually is; the edge lines show that the
     # segment spans one bin boundary, which is where t=0 sits.
-    for ax in (ax_t, ax_q):
+    for ax in (ax_l, ax_t, ax_q):
         ax.xaxis.set_minor_locator(MultipleLocator(IMPACT_BIN))
         ax.grid(which="minor", axis="x", linewidth=0.4, alpha=0.4, zorder=0)
         ax.axvline(0.0, color="#4a4a46", linewidth=1.6, zorder=3)
@@ -541,6 +812,9 @@ def plot_action_impact(
     # linscale compresses the 0..linthresh linear band. At the default it claims a
     # decade's worth of height for a region no line ever enters, since the quiet
     # baseline sits around 0.2s.
+    ax_l.set_yscale("symlog", linthresh=QUEUE_LINTHRESH, linscale=0.25)
+    ax_l.set_ylim(0, queue_top)
+    ax_l.set_ylabel("Waiting Requests")
     ax_t.set_yscale("symlog", linthresh=IMPACT_LINTHRESH, linscale=0.25)
     ax_t.set_ylim(0, ttft_top)
     ax_t.set_ylabel("Time to First Token (s)")
@@ -549,8 +823,11 @@ def plot_action_impact(
     ax_q.set_xlim(-IMPACT_PRE, IMPACT_POST)
     ax_q.set_xlabel("Time Relative to Reconfiguration Action (s)")
 
+    subject = f"{policy} Policy"
+    if category_label:
+        subject += f" -- {category_label}"
     fig.suptitle(
-        f"Latency and Quality Response to Reconfiguration Actions ({policy} Policy)"
+        f"Queue, Latency and Quality Response to Reconfiguration Actions ({subject})"
     )
 
     os.makedirs(save_path.parent, exist_ok=True)
@@ -573,7 +850,7 @@ def parse_args() -> argparse.Namespace:
         "--out-dir",
         type=Path,
         default=Path("results/recovery_compare"),
-        help="Directory for the per-policy action-impact figures",
+        help="Directory for the action-impact figures (three per policy)",
     )
     return parser.parse_args()
 
@@ -597,7 +874,9 @@ def policy_status(log_path: Path) -> str:
         # write, so an absent log for the first half-minute is expected.
         return "starting"
 
-    frame = next((c.strip() for c in reversed(re.split(r"[\r\n]", tail)) if c.strip()), "")
+    frame = next(
+        (c.strip() for c in reversed(re.split(r"[\r\n]", tail)) if c.strip()), ""
+    )
     step = re.search(r"(\d+)/(\d+) \[", frame)
     if step:
         return f"{step.group(1)}/{step.group(2)}"
@@ -609,7 +888,9 @@ def policy_status(log_path: Path) -> str:
     return frame[:24] if frame else "starting"
 
 
-def run_parallel(policies: List[PolicySpec]) -> Dict[str, Tuple[RecoveryByAgent, "ImpactData"]]:
+def run_parallel(
+    policies: List[PolicySpec],
+) -> Dict[str, Tuple[RecoveryByAgent, "ImpactData"]]:
     """Run every policy concurrently, one process each, reporting progress."""
     names = [p[0] for p in policies]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -676,8 +957,10 @@ def run_parallel(policies: List[PolicySpec]) -> Dict[str, Tuple[RecoveryByAgent,
                     # A stale GO-CART checkpoint (observation-space mismatch) is the
                     # common case; the baselines are still worth reporting.
                     failed[name] = f"{type(exc).__name__}: {exc}"
-                    print(f"  {name} FAILED after {time.perf_counter() - t0:.0f}s: "
-                          f"{failed[name]}  (see {logs[name]})")
+                    print(
+                        f"  {name} FAILED after {time.perf_counter() - t0:.0f}s: "
+                        f"{failed[name]}  (see {logs[name]})"
+                    )
                     continue
                 done[name] = (recovery, impact_data)
                 print(
@@ -745,20 +1028,48 @@ def main() -> None:
         "counts above."
     )
 
-    # Every policy's lines are binned first so the three figures can be drawn on
-    # one latency scale and read against each other.
-    series = {name: impact_series(d) for name, d in impact.items() if d.n_episodes}
-    top = shared_ttft_top(series)
+    # Three figures per policy: every attributable episode, then the same
+    # episodes cut by the direction of the capacity change (EPISODE_CATEGORIES).
+    figures: List[Tuple[str, ImpactData, Path, Optional[str]]] = []
     for name, windows in impact.items():
-        if name not in series:
-            print(f"{name}: no attributable reconfigurations; skipping impact plot.")
+        stem = args.out_dir / f"action_impact_{name.lower()}"
+        figures.append((name, windows, stem.with_name(f"{stem.name}.png"), None))
+        for key, suffix, label in EPISODE_CATEGORIES:
+            figures.append((
+                name,
+                category_subset(windows, key),
+                stem.with_name(f"{stem.name}_{suffix}.png"),
+                label,
+            ))
+
+    print("\n● Episodes drawn per figure (attributable episodes only)")
+    for name, windows in impact.items():
+        counts = " ".join(
+            f"{label.split(':')[0]} {int((windows.ep_cat == key).sum())}"
+            for key, _, label in EPISODE_CATEGORIES
+        )
+        uncategorised = int((windows.ep_cat == "").sum())
+        line = f"  {name:<8} total {windows.n_episodes:<5} {counts}"
+        print(line + (f"  uncategorised {uncategorised}" if uncategorised else ""))
+
+    # All nine are binned before any is drawn: the shared axis limits depend on
+    # the binned values, so every figure has to exist as a series first.
+    series = {str(path): impact_series(d) for _, d, path, _ in figures if d.n_episodes}
+    top = shared_ttft_top(series)
+    q_top = shared_queue_top(series)
+    for name, windows, path, label in figures:
+        if str(path) not in series:
+            what = f"{name} ({label})" if label else name
+            print(f"{what}: no attributable reconfigurations; skipping impact plot.")
             continue
         plot_action_impact(
             name,
             windows,
-            series[name],
-            args.out_dir / f"action_impact_{name.lower()}.png",
+            series[str(path)],
+            path,
             ttft_top=top,
+            queue_top=q_top,
+            category_label=label,
         )
 
 

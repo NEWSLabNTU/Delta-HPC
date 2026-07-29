@@ -218,6 +218,11 @@ class ReconfigEpisode:
     agent_id: m.AgentId
     action_type: str
     t_trigger: float
+    # Which side of a transfer this agent is on. A transfer opens an episode for
+    # both agents under the same action_type, but it adds capacity for one and
+    # removes it from the other, so the string alone cannot tell them apart.
+    # Always False for splits and merges, which affect a single agent.
+    is_receiver: bool = False
     t_drain_done: Optional[float] = None
     t_boot_done: Optional[float] = None
     # True if another reconfiguration hit this agent before this one finished

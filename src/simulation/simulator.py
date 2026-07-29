@@ -176,6 +176,10 @@ class SimulatorImpl(m.Simulator):
                 agent_id=aid,
                 action_type=action.action.name.lower(),
                 t_trigger=self._current_time,
+                is_receiver=(
+                    action.receiver is not None
+                    and aid == action.receiver.receiver_id
+                ),
             )
 
     def _advance_reconfig_episodes(self) -> None:
