@@ -4,14 +4,27 @@ Given a training run id and a resolution k, benchmarks every checkpoint whose st
 count is a multiple of 5120*k (the trainer saves every 5120 steps) and plots one
 performance figure across the run.
 
-Performance is delivered quality over log tail latency:
+The figure is a 3-D trajectory through the three quantities the policy trades off,
+one point per checkpoint:
 
-    performance = model-tier quality score (%)  /  log10(1 + P99 TTFT (s))
+    x = model-tier quality score (%)       higher is better
+    y = P99 TTFT (s)                       lower is better
+    z = reconfiguration actions emitted    lower is better
 
-Both terms are pooled over every agent's requests rather than averaged per agent.
-A per-agent mean would let a low-traffic agent count as much as a busy one; pooling
-asks what the system as a whole delivered. The per-agent figures are still printed,
-because a ratio hides which of its two terms moved.
+Training progress is the colour, not a fourth axis, and consecutive checkpoints are
+joined so the run reads as a path. The question the figure answers is which corner
+of that space training moves toward, which the scalar ratio it replaced could not
+show: collapsing the three terms into one number hides which of them moved, and two
+checkpoints trading quality against tail latency in opposite directions can share a
+score. The ratio is still computed for the printed table, where ranking checkpoints
+by a single number is what is wanted.
+
+Quality and tail latency are pooled over every agent's requests rather than averaged
+per agent. A per-agent mean would let a low-traffic agent count as much as a busy
+one; pooling asks what the system as a whole delivered. Per-agent values stay in the
+printed table, deliberately not in the figure: the action count is a property of the
+cluster-wide policy rather than of any one agent, so a per-agent series has no z
+coordinate to sit at.
 
 Checkpoints are evaluated in parallel, one process each, on the same workload the
 other benchmarks use. Each is a full benchmark run, so wall time is roughly
@@ -20,6 +33,7 @@ other benchmarks use. Each is a full benchmark run, so wall time is roughly
 Usage:
     python -m src.bench.training_curve 20260711-233808-449 -k 10
     python -m src.bench.training_curve <run-id> -k 4 --workers 8
+    python -m src.bench.training_curve <run-id> --view 18,-72
 """
 
 import argparse
@@ -37,15 +51,15 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import tabulate
 import torch
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.ticker import MaxNLocator
 
 import src.share.models as m
 from src.bench.main import BenchRunner
 from src.bench.models import BenchMode
 from src.bench.recovery_compare import (
-    POLICY_COLORS,
     SERIF_STACK,
     build_shared_workload,
     request_tier_pct,
@@ -76,24 +90,29 @@ LAYOUT_SEED = 77
 POLL_INTERVAL = 2.0
 # A non-TTY stdout cannot overwrite a line, so status there is appended rarely.
 QUIET_STATUS_INTERVAL = 30.0
-# One hue per agent, from the same all-pairs colourblind-safe triple the policy
-# comparison uses (worst CVD dE 9.2). Cycles if a deployment ever carries more
-# than three agents, which would need a wider validated set.
-AGENT_PALETTE = list(POLICY_COLORS.values())
-# Agent lines are context, so they recede; the pooled line is the headline. The
-# legend carries identity, so the hues only have to stay separable from each
-# other, not compete with the aggregate for attention.
-AGENT_ALPHA = 0.38
-# Magenta, validated all-pairs against the three agent hues (worst CVD dE 9.2, the
-# pre-existing green/orange pair; normal-vision floor 20.6). A violet was the first
-# choice and had to be rejected -- dE 4.6 against CodingAgent's blue under
-# deuteranopia, and 13.4 even with normal colour vision.
-POOLED_COLOUR = "#c4399b"
-# Marker area on the pooled line, in points^2, spanning the run's action range.
-# The smallest still clears the 8px minimum for a readable marker.
-MARKER_AREA = (60.0, 300.0)
-# Labels are text and wear text ink, not the series colour.
-LABEL_INK = "#3a3a38"
+# Perceptually uniform and colourblind-safe across its whole range, which is the
+# requirement here because the colour *is* the training axis: a reader has to order
+# two points by hue alone, not merely tell them apart. The categorical palette the
+# other bench figures use encodes identity rather than order, so it cannot do this.
+PROGRESS_CMAP = "viridis"
+# Default camera, in degrees. Elevated enough to read the action axis without
+# flattening the quality/latency floor, and rotated so a run that improves on both
+# floor axes travels left to right. Override with --view when a path hides itself.
+DEFAULT_VIEW = (22.0, -58.0)
+# Point area in points^2 on the 3-D figure, large enough that the fill carries a
+# readable hue at print size -- the colour is load-bearing there, not decoration.
+# Constant, because the action count already has an axis of its own.
+MARKER_AREA = 110.0
+# Viridis is cut here rather than at 1.0. Its last few percent is a near-white yellow
+# that disappears against the pane, and those are the converged checkpoints.
+CMAP_TOP = 0.88
+# Dark neutral outline, legible under every fill the colormap produces.
+MARKER_EDGE = "#2f2f2b"
+# Rings marking the ends of the path. Grey for the first checkpoint, near-black for
+# the last, so the two read as "where it started" and "where it ended" rather than as
+# two members of a category.
+START_RING = "#9a9a94"
+FINAL_RING = "#1c1c1a"
 
 
 class CkptSpec(NamedTuple):
@@ -364,101 +383,146 @@ def run_parallel(specs: List[CkptSpec], workers: int) -> List[Point]:
     return sorted(points, key=lambda p: p.steps)
 
 
-def formal_name(agent: str) -> str:
-    """CodingAgent -> Coding Agent, RAGAgent -> RAG Agent.
-
-    The enum values are code identifiers; a figure caption should not be.
-    """
-    return re.sub(r"(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", agent)
-
-
-def plot_curve(points: List[Point], save_path: Path) -> None:
-    """Performance against training progress."""
-    sns.set_style("whitegrid")
+def plot_curve(
+    points: List[Point],
+    save_path: Path,
+    view: Tuple[float, float] = DEFAULT_VIEW,
+) -> None:
+    """Quality, tail latency and action count across training, as one 3-D path."""
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = SERIF_STACK
     plt.rcParams["mathtext.fontset"] = "stix"
+    # mplot3d takes its grid styling from these rather than from a style sheet, and
+    # the default is heavy enough to compete with the trajectory.
+    plt.rcParams["grid.color"] = "#dededa"
+    plt.rcParams["grid.linewidth"] = 0.7
 
-    fig, ax = plt.subplots(figsize=(11, 6), layout="constrained")
-    # Millions on the axis: raw step counts run to seven digits and would either
-    # overlap or force scientific notation. Exact values are in the table.
-    xs = [p.steps / 1e6 for p in points]
+    # Placed by hand rather than by constrained_layout, which cannot size a 3-D axis:
+    # it measures the projected box, finds it degenerate and bails out with "axes
+    # sizes collapsed to zero", leaving the plot in a fraction of the canvas. The
+    # margins below are tight because a 3-D axis carries its own generous padding
+    # inside the box, so the figure's own margins can be nearly nothing.
+    fig = plt.figure(figsize=(10.5, 7.5))
+    ax = fig.add_subplot(111, projection="3d")
+    # The bottom margin is the loosest of the four: the x label sits below the
+    # projected box by an amount that grows with the zoom, and is the first thing
+    # clipped off the canvas.
+    fig.subplots_adjust(left=0.01, right=0.87, bottom=0.10, top=0.95)
+    # Slightly flattened in z and zoomed, so the trajectory fills the box instead of
+    # floating in the middle of it.
+    ax.set_box_aspect((1.0, 1.0, 0.82), zoom=1.1)
 
-    agents = [a.value for a in m.AgentId if a.value in points[0].per_agent]
-    for i, agent in enumerate(agents):
+    # Millions, matching the colourbar: raw step counts run to seven digits and
+    # would force scientific notation. Exact values are in the table.
+    steps_m = np.array([p.steps / 1e6 for p in points])
+    quality = np.array([p.quality for p in points])
+    tail = np.array([p.tail for p in points])
+    actions = np.array([float(p.n_actions) for p in points])
+
+    # Where the action axis starts. Anchoring it at the origin was costing a third of
+    # the box on a real run whose counts sat between roughly 70 and 190: the empty
+    # band below the data compressed the differences the axis exists to show. Zero is
+    # kept only when the run comes down near it, which is also the only case where a
+    # stem's length is worth reading as a magnitude rather than as a depth cue.
+    act_span = float(actions.max() - actions.min())
+    act_pad = max(act_span * 0.12, 1.0)
+    z_floor = (
+        0.0
+        if float(actions.min()) <= act_span * 0.25
+        else float(actions.min()) - act_pad
+    )
+
+    # Truncated below viridis' top end, which is a near-white yellow that all but
+    # vanishes against the white pane -- and the points it would colour are the
+    # converged checkpoints, the ones the figure most needs to show.
+    cmap = LinearSegmentedColormap.from_list(
+        "progress", plt.get_cmap(PROGRESS_CMAP)(np.linspace(0.0, CMAP_TOP, 256))
+    )
+    # A one-checkpoint sweep has no span to normalise over. Normalize would map it to
+    # 0.5, which is a perfectly legible colour, so only the degenerate range needs a
+    # guard, not the single-point case itself.
+    lo_step, hi_step = float(steps_m.min()), float(steps_m.max())
+    norm = plt.Normalize(lo_step, hi_step if hi_step > lo_step else lo_step + 1.0)
+
+    # Drawn segment by segment rather than as one polyline so the path itself carries
+    # the progression. A single-colour line would leave the direction of travel
+    # readable only from the markers, and the direction is the point of the figure.
+    for i in range(len(points) - 1):
         ax.plot(
-            xs,
-            [performance_of(*p.per_agent[agent]) for p in points],
-            color=AGENT_PALETTE[i % len(AGENT_PALETTE)],
-            alpha=AGENT_ALPHA,
-            linewidth=1.6,
-            marker="o",
-            markersize=3,
-            label=formal_name(agent),
+            quality[i : i + 2],
+            tail[i : i + 2],
+            actions[i : i + 2],
+            color=cmap(norm(steps_m[i])),
+            linewidth=1.9,
+            alpha=0.9,
+            zorder=3,
         )
 
-    pooled = [p.performance for p in points]
-    ax.plot(
-        xs, pooled, color=POOLED_COLOUR, linewidth=3.0, zorder=5,
-        label="All Agents (pooled)",
+    # depthshade off: it dims distant markers, which on an axis where colour means
+    # training step reads as a checkpoint being earlier than it is.
+    # A dark edge rather than a white one: white works under a mid-range fill but
+    # disappears at the bright end, exactly where the marker needs the most help
+    # separating itself from the pane and from its neighbours in the converged
+    # cluster, where several checkpoints land almost on top of each other.
+    scatter = ax.scatter(
+        quality,
+        tail,
+        actions,
+        c=steps_m,
+        cmap=cmap,
+        norm=norm,
+        s=MARKER_AREA,
+        edgecolors=MARKER_EDGE,
+        linewidths=0.7,
+        depthshade=False,
+        zorder=5,
     )
-    # Marker area carries the action count as well as the printed number --
-    # redundant encoding, so the figure still reads if the labels are too small to
-    # resolve at print size. Scaled linearly across this run's own range; a run
-    # where every checkpoint emits the same count falls back to one mid size.
-    counts = [p.n_actions for p in points]
-    lo, hi = min(counts), max(counts)
-    smin, smax = MARKER_AREA
-    sizes = (
-        [smin + (c - lo) / (hi - lo) * (smax - smin) for c in counts]
-        if hi > lo
-        else [(smin + smax) / 2] * len(counts)
-    )
-    ax.scatter(
-        xs, pooled, s=sizes, color=POOLED_COLOUR, zorder=6,
-        edgecolors="white", linewidths=0.8,
-    )
-    ax.legend(loc="best", frameon=True)
 
-    # Linear axis: the log lives in the metric itself (see performance_of), so
-    # log-scaling the axis on top of it would compress the range twice.
-    # Mathtext for the log, so the subscript sets properly in the serif face
-    # rather than reading as the string "log10".
-    ax.set_ylabel(
-        "Model-Tier Quality Score (%) / "
-        rf"$\log_{{10}}(1 + \mathrm{{P{TAIL_PCTL}}}\ \mathrm{{TTFT}})$"
-    )
-    ax.set_ylim(bottom=0)
-    # Anchor at zero so the curve sits against the full extent of training and
-    # figures drawn at different -k values share one x range.
-    ax.set_xlim(left=0)
-
-    # Action counts ride under their own point on the pooled line, so each number
-    # sits next to the value it explains. Offset in points rather than data units,
-    # so the gap stays constant regardless of where the log axis puts the point.
-    for x, p in zip(xs, points):
-        ax.annotate(
-            f"{p.n_actions}",
-            xy=(x, p.performance),
-            xytext=(0, -13),
-            textcoords="offset points",
-            ha="center",
-            va="top",
-            fontsize=10,
-            fontweight="bold",
-            color=LABEL_INK,
-            # The pooled line often runs inside the bundle of agent lines, so the
-            # label lands on top of one of them; a backing box keeps it readable
-            # without moving it away from the point it belongs to.
-            bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": "none",
-                  "alpha": 0.75},
+    # Which end of the path is which, without going back to the colourbar for it.
+    # Two rings, not the step labels removed earlier: a converged run bunches its
+    # last checkpoints together, so the one that actually ships is otherwise
+    # indistinguishable from its neighbours.
+    for idx, ring in ((0, START_RING), (len(points) - 1, FINAL_RING)):
+        ax.scatter(
+            [quality[idx]], [tail[idx]], [actions[idx]],
+            s=MARKER_AREA * 2.6, facecolors="none", edgecolors=ring,
+            linewidths=1.4, depthshade=False, zorder=6,
         )
-    ax.set_xlabel(
-        "Training Timesteps (millions)\n"
-        "Marker size and label on the aggregate series denote the total number "
-        "of reconfiguration actions emitted"
-    )
-    fig.suptitle("Quality-Latency Performance Across Training")
+
+    # Stems are the depth cue. A bare 3-D scatter is ambiguous -- a marker's height
+    # cannot be read against a perspective projection -- so each point is tied to the
+    # floor below it. The dotted floor shadow that used to join those landing points
+    # is gone: on a run whose path doubles back it draws a second tangle underneath
+    # the first and reads as data.
+    for q, y, a, step in zip(quality, tail, actions, steps_m):
+        ax.plot(
+            [q, q], [y, y], [z_floor, a],
+            color=cmap(norm(step)), linewidth=1.0, alpha=0.3, zorder=2,
+        )
+
+    # The default locator put a tick every 2.5 quality points on a real run, which at
+    # this rotation crowds the labels into each other along the receding axis.
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+
+    ax.set_xlabel("Model-Tier Quality Score (%)", labelpad=12)
+    ax.set_ylabel(f"P{TAIL_PCTL} TTFT (s)", labelpad=12)
+    ax.set_zlabel("Reconfiguration Actions", labelpad=10)
+    ax.set_zlim(z_floor, float(actions.max()) + act_pad)
+
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.set_pane_color((1.0, 1.0, 1.0, 1.0))
+
+    ax.view_init(elev=view[0], azim=view[1])
+
+    # Its own axes rather than ax=ax: steering the colourbar off a 3-D parent steals
+    # width from the plot box unpredictably, since the parent's drawn extent is not
+    # its layout extent.
+    cax = fig.add_axes((0.885, 0.28, 0.016, 0.44))
+    bar = fig.colorbar(scatter, cax=cax)
+    bar.set_label("Training Timesteps (millions)")
+    bar.outline.set_visible(False)
+
+    fig.suptitle("Quality, Tail Latency and Reconfiguration Cost Across Training")
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=300)
@@ -495,6 +559,14 @@ def parse_args() -> argparse.Namespace:
         help="Output figure path (default: results/<run-id>/bench/training_curve.png)",
     )
     parser.add_argument(
+        "--view",
+        metavar="ELEV,AZIM",
+        default=None,
+        help=f"3-D camera angle in degrees (default: "
+        f"{DEFAULT_VIEW[0]:g},{DEFAULT_VIEW[1]:g}). Rotate when a run's path "
+        f"overlaps itself from the default angle.",
+    )
+    parser.add_argument(
         "--layout-seed",
         type=int,
         default=LAYOUT_SEED,
@@ -510,6 +582,14 @@ def main() -> None:
     args = parse_args()
     if args.resolution < 1:
         raise SystemExit("-k must be at least 1.")
+
+    view = DEFAULT_VIEW
+    if args.view:
+        try:
+            elev, azim = (float(v) for v in args.view.split(","))
+        except ValueError:
+            raise SystemExit("--view expects two numbers, e.g. --view 22,-58")
+        view = (elev, azim)
 
     checkpoints = find_checkpoints(args.run_id, args.resolution)
     out = args.out or Path("results") / args.run_id / "bench" / "training_curve.png"
@@ -610,7 +690,7 @@ def main() -> None:
         f"\nBest checkpoint: {best.steps:,} steps (performance {best.performance:.3f})"
     )
 
-    plot_curve(points, out)
+    plot_curve(points, out, view)
 
 
 if __name__ == "__main__":
