@@ -78,21 +78,32 @@ Refer to the [vLLM documentation](https://docs.vllm.ai) for build instructions. 
 
 ## 1. Dataset Preparation
 
-> **About agents.** This repository currently defines **three agents**: `CodingAgent` (serves coding-assistant LLM requests), `RAGAgent` (serves retrieval-augmented generation requests), and `ChatAgent` (serves general chat requests). All dataset preparation, LLM configuration, profiling, and training are organised around these three agents.
+> **About agents.** This repository defines up to **three agents**: `CodingAgent` (serves coding-assistant LLM requests), `RAGAgent` (serves retrieval-augmented generation requests), and `ChatAgent` (serves general chat requests). All dataset preparation, LLM configuration, profiling, and training are organised around these agents.
 >
-> If you want to add more agents, the following files must be modified:
+> **Choosing how many agents are active.** The active agent set is controlled by the top-level `agent:` block in `configs/simulation_config.yaml`, which toggles each agent on or off:
+>
+> ```yaml
+> agent:
+>   ChatAgent: true
+>   CodingAgent: true
+>   RAGAgent: true
+> ```
+>
+> At import time, `src/share/models.py` reads this block (via `_get_active_agent_count()`) and selects the matching `AgentId` enum — `AgentId3Agent` when three are active or `AgentId2Agent` when two are active. **Only the 2-agent and 3-agent configurations are supported and tested.** Set an agent to `false` to run the 2-agent setup.
+>
+> If you want to add or change the available agents, the following files must be modified:
 >
 > | File | What to change |
 > |---|---|
-> | `src/share/models.py` | Add a new value to the `AgentId` enum |
+> | `configs/simulation_config.yaml` | Add/toggle the agent in the `agent:` block and add its block under `simulation.agents` |
+> | `src/share/models.py` | Add a new value to the `AgentId*` enums (and wire up the `_active_agent_count` branches) |
 > | `src/share/models.py` | Extend `EnvironmentStateData` with per-agent ratio fields if needed |
 > | `src/share/models.py` | Add new `ResourceManagerAction` entries for the new GPU |
 > | `src/simulation/environment_state.py` | Update observation construction for the new agent |
 > | `src/training/config.py` | Add workload / request-rate configuration for the new agent |
-> | `configs/simulation_config.yaml` | Add the new agent block under `simulation.agents` |
 > | `configs/deployment.yaml` | Assign the new agent to a GPU slot |
 >
-> **Note:** Adding more than three agents has not been tested. Proceed with caution and expect to debug edge cases in the simulator and RL environment.
+> **Note:** Configurations other than 2 or 3 agents have not been tested. Proceed with caution and expect to debug edge cases in the simulator and RL environment.
 
 Datasets are stored under `assets/` and must be preprocessed before use. Three datasets are required: one for the **Coding Agent** workload, one for the **RAG Agent** workload, and one for the **Chat Agent** workload.
 
@@ -199,6 +210,17 @@ The `string` representation of each profile (e.g. `"2g.10gb"`) is derived automa
 
 This is the central configuration file. The `model` section and the cluster/agent structure should be filled in now (before profiling). The measured parameters (`kv_cache_GB`, `restart_time`, and `param.*`) are filled in **after** running the profiling steps in chapter 3.
 
+#### `agent` — active agent toggle
+
+Selects which agents are active (see [§1 About agents](#1-dataset-preparation)). Set each to `true`/`false`; only the 2-agent and 3-agent configurations are supported.
+
+```yaml
+agent:
+  ChatAgent: true
+  CodingAgent: true
+  RAGAgent: true
+```
+
 #### `datasets` — local dataset paths
 
 This section is **required**. It tells the runtime where to find the preprocessed datasets on disk (the outputs from [§1 Dataset Preparation](#1-dataset-preparation)).
@@ -218,9 +240,6 @@ datasets:
 ```yaml
 model:
   <model-name>:                          # Must match the key used in agents below
-    generate_path: profiling_results/generated/<generated>.jsonl
-                                         # Path to the JSONL file produced by profile-generate (chapter 3)
-                                         # (used to replay realistic output lengths in simulation)
     kv_per_token_KB: <value>             # KV cache consumed per token, in kilobytes (see §2.3.1)
     vllm_config: configs/<model_name>.yaml  # Path to the vLLM YAML config above
 ```
@@ -248,6 +267,9 @@ simulation:
         mig:
           <mig_profile_string>:          # e.g. 1g.10gb, 2g.10gb, 7g.40gb
             model: <model-name>          # Which LLM runs on this profile
+            generate_path: profiling_results/generated/<generated>.jsonl
+                                         # Path to the JSONL file produced by profile-generate (chapter 3)
+                                         # (used to replay realistic output lengths in simulation)
             kv_cache_GB: <value>         # Measured available KV cache (see §2.3.2 — fill after profiling)
             restart_time: <seconds>      # Measured restart time (see §2.3.3 — fill after profiling)
             param:
@@ -485,8 +507,10 @@ Evaluate one or more RL checkpoints (and optional baselines) in the simulator. T
 | `--ckpt <path>` | RL checkpoint(s) to evaluate |
 | `--bl static_no_mig` | Baseline: single 7G instance per GPU (no MIG splitting) |
 | `--bl static_split_extreme` | Baseline: maximum MIG splitting |
+| `--bl static` | Baseline: fixed static MIG layout |
 | `--bl heuristic` | Baseline: rule-based heuristic agent |
-| `--bl all` | Run all three baselines |
+| `--bl qas` | Baseline: quality-aware scheduler |
+| `--bl all` | Run all baselines |
 
 ### Run
 
@@ -515,9 +539,10 @@ results/
         ├── results_<run_name>.txt     # Printed metrics table (TTFT, TPOT, queue length, MIG usage, …)
         └── figs/
             └── <run_name>/
-                ├── split.png          # Workload timeline annotated with Split events
-                ├── merge.png          # Workload timeline annotated with Merge events
-                └── transfer.png       # Workload timeline annotated with Transfer events
+                ├── split.png                  # Workload timeline annotated with Split events
+                ├── merge.png                  # Workload timeline annotated with Merge events
+                ├── transfer.png               # Workload timeline annotated with Transfer events
+                └── recovery_distribution.png  # Distribution of queue-length recovery times
 ```
 
 ---
@@ -548,6 +573,9 @@ just deploy-bench results/20250501-120000-000/ckpts/20250501-120000-000/ppo_mig_
 
 # Run with the rule-based heuristic
 just deploy-bench heuristic $((12*60*60))
+
+# Run with the quality-aware scheduler
+just deploy-bench qas $((12*60*60))
 
 # Run with a static single-instance (no MIG) baseline
 just deploy-bench static-7g $((12*60*60))

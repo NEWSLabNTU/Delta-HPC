@@ -484,9 +484,15 @@ def plot_curve(
     # indistinguishable from its neighbours.
     for idx, ring in ((0, START_RING), (len(points) - 1, FINAL_RING)):
         ax.scatter(
-            [quality[idx]], [tail[idx]], [actions[idx]],
-            s=MARKER_AREA * 2.6, facecolors="none", edgecolors=ring,
-            linewidths=1.4, depthshade=False, zorder=6,
+            [quality[idx]],
+            [tail[idx]],
+            [actions[idx]],
+            s=MARKER_AREA * 2.6,
+            facecolors="none",
+            edgecolors=ring,
+            linewidths=1.4,
+            depthshade=False,
+            zorder=6,
         )
 
     # Stems are the depth cue. A bare 3-D scatter is ambiguous -- a marker's height
@@ -496,8 +502,13 @@ def plot_curve(
     # the first and reads as data.
     for q, y, a, step in zip(quality, tail, actions, steps_m):
         ax.plot(
-            [q, q], [y, y], [z_floor, a],
-            color=cmap(norm(step)), linewidth=1.0, alpha=0.3, zorder=2,
+            [q, q],
+            [y, y],
+            [z_floor, a],
+            color=cmap(norm(step)),
+            linewidth=1.0,
+            alpha=0.3,
+            zorder=2,
         )
 
     # The default locator put a tick every 2.5 quality points on a real run, which at
