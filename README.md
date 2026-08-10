@@ -27,6 +27,7 @@
 | **MIG mode** | Must be **enabled manually** before using this repo |
 | **Python** | ≥ 3.12 (managed via `uv`) |
 | **Package manager** | [`uv`](https://github.com/astral-sh/uv) |
+| **Command runner** | [`just`](https://github.com/casey/just) (all workflows are exposed as `just` recipes) |
 | **vLLM Docker image** | Custom build `vllm/vllm-openai:v0.17.0.custom` (see below) |
 
 ### Enable MIG Mode
@@ -54,6 +55,8 @@ Then create the virtual environment and install all dependencies (including the 
 ```bash
 uv sync
 ```
+
+All workflows in this repo are driven by [`just`](https://github.com/casey/just). Install it by following the instructions in the [`just` repository README](https://github.com/casey/just#installation).
 
 All `just` recipes automatically prepend `.venv/bin` to `PATH`, so you can run them without explicitly activating the environment. To verify the environment is set up correctly:
 
