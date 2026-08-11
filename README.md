@@ -6,13 +6,14 @@
 
 ## Table of Contents
 
-1. [Environment Preparation](#0-environment-preparation)
-2. [Dataset Preparation](#1-dataset-preparation)
-3. [Simulation Configuration](#2-simulation-configuration)
-4. [Profiling](#3-profiling)
-5. [RL Model Training](#4-rl-model-training)
-6. [Benchmarking (Simulation)](#5-benchmarking-simulation)
-7. [Benchmarking (Actual Deployment)](#6-benchmarking-actual-deployment)
+0. [Environment Preparation](#0-environment-preparation)
+1. [Dataset Preparation](#1-dataset-preparation)
+2. [Simulation Configuration](#2-simulation-configuration)
+3. [Profiling](#3-profiling)
+4. [RL Model Training](#4-rl-model-training)
+5. [Benchmarking (Simulation)](#5-benchmarking-simulation)
+6. [Benchmarking (Actual Deployment)](#6-benchmarking-actual-deployment)
+7. [Developer & Utility Commands](#7-developer--utility-commands)
 
 ---
 
