@@ -13,7 +13,8 @@
 4. [RL Model Training](#4-rl-model-training)
 5. [Benchmarking (Simulation)](#5-benchmarking-simulation)
 6. [Benchmarking (Actual Deployment)](#6-benchmarking-actual-deployment)
-7. [Developer & Utility Commands](#7-developer--utility-commands)
+7. [Figure Generation](#7-figure-generation)
+8. [Developer & Utility Commands](#8-developer--utility-commands)
 
 ---
 
@@ -612,7 +613,67 @@ watch -n1 "curl -s http://localhost:9000"  # Dashboard port is configurable in c
 
 ---
 
-## 7. Developer & Utility Commands
+## 7. Figure Generation
+
+Besides the plots emitted automatically by profiling (chapter 3) and benchmarking (chapter 5), the repo contains standalone tool scripts whose sole purpose is producing a figure. They are run directly as modules — there are no `just` recipes for them.
+
+| Script | Entry point | Figure produced |
+|---|---|---|
+| `explore.py` | `src.dataset.explore` | Prompt- and response-length distributions of the three preprocessed datasets |
+| `training_curve.py` | `src.bench.training_curve` | 3-D trajectory of a training run's checkpoints through quality × P99 TTFT × action count |
+| `recovery_compare.py` | `src.bench.recovery_compare` | Backlog, latency and quality response around each reconfiguration, compared across policies |
+
+### `explore.py` — dataset distributions
+
+Draws the `prompt_tokens` and `completion_tokens` distributions for the three 14B datasets in `profiling_results/generated/`, side by side. Requires [§3 Step 1](#3-profiling) to have been run for each dataset.
+
+```bash
+python -m src.dataset.explore
+# Output: fig/dataset_distribution.png
+```
+
+### `training_curve.py` — performance across a training run
+
+> **Time Warning:** Every selected checkpoint is a full benchmark run. Wall time is roughly *(number of checkpoints / workers) × single-run time*.
+
+Benchmarks every checkpoint of a training run whose step count is a multiple of `5120 × k`, then plots the run as a path through three axes: model-tier quality (%), P99 TTFT (s), and number of reconfiguration actions emitted. Training progress is encoded as colour rather than a fourth axis. A ranked table is printed to the terminal alongside the figure.
+
+```bash
+python -m src.bench.training_curve <run-id> -k 10
+# Example:
+python -m src.bench.training_curve 20260711-233808-449 -k 10 --workers 8
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `-k`, `--resolution` | `10` | Evaluate checkpoints at multiples of `5120 × k` steps |
+| `--workers` | see `DEFAULT_WORKERS` | Checkpoints evaluated concurrently (one process each) |
+| `--out` | `results/<run-id>/bench/training_curve.png` | Output figure path |
+| `--view ELEV,AZIM` | script default | 3-D camera angle; rotate when the path overlaps itself |
+| `--layout-seed` | `77` | Seed fixing the starting MIG layout and latency noise for every checkpoint |
+
+### `recovery_compare.py` — reconfiguration impact across policies
+
+Runs GO-CART, the rule-based heuristic and QAS over an identical request stream, then draws how the waiting-request backlog, latency and model-tier quality respond in a window around each reconfiguration action. Three figures per policy — all attributable episodes, capacity-adding actions only, and capacity-releasing actions only — for nine figures per run, on shared axes. Episode accounting is printed to the terminal.
+
+```bash
+# Compare a checkpoint against both baselines
+python -m src.bench.recovery_compare --ckpt results/<run_id>/ckpts/<run_id>/ppo_mig_resource_manager.zip
+
+# Baselines only
+python -m src.bench.recovery_compare
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--ckpt` | none | GO-CART checkpoint zip; omit to compare baselines only |
+| `--out-dir` | `results/recovery_compare` | Directory for the action-impact figures |
+
+Output files are named `action_impact_<policy>.png`, `action_impact_<policy>_load_up.png` and `action_impact_<policy>_load_down.png`.
+
+---
+
+## 8. Developer & Utility Commands
 
 There are a few extra `just` recipes included for development and debugging:
 
